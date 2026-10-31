@@ -58,13 +58,18 @@ fn signed_attributes_digested_content(
     }
 }
 
-// Returns the signed attributes of the SignerInfo whose signature is `signature`,
-// as they were encoded in the time stamp, with the IMPLICIT [0] tag replaced by a
-// SET OF tag (RFC 5652 section 5.4). The signature covers these bytes, which can
-// differ from a DER re-encoding of the decoded attributes when the signer did not
-// sort them.
-fn received_signed_attributes(ts: &[u8], signature: &[u8]) -> Option<Vec<u8>> {
-    use asn1_rs::{Any, Class, FromBer, Tag};
+// Returns the signed attributes of `signer_info` as they were encoded in the time
+// stamp, with the IMPLICIT [0] tag replaced by a SET OF tag (RFC 5652 section
+// 5.4). The signature covers these bytes, which can differ from a DER re-encoding
+// of the decoded attributes when the signer did not sort them.
+//
+// The bytes are located by signature value, which an attacker can duplicate, so
+// the result is only returned when exactly one SignerInfo carries that signature
+// and the located bytes decode to the same attributes the caller has already
+// checked. Otherwise `None` is returned and the caller falls back to the DER
+// re-encoding of its own attributes.
+fn received_signed_attributes(ts: &[u8], signer_info: &rasn_cms::SignerInfo) -> Option<Vec<u8>> {
+    use asn1_rs::{Any, Class, FromBer, Header, Length, Tag, ToDer};
 
     fn children(data: &[u8]) -> Option<Vec<Any<'_>>> {
         let mut rest = data;
@@ -76,6 +81,9 @@ fn received_signed_attributes(ts: &[u8], signature: &[u8]) -> Option<Vec<u8>> {
         }
         Some(items)
     }
+
+    let signature: &[u8] = signer_info.signature.as_ref();
+    let expected = signer_info.signed_attrs.as_ref()?;
 
     let (_, outer) = Any::from_ber(ts).ok()?;
     let outer_items = children(outer.data)?;
@@ -97,35 +105,41 @@ fn received_signed_attributes(ts: &[u8], signature: &[u8]) -> Option<Vec<u8>> {
     let (_, signed_data) = Any::from_ber(content.data).ok()?;
     let signer_infos = children(signed_data.data)?.pop()?;
 
-    for signer_info in children(signer_infos.data)? {
-        let fields = children(signer_info.data)?;
+    let mut found: Option<&[u8]> = None;
+    for si in children(signer_infos.data)? {
+        let fields = children(si.data)?;
         let matches = fields.iter().any(|f| {
             f.class() == Class::Universal && f.tag() == Tag::OctetString && f.data == signature
         });
         if !matches {
             continue;
         }
+        // A duplicated signature makes the match ambiguous.
+        if found.is_some() {
+            return None;
+        }
         let attrs = fields
             .iter()
             .find(|f| f.class() == Class::ContextSpecific && f.tag() == Tag(0))?;
-
-        let len = attrs.data.len();
-        let mut out = vec![0x31];
-        if len < 0x80 {
-            out.push(len as u8);
-        } else {
-            let len_bytes: Vec<u8> = len
-                .to_be_bytes()
-                .into_iter()
-                .skip_while(|b| *b == 0)
-                .collect();
-            out.push(0x80 | len_bytes.len() as u8);
-            out.extend_from_slice(&len_bytes);
-        }
-        out.extend_from_slice(attrs.data);
-        return Some(out);
+        found = Some(attrs.data);
     }
-    None
+    let attrs_body = found?;
+
+    let header = Header::new(
+        Class::Universal,
+        true,
+        Tag::Set,
+        Length::Definite(attrs_body.len()),
+    );
+    let mut out = header.to_der_vec().ok()?;
+    out.extend_from_slice(attrs_body);
+
+    // The bytes that are signed must be the attributes that were checked.
+    let decoded: rasn_cms::SignedAttributes = rasn::der::decode(&out).ok()?;
+    if &decoded != expected {
+        return None;
+    }
+    Some(out)
 }
 
 /// Decode the TimeStampToken info and verify it against the supplied data and trust policy
@@ -408,9 +422,7 @@ pub fn verify_time_stamp(
         // use those as the TBS else the TBS is the value of the ContentInfo
         let tbs = match signed_attributes_digested_content(signer_info) {
             Ok(sdc) => match sdc {
-                Some(tbs) => {
-                    received_signed_attributes(ts, signer_info.signature.as_ref()).unwrap_or(tbs)
-                }
+                Some(tbs) => received_signed_attributes(ts, signer_info).unwrap_or(tbs),
                 None => match &sd.encap_content_info.content {
                     Some(d) => d.to_vec(),
                     None => {
@@ -1263,5 +1275,112 @@ mod signed_attrs_tests {
 
         assert!(log.has_status(TIMESTAMP_VALIDATED));
         assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
+    }
+
+    // Returns the TLV for `tag` wrapping `body`.
+    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        let len = body.len();
+        if len < 0x80 {
+            out.push(len as u8);
+        } else {
+            let lb: Vec<u8> = len
+                .to_be_bytes()
+                .into_iter()
+                .skip_while(|b| *b == 0)
+                .collect();
+            out.push(0x80 | lb.len() as u8);
+            out.extend_from_slice(&lb);
+        }
+        out.extend_from_slice(body);
+        out
+    }
+
+    // Rebuilds the fixture token with its SignerInfo duplicated in the signerInfos SET.
+    fn token_with_duplicate_signer_info() -> Vec<u8> {
+        use asn1_rs::{Any, FromBer};
+
+        fn children(data: &[u8]) -> Vec<Any<'_>> {
+            let mut rest = data;
+            let mut v = Vec::new();
+            while !rest.is_empty() {
+                let (r, a) = Any::from_ber(rest).unwrap();
+                v.push(a);
+                rest = r;
+            }
+            v
+        }
+
+        let ts =
+            include_bytes!("../../../tests/fixtures/crypto/time_stamp/unsorted_signed_attrs.tst");
+        let (_, outer) = Any::from_ber(ts).unwrap();
+        let ci = children(outer.data);
+        let (_, sd) = Any::from_ber(ci[1].data).unwrap();
+        let sd_items = children(sd.data);
+        let (last, head) = sd_items.split_last().unwrap();
+
+        let mut sd_body = Vec::new();
+        for item in head {
+            sd_body.extend(tlv_of(item));
+        }
+        let si = tlv_of(&children(last.data)[0]);
+        let mut set_body = si.clone();
+        set_body.extend(&si);
+        sd_body.extend(tlv(0x31, &set_body));
+
+        let explicit = tlv(0xa0, &tlv(0x30, &sd_body));
+        let mut ci_body = tlv_of(&ci[0]);
+        ci_body.extend(explicit);
+        tlv(0x30, &ci_body)
+    }
+
+    fn tlv_of(item: &asn1_rs::Any<'_>) -> Vec<u8> {
+        let tag = item.header.raw_tag().map(|t| t[0]).unwrap_or_else(|| {
+            let class = (item.class() as u8) << 6;
+            let constructed = if item.header.is_constructed() {
+                0x20
+            } else {
+                0
+            };
+            class | constructed | item.tag().0 as u8
+        });
+        tlv(tag, item.data)
+    }
+
+    #[test]
+    fn rejects_token_with_duplicated_signature() {
+        let ts = token_with_duplicate_signer_info();
+        let mut log = StatusTracker::default();
+
+        let _ = verify_time_stamp(
+            &ts,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        );
+
+        // Ambiguous signer infos must never be reported as validated through the
+        // encoded-attribute path.
+        let sd = signed_data_from_time_stamp_response(&ts).unwrap().unwrap();
+        let si = &sd.signer_infos.to_vec()[0];
+        assert!(received_signed_attributes(&ts, si).is_none());
+    }
+
+    #[test]
+    fn rejects_encoded_attributes_that_differ_from_signer_info() {
+        let ts =
+            include_bytes!("../../../tests/fixtures/crypto/time_stamp/unsorted_signed_attrs.tst");
+        let sd = signed_data_from_time_stamp_response(ts).unwrap().unwrap();
+        let mut si = sd.signer_infos.to_vec()[0].clone();
+        assert!(received_signed_attributes(ts, &si).is_some());
+
+        // Attributes the caller checked are not the ones that were encoded.
+        si.signed_attrs = si.signed_attrs.map(|a| {
+            let mut v: Vec<_> = a.to_vec().into_iter().cloned().collect();
+            v.pop();
+            rasn::types::SetOf::from_vec(v)
+        });
+        assert!(received_signed_attributes(ts, &si).is_none());
     }
 }
