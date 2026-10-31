@@ -17,7 +17,7 @@ pub mod sync_impl {
 
     use http::{Request, Response};
 
-    use crate::http::{HttpResolverError, RequestTimeout, SyncHttpResolver};
+    use crate::{HttpResolverError, RequestTimeout, SyncHttpResolver};
 
     pub type Impl = ureq::Agent;
 
@@ -70,7 +70,7 @@ pub mod sync_impl {
     pub mod tests {
         #![allow(clippy::unwrap_used)]
 
-        use crate::http::tests::{
+        use crate::tests::{
             assert_http_resolver, assert_http_resolver_no_redirects,
             assert_http_resolver_with_redirects,
         };

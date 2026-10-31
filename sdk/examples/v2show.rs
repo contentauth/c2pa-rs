@@ -20,13 +20,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// TODO: use SyncGenericResolver when we export public API for it to support wasi
-//       https://github.com/contentauth/c2pa-rs/issues/1366
-#[cfg(all(not(target_arch = "wasm32"), feature = "http_ureq"))]
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<()> {
     use std::io::Read;
 
-    use c2pa::{format_from_path, Error, Reader};
+    use c2pa::{
+        format_from_path,
+        http::{http::Request, SyncHttpResolver},
+        Context, Error, Reader,
+    };
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
@@ -39,8 +41,9 @@ fn main() -> Result<()> {
             Err(Error::RemoteManifestUrl(url)) => {
                 println!("Fetching remote manifest from {url}");
                 let mut c2pa_data = Vec::new();
-                let resp = ureq::get(&url).call()?;
-                resp.into_body().into_reader().read_to_end(&mut c2pa_data)?;
+                let request = Request::get(&url).body(Vec::new())?;
+                let resp = Context::new().resolver().http_resolve(request)?;
+                resp.into_body().read_to_end(&mut c2pa_data)?;
                 Reader::default().with_manifest_data_and_stream(&c2pa_data, &format, &mut file)
             }
             Err(Error::JumbfNotFound) => {

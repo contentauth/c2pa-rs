@@ -6296,6 +6296,47 @@ mod remote_manifest_response_tests {
             }
         }
     }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_cancelled_request_reports_cancellation() {
+        struct Cancelled;
+
+        impl SyncHttpResolver for Cancelled {
+            fn http_resolve(
+                &self,
+                _request: http::Request<Vec<u8>>,
+            ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+                Err(HttpResolverError::Cancelled)
+            }
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncHttpResolver for Cancelled {
+            async fn http_resolve_async(
+                &self,
+                request: http::Request<Vec<u8>>,
+            ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+                self.http_resolve(request)
+            }
+        }
+
+        let context = Context::new()
+            .with_resolver(Cancelled)
+            .with_resolver_async(Cancelled);
+        for use_async in [false, true] {
+            let result = if use_async {
+                Store::fetch_remote_manifest_async("https://example.com/manifest.c2pa", &context)
+                    .await
+            } else {
+                Store::fetch_remote_manifest("https://example.com/manifest.c2pa", &context)
+            };
+            assert!(
+                matches!(result, Err(Error::OperationCancelled)),
+                "expected cancellation, got {result:?}"
+            );
+        }
+    }
 }
 
 // SSRF via HTTP redirect during remote-manifest fetch

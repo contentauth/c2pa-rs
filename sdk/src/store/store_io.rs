@@ -1127,6 +1127,7 @@ impl Store {
                     )))
                 }
             }
+            Err(crate::http::HttpResolverError::Cancelled) => Err(Error::OperationCancelled),
             Err(err) => Err(Error::RemoteManifestFetch(err.to_string())),
         }
     }
