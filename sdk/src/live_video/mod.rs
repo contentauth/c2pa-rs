@@ -329,14 +329,18 @@ impl LiveVideoValidator {
                 continue;
             }
 
+            verified_keys.push(key.clone());
+        }
+
+        // Only once every key has been checked: a later invalid key rejects the whole
+        // assertion, and then none of its keys is validated.
+        for _ in &verified_keys {
             succeed_validation(
                 "session key conforms to the session-key requirements; signerBinding validated",
                 LIVEVIDEO_SESSIONKEY_VALIDATED,
                 tracker,
             );
-            verified_keys.push(key.clone());
         }
-
         self.session_keys = verified_keys;
         self.expected_manifest_id = Some(manifest_id.to_string());
         Ok(())
@@ -371,42 +375,49 @@ impl LiveVideoValidator {
 
         let before = tracker.filter_errors().count();
         self.validate_vsi_key_validity(&session_key, &parsed.sign1, tracker)?;
-        if tracker.filter_errors().count() == before {
-            succeed_validation(
-                "segment is within the session key's validity period",
-                LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY,
-                tracker,
-            );
-        }
+        let validity_ok = tracker.filter_errors().count() == before;
 
         let before = tracker.filter_errors().count();
         self.validate_vsi_signature(&parsed.sign1, &session_key, tracker)?;
-        if tracker.filter_errors().count() == before {
+        let signature_ok = tracker.filter_errors().count() == before;
+
+        let before = tracker.filter_errors().count();
+        self.validate_vsi_sequence_continuity(seq_num, tracker)?;
+        let continuity_ok = tracker.filter_errors().count() == before;
+
+        let before = tracker.filter_errors().count();
+        self.validate_vsi_bmff_hash(segment_data, &parsed.segment_info_map.bmff_hash, tracker)?;
+        let bmff_hash_ok = tracker.filter_errors().count() == before;
+
+        // The validity period, sequence number and bmffHash all come from the signed
+        // payload, so none of them is validated unless its signature is.
+        if signature_ok {
+            if validity_ok {
+                succeed_validation(
+                    "segment is within the session key's validity period",
+                    LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY,
+                    tracker,
+                );
+            }
             succeed_validation(
                 "verifiable-segment-info signature validated with the session key",
                 LIVEVIDEO_SEGMENTINFO_VALIDATED,
                 tracker,
             );
-        }
-
-        let before = tracker.filter_errors().count();
-        self.validate_vsi_sequence_continuity(seq_num, tracker)?;
-        if bounds_ok && tracker.filter_errors().count() == before {
-            succeed_validation(
-                "sequenceNumber is increasing and not below the session key's minimum",
-                LIVEVIDEO_SEQUENCENUMBER_VALIDATED,
-                tracker,
-            );
-        }
-
-        let before = tracker.filter_errors().count();
-        self.validate_vsi_bmff_hash(segment_data, &parsed.segment_info_map.bmff_hash, tracker)?;
-        if tracker.filter_errors().count() == before {
-            succeed_validation(
-                "segment bmffHash matches the segment",
-                ASSERTION_BMFFHASH_MATCH,
-                tracker,
-            );
+            if bounds_ok && continuity_ok {
+                succeed_validation(
+                    "sequenceNumber is increasing and not below the session key's minimum",
+                    LIVEVIDEO_SEQUENCENUMBER_VALIDATED,
+                    tracker,
+                );
+            }
+            if bmff_hash_ok {
+                succeed_validation(
+                    "segment bmffHash matches the segment",
+                    ASSERTION_BMFFHASH_MATCH,
+                    tracker,
+                );
+            }
         }
 
         if tracker.filter_errors().count() > failures_before {

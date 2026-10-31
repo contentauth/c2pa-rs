@@ -876,6 +876,36 @@ mod tests {
     }
 
     #[test]
+    fn vsi_bad_signature_reports_no_success() {
+        use vsi_crypto_helpers::*;
+
+        use crate::validation_results::validation_codes::{
+            ASSERTION_BMFFHASH_MATCH, LIVEVIDEO_SEGMENTINFO_VALIDATED,
+            LIVEVIDEO_SEQUENCENUMBER_VALIDATED, LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY,
+        };
+        let (mut validator, _) = setup_vsi_validator();
+        let (other_key, _) = generate_test_key_pair();
+        let mut tracker = StatusTracker::default();
+
+        let _ = validator.validate_verifiable_segment_info(
+            &make_signed_vsi_segment(1, TEST_MANIFEST_ID, &other_key),
+            &mut tracker,
+        );
+
+        // The validity period, sequence number and bmffHash are read from an unauthenticated
+        // payload, so none of them may be reported as validated.
+        assert!(tracker.has_any_error());
+        for code in [
+            LIVEVIDEO_SEGMENTINFO_VALIDATED,
+            LIVEVIDEO_SEQUENCENUMBER_VALIDATED,
+            LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY,
+            ASSERTION_BMFFHASH_MATCH,
+        ] {
+            assert_eq!(status_count(&tracker, code), 0, "{code} reported");
+        }
+    }
+
+    #[test]
     fn vsi_regressed_sequence_number_reports_no_sequence_success() {
         use vsi_crypto_helpers::*;
 
