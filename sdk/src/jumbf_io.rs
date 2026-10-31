@@ -17,6 +17,8 @@ use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 use lazy_static::lazy_static;
 
+#[cfg(feature = "unstable_html")]
+use crate::asset_handlers::html_io::HtmlIO;
 #[cfg(feature = "pdf")]
 use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "unstable_plain_text")]
@@ -55,6 +57,8 @@ lazy_static! {
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
         Box::new(PlainTextIO::new("")),
+        #[cfg(feature = "unstable_html")]
+        Box::new(HtmlIO::new("")),
         Box::new(ZipIO::new("")),
     ];
 
