@@ -166,6 +166,9 @@ const CAWG_IDENTITY_STATUS_PREFIX: &str = "cawg.identity.";
 /// See [`ValidationResults::validation_state`] and [`ValidationFailureSummary`].
 fn is_tolerated_manifest_failure_code(code: &str) -> bool {
     code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+        // an issuer's revocation method the validator doesn't support says nothing about the
+        // manifest (CAWG Identity Assertion 1.3 §8.1.5)
+        || code == validation_status::CAWG_ICA_REVOCATION_UNSUPPORTED
         || code.starts_with(CAWG_X509_STATUS_PREFIX)
         || code.starts_with(CAWG_IDENTITY_STATUS_PREFIX)
 }
@@ -1094,6 +1097,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a CAWG identity assertion.
     pub const CAWG_ICA_SIGNER_PAYLOAD_MISMATCH: &str = "cawg.ica.signer_payload.mismatch";
 
+    /// A CAWG identity claims aggregation credential has a `credentialStatus` entry
+    /// whose revocation method the validator doesn't support.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_REVOCATION_UNSUPPORTED: &str = "cawg.ica.revocation.unsupported";
+
     /// A chain of trust from the CAWG identity assertion's X.509 signing
     /// certificate to a trust anchor configuration was verified.
     ///
@@ -1616,6 +1625,7 @@ pub mod tests {
             "cawg.identity.cbor.invalid",
             "cawg.identity.sig_type.unknown",
             "cawg.identity.pad.invalid",
+            "cawg.ica.revocation.unsupported",
         ] {
             let mut validation_results = ValidationResults::default();
 
