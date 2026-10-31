@@ -374,6 +374,48 @@ impl Context {
         Ok(self)
     }
 
+    /// Configure this Context with a single settings key-value pair.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The settings key to set.
+    /// * `value` - The value to set for the given key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Result};
+    /// # fn main() -> Result<()> {
+    /// let context =
+    ///     Context::new().with_settings_value("core.max_decompressed_manifest_size_in_mb", 1usize)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_settings_value(
+        mut self,
+        key: &str,
+        value: impl Into<serde_json::Value>,
+    ) -> Result<Self> {
+        self.settings.set_value(key, value)?;
+        Ok(self)
+    }
+
+    /// Configure this Context with the provided settings, replacing any existing settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Any type that implements `IntoSettings`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut context = Context::new();
+    /// context.set_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_settings<S: IntoSettings>(&mut self, settings: S) -> Result<()> {
         self.settings = settings.into_settings()?;
         Ok(())
