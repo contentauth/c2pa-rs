@@ -203,9 +203,13 @@ pub fn check_ocsp_status(
             }
         }
 
-        // If the stapled response could not be validated and online fetching is disabled,
-        // return default without logging SIGNING_CREDENTIAL_OCSP_SKIPPED.
+        // The stapled response could not be used. If online fetching is disabled,
+        // the validator has chosen not to perform an online OCSP check.
         if fetch_policy == OcspFetchPolicy::DoNotFetch {
+            log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                .informational(validation_log);
+
             return Ok(OcspResponse::default());
         }
     }
@@ -1253,6 +1257,11 @@ mod tests {
             &context,
         );
         assert!(without_anchor.is_ok());
+
+        // The stapled response could not be used and fetching is disabled, so
+        // the validator has skipped the OCSP check.
+        assert!(log2.has_status(SIGNING_CREDENTIAL_OCSP_SKIPPED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_OCSP_SKIPPED));
     }
 
     // Same wiring, through the fetch path (`fetch_and_check_ocsp_response`, the
@@ -2135,6 +2144,8 @@ mod tests {
             case,
             StatusCase::Missing
                 | StatusCase::Empty
+                | StatusCase::InvalidStaple
+                | StatusCase::InvalidStapleIgnoresSupplied
                 | StatusCase::OverrideEmpty
                 | StatusCase::OverrideMissing
         );
