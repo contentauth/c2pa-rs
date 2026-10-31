@@ -170,6 +170,7 @@ impl Verifier<'_> {
         };
 
         // check the profile of the cert
+        let profile_log_start = validation_log.logged_items().len();
         let profile_failed = if _sync {
             self.verify_profile(&sign1, tst_info, override_ekus, validation_log)
         } else {
@@ -180,7 +181,11 @@ impl Verifier<'_> {
 
         // A certificate that fails the profile check is not a trusted signing
         // credential, even when it chains to a trust anchor.
-        if profile_failed {
+        if profile_failed
+            || validation_log.logged_items()[profile_log_start..]
+                .iter()
+                .any(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_INVALID))
+        {
             validation_log.remove_status_since(trust_log_start, SIGNING_CREDENTIAL_TRUSTED);
         }
 
@@ -613,8 +618,8 @@ mod tests {
 
     /// A certificate that fails the certificate profile check is not a trusted
     /// signing credential, even when it chains to a trust anchor.
-    #[test]
-    fn profile_failure_is_not_trusted() {
+    #[c2pa_macros::c2pa_test_async]
+    async fn profile_failure_is_not_trusted() {
         use std::borrow::Cow;
 
         use c2pa_raw_crypto::signer_from_private_key;
@@ -654,25 +659,79 @@ mod tests {
         let cose_bytes =
             crate::cose_sign::sign_claim(&claim_bytes, &signer, 10000, &settings).unwrap();
 
-        let mut ctp = CertificateTrustPolicy::new();
-        ctp.add_trust_anchors(
-            root,
-            "http://some_trust_list",
-            TrustAnchorType::Manifest,
-            None,
-        )
-        .unwrap();
+        let sign1 =
+            super::parse_cose_sign1(&cose_bytes, &claim_bytes, &mut StatusTracker::default())
+                .unwrap();
+        for (allow_eku, require_missing_eku) in [(false, false), (true, true), (true, false)] {
+            let mut ctp = CertificateTrustPolicy::new();
+            ctp.add_trust_anchors(
+                root,
+                "http://some_trust_list",
+                TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+            if allow_eku {
+                ctp.add_valid_ekus(b"1.3.6.1.5.5.7.3.36");
+            }
+            if require_missing_eku {
+                ctp.add_mandatory_ekus(b"1.3.6.1.5.5.7.3.8");
+            }
+            let verifier = Verifier::VerifyTrustPolicy(Cow::Owned(ctp));
+            let invalid = !allow_eku || require_missing_eku;
+            for use_async in [false, true] {
+                let mut profile_log = StatusTracker::default();
+                let profile = if use_async {
+                    verifier
+                        .verify_profile_async(&sign1, None, None, &mut profile_log)
+                        .await
+                } else {
+                    verifier.verify_profile(&sign1, None, None, &mut profile_log)
+                };
+                assert_eq!(profile.is_err(), !allow_eku);
+                assert_eq!(profile_log.has_status(SIGNING_CREDENTIAL_INVALID), invalid);
 
-        let mut log = StatusTracker::default();
-        let _ = Verifier::VerifyTrustPolicy(Cow::Owned(ctp)).verify_signature(
-            &cose_bytes,
-            &claim_bytes,
-            b"",
-            None,
-            &mut log,
-        );
-
-        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
-        assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+                let mut log = StatusTracker::default();
+                crate::log_item!(
+                    "previous claim",
+                    "trusted",
+                    "profile_failure_is_not_trusted"
+                )
+                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .success(&mut log);
+                crate::log_item!(
+                    "previous claim",
+                    "invalid",
+                    "profile_failure_is_not_trusted"
+                )
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
+                .failure_no_throw(&mut log, super::CoseError::UnsupportedSigningAlgorithm);
+                let verification_log_start = log.logged_items().len();
+                let result = if use_async {
+                    verifier
+                        .verify_signature_async(&cose_bytes, &claim_bytes, b"", None, &mut log)
+                        .await
+                } else {
+                    verifier.verify_signature(&cose_bytes, &claim_bytes, b"", None, &mut log)
+                };
+                assert!(result.unwrap().validated);
+                assert_eq!(
+                    log.logged_items()[verification_log_start..]
+                        .iter()
+                        .any(|item| item.validation_status.as_deref()
+                            == Some(SIGNING_CREDENTIAL_INVALID)),
+                    invalid
+                );
+                assert_eq!(
+                    log.logged_items()
+                        .iter()
+                        .filter(|item| item.validation_status.as_deref()
+                            == Some(SIGNING_CREDENTIAL_TRUSTED))
+                        .count(),
+                    if invalid { 1 } else { 2 }
+                );
+                assert_eq!(log.logged_items()[0].label, "previous claim");
+            }
+        }
     }
 }

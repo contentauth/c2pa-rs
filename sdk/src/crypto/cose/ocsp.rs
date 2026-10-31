@@ -582,6 +582,7 @@ fn ocsp_signing_chain(certs: &[Vec<u8>], ctp: &CertificateTrustPolicy) -> Vec<Ve
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
+/// A revoked signing credential returns a certificate trust error.
 #[async_generic(async_signature(
     sign1: &CoseSign1,
     data: &[u8],
@@ -662,13 +663,19 @@ pub(crate) fn fetch_and_check_ocsp_response(
         return Ok(OcspResponse::default());
     };
 
-    Ok(validate_fetched_ocsp(
+    let response = validate_fetched_ocsp(
         &ocsp_response_der,
         &certs,
         ctp,
         signing_time,
         validation_log,
-    ))
+    );
+    if response.revoked_at.is_some() {
+        return Err(CoseError::CertificateTrustError(
+            CertificateTrustError::CertificateNotTrusted,
+        ));
+    }
+    Ok(response)
 }
 
 /// Validate a fetched OCSP response for the certificate identified by
@@ -1115,6 +1122,120 @@ mod tests {
         ));
         assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
         assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn fetched_leaf_revocation_returns_trust_error() {
+        use std::{
+            io::{Cursor, Read},
+            sync::{
+                atomic::{AtomicUsize, Ordering},
+                Arc,
+            },
+        };
+
+        use http::{Request, Response};
+        use rasn_pkix::Certificate;
+
+        use crate::http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver};
+
+        struct RevokedResolver(Arc<AtomicUsize>);
+
+        impl SyncHttpResolver for RevokedResolver {
+            fn http_resolve(
+                &self,
+                _: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                let der = include_bytes!(
+                    "../../../tests/fixtures/crypto/ocsp/es256_revoked_response.der"
+                )
+                .to_vec();
+                Ok(Response::builder()
+                    .status(200)
+                    .body(Box::new(Cursor::new(der)) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncHttpResolver for RevokedResolver {
+            async fn http_resolve_async(
+                &self,
+                request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                self.http_resolve(request)
+            }
+        }
+
+        let mut chain = leaf_and_intermediate();
+        let mut leaf: Certificate = rasn::der::decode(&chain[0]).unwrap();
+        let online_leaf: Certificate = rasn::der::decode(&ca_chain()[0]).unwrap();
+        // Add a fixture AIA without changing the certificate ID matched by OCSP.
+        // This isolates the fetch path; COSE certificate-chain verification is separate.
+        let aia = online_leaf
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|extension| extension.extn_id.to_string() == "1.3.6.1.5.5.7.1.1")
+            .cloned()
+            .unwrap();
+        leaf.tbs_certificate.extensions.as_mut().unwrap().push(aia);
+        chain[0] = rasn::der::encode(&leaf).unwrap();
+        let sign1 = sign1_with_x5chain(&chain);
+        let mut ctp = CertificateTrustPolicy::default();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/es256_revoked_responder.pem"
+        ))
+        .unwrap();
+
+        for use_async in [false, true] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let context = Context::new()
+                .with_resolver(RevokedResolver(calls.clone()))
+                .with_resolver_async(RevokedResolver(calls.clone()))
+                .with_settings(serde_json::json!({
+                    "verify": {"ocsp_fetch": true, "ocsp_fetch_should_override": false}
+                }))
+                .unwrap();
+            let mut log = StatusTracker::default();
+            let result = if use_async {
+                check_ocsp_status_async(
+                    &sign1,
+                    b"payload",
+                    OcspFetchPolicy::FetchAllowed,
+                    &ctp,
+                    None,
+                    None,
+                    &mut log,
+                    &context,
+                )
+                .await
+            } else {
+                check_ocsp_status(
+                    &sign1,
+                    b"payload",
+                    OcspFetchPolicy::FetchAllowed,
+                    &ctp,
+                    None,
+                    None,
+                    &mut log,
+                    &context,
+                )
+            };
+            assert!(calls.load(Ordering::SeqCst) > 0);
+            assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
+            assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+            assert!(matches!(
+                result,
+                Err(CoseError::CertificateTrustError(
+                    CertificateTrustError::CertificateNotTrusted
+                ))
+            ));
+        }
     }
 
     // Drives the full online path: each cert (leaf and issuing CA) is queried
