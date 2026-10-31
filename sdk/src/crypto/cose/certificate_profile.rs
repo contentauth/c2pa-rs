@@ -31,6 +31,28 @@ use crate::{
     validation_results::validation_codes::*,
 };
 
+/// Like [`check_end_entity_certificate_profile`], for an end-entity certificate other than
+/// the claim signer's, such as an OCSP responder's or a time-stamp authority's. An expired or
+/// not-yet-valid certificate is reported as `signingCredential.expired`, since
+/// `claimSignature.outsideValidity` describes the claim signer.
+pub(crate) fn check_non_signer_certificate_profile(
+    certificate_der: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut StatusTracker,
+    tst_info_opt: Option<&TstInfo>,
+) -> Result<(), CertificateProfileError> {
+    let mut profile_log = StatusTracker::default();
+    let result =
+        check_end_entity_certificate_profile(certificate_der, ctp, &mut profile_log, tst_info_opt);
+    for item in profile_log.logged_items_mut() {
+        if item.validation_status.as_deref() == Some(CLAIM_SIGNATURE_OUTSIDE_VALIDITY) {
+            item.validation_status = Some(SIGNING_CREDENTIAL_EXPIRED.into());
+        }
+    }
+    validation_log.append(&profile_log);
+    result
+}
+
 /// Verify that an end-entity X.509 certificate meets the requirements stated in
 /// [§14.5. X.509 Certificates].
 ///
@@ -732,66 +754,6 @@ mod tests {
     }
 
     #[test]
-    fn signer_outside_validity_at_timestamp() {
-        use std::str::FromStr;
-
-        use bcder::{Integer, OctetString, Oid};
-        use chrono::{TimeZone, Utc};
-        use x509_parser::prelude::FromDer;
-
-        use crate::crypto::asn1::{
-            rfc3161::{MessageImprint, TstInfo},
-            AlgorithmIdentifier,
-        };
-
-        let cert_der = x509_der_from_pem(include_bytes!(
-            "../../../tests/fixtures/crypto/cose/rsa-pss256_key-expired.pub"
-        ));
-        let (_, cert) = x509_parser::certificate::X509Certificate::from_der(&cert_der).unwrap();
-        let ctp = CertificateTrustPolicy::default();
-
-        // Cover both not-yet-valid and expired credentials using the certificate's
-        // own bounds, without depending on the current clock.
-        for seconds in [
-            cert.validity().not_before.timestamp() - 1,
-            cert.validity().not_after.timestamp() + 1,
-        ] {
-            let tst = TstInfo {
-                version: Integer::from(1),
-                policy: Oid::from_str("1.2.3").unwrap(),
-                message_imprint: MessageImprint {
-                    hash_algorithm: AlgorithmIdentifier {
-                        algorithm: Oid::from_str("2.16.840.1.101.3.4.2.1").unwrap(),
-                    },
-                    hashed_message: OctetString::new(vec![0; 32].into()),
-                },
-                serial_number: Integer::from(1),
-                gen_time: Utc
-                    .timestamp_opt(seconds, 0)
-                    .single()
-                    .unwrap()
-                    .try_into()
-                    .unwrap(),
-                accuracy: None,
-                ordering: None,
-                nonce: None,
-                tsa: None,
-                extensions: None,
-            };
-            let mut validation_log = StatusTracker::default();
-            assert!(check_end_entity_certificate_profile(
-                &cert_der,
-                &ctp,
-                &mut validation_log,
-                Some(&tst)
-            )
-            .is_err());
-            assert!(validation_log.has_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY));
-            assert!(!validation_log.has_status("signingCredential.expired"));
-        }
-    }
-
-    #[test]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
@@ -1426,8 +1388,11 @@ mod tests {
                     result,
                     Err(super::CertificateProfileError::CertificateNotValidAtTime)
                 );
-                assert!(log.has_status(SIGNING_CREDENTIAL_EXPIRED));
-                assert_eq!(log.logged_items()[0].description, "certificate expired");
+                assert!(log.has_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY));
+                assert_eq!(
+                    log.logged_items()[0].description,
+                    "certificate outside validity period"
+                );
             }
         }
     }

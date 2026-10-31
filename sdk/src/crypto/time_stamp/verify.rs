@@ -27,7 +27,7 @@ use sha2::{Sha256, Sha384, Sha512};
 use crate::{
     crypto::{
         asn1::rfc3161::{Accuracy, TstInfo},
-        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy, TrustAnchorType},
+        cose::{check_non_signer_certificate_profile, CertificateTrustPolicy, TrustAnchorType},
         time_stamp::{
             response::{
                 signed_data_and_bytes_from_time_stamp_response,
@@ -616,7 +616,7 @@ pub fn verify_time_stamp(
             // make sure this is a timestamping EKU
             adjusted_ctp.clear_ekus();
             adjusted_ctp.add_mandatory_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
-            if check_end_entity_certificate_profile(
+            if check_non_signer_certificate_profile(
                 &ordered_cert_ders[0],
                 &adjusted_ctp,
                 &mut current_validation_log,

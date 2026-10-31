@@ -29,6 +29,7 @@ pub use certificate_trust_policy::{
 };
 
 mod certificate_profile;
+pub(crate) use certificate_profile::check_non_signer_certificate_profile;
 pub use certificate_profile::{
     check_certificate_profile, check_end_entity_certificate_profile, CertificateProfileError,
 };
