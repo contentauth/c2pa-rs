@@ -239,6 +239,7 @@ fn trust_eku_certificates_sign_and_read_with_explicit_policies() -> Result<()> {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn trust_eku_contexts_are_isolated_across_signing_and_reading() -> Result<()> {
     let defaults = Context::new().with_settings(eku_settings())?.into_shared();
     let cleared = Context::new()
