@@ -25,6 +25,8 @@ mod provider;
 pub use provider::{default_rfc3161_message, AsyncTimeStampProvider, TimeStampProvider};
 
 mod response;
+#[cfg(test)]
+pub(crate) use response::tests::response_der;
 pub(crate) use response::{ContentInfo, TimeStampResponse};
 
 pub(crate) mod verify;
