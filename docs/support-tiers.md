@@ -30,6 +30,37 @@ The tiers map directly onto the branching model in the [release process](https:/
 
 See [validation gating](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-process.md#validation-gating) in the release process for how this fits the overall flow.
 
+### Slack alerts for failing checks on main
+
+The [wrapper](../.github/workflows/main-ci-slack.yml) uses
+[contentauth/ci-workflows](https://github.com/contentauth/ci-workflows), pinned to
+a reviewed commit.
+
+* **Scope:** Tier 1A, Tier 1B, and Tier 2 on `main`; push, schedule, and manual
+  runs only. PRs and experimental features are excluded.
+* **Alerts:** Each tier's first failure alerts; repeats stay silent. Success
+  silently re-arms alerts. Timeouts and startup failures count as failures;
+  cancelled and skipped runs preserve state.
+* **Reruns:** Track attempts; ignore older run numbers after processing a newer run.
+* **State:** Per-tier artifacts in this repository; 90-day retention, refreshed
+  per processed result. Deleting or expiring state resets deduplication.
+  Notifications are serialized per tier, with up to 100 pending jobs.
+* **Retries:** Slack errors fail without advancing state. Fix delivery, then rerun
+  the notifier. Delivery and state upload are not atomic; failed uploads after
+  accepted delivery can cause duplicates on retry.
+* **Secret:** Set `SLACK_WEBHOOK_URL` to the channel's incoming webhook URL.
+  Repository secrets override org secrets. Remove the repository override only
+  after granting this repository access to the org secret.
+* **Security:** No triggering-run code is checked out or executed. Review shared
+  implementation changes before updating the commit pin.
+
+Merge into `main` to enable alerts. For a labeled test message, select
+**Actions > Main CI Slack alerts > Run workflow**, using `main`.
+The test requires a working webhook and does not change alert state.
+
+Implementation and tests live in the shared repository; see
+[development instructions](https://github.com/contentauth/ci-workflows#development).
+
 ## Tier 1A
 
 Tier 1A configurations are the most actively supported.
