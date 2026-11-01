@@ -11,6 +11,7 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels::COLLECTION_HASH, AssetType},
     asset_handlers::zip_io::{zip_central_directory_range, zip_uri_ranges},
+    asset_io::{AssetCollectionHash, ReadSeek},
     hash_stream_by_alg,
     hash_utils::{hash_size_by_alg, verify_stream_by_alg},
     utils::mime,
@@ -201,6 +202,70 @@ impl CollectionHash {
             }
         }
 
+        Ok(())
+    }
+
+    /// Generate the collection hash from the members a format handler reports (see
+    /// [`AssetCollectionHash`]), such as the records of a WARC file.
+    pub fn gen_hash_from_members(
+        &mut self,
+        stream: &mut dyn ReadSeek,
+        handler: &dyn AssetCollectionHash,
+    ) -> Result<()> {
+        for (uri, hash) in handler.member_hashes(stream, &self.alg)? {
+            let entry = UriHashedDataMap {
+                hash: Some(hash),
+                size: None,
+                dc_format: None,
+                data_types: None,
+            };
+            if self.uris.insert(PathBuf::from(&uri), entry).is_some() {
+                return Err(Error::BadParam(format!(
+                    "collection member {uri} appears more than once"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Verify the collection hash against the members a format handler reports (see
+    /// [`AssetCollectionHash`]). The members and the `uris` entries must correspond one to
+    /// one, and every member's hash must match.
+    pub fn verify_members_hash(
+        &self,
+        stream: &mut dyn ReadSeek,
+        alg: Option<&str>,
+        handler: &dyn AssetCollectionHash,
+    ) -> Result<()> {
+        let alg = if self.alg.is_empty() {
+            alg.ok_or(Error::UnsupportedType)?
+        } else {
+            &self.alg
+        };
+        let members = handler.member_hashes(stream, alg)?;
+        if members.len() != self.uris.len() {
+            return Err(Error::HashMismatch(format!(
+                "collection hash lists {} members, the asset has {}",
+                self.uris.len(),
+                members.len()
+            )));
+        }
+        for (uri, hash) in members {
+            let expected = self
+                .uris
+                .get(Path::new(&uri))
+                .and_then(|entry| entry.hash.as_ref())
+                .ok_or_else(|| {
+                    Error::HashMismatch(format!(
+                        "collection member {uri} is not in the collection hash"
+                    ))
+                })?;
+            if *expected != hash {
+                return Err(Error::HashMismatch(format!(
+                    "hash of collection member {uri} does not match"
+                )));
+            }
+        }
         Ok(())
     }
 
