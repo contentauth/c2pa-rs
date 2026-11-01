@@ -32,7 +32,6 @@ use crate::{
     },
     crypto::cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy},
     error::{Error, Result},
-    hashed_uri::HashedUri,
     jumbf,
     jumbf::labels::{
         assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
@@ -487,7 +486,7 @@ impl Claim {
             // 2.e.i Actions icons
             if let Some(cgi_vec) = actions.software_agents() {
                 for cgi in cgi_vec {
-                    if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                    if let Some(icon) = cgi.icon() {
                         icons.push(icon);
                     }
                 }
@@ -495,14 +494,14 @@ impl Claim {
             // 2.f Template icons
             if let Some(template_vec) = actions.templates() {
                 for template in template_vec {
-                    if let Some(UriOrResource::HashedUri(icon)) = &template.icon {
+                    if let Some(icon) = &template.icon {
                         icons.push(icon);
                     }
                 }
             }
             // check top level icons
             if !icons.is_empty() {
-                Claim::verify_icons(claim, &icons, validation_log)?;
+                Claim::verify_icons(claim, &label, &icons, validation_log)?;
             }
 
             for (action_index, action) in actions.actions().iter().enumerate() {
@@ -999,12 +998,12 @@ impl Claim {
                 if let Some(assertions::SoftwareAgent::ClaimGeneratorInfo(cgi)) =
                     action.software_agent()
                 {
-                    if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                    if let Some(icon) = cgi.icon() {
                         icons.push(icon);
                     }
                 }
                 if !icons.is_empty() {
-                    Claim::verify_icons(claim, &icons, validation_log)?;
+                    Claim::verify_icons(claim, &label, &icons, validation_log)?;
                 }
 
                 // check watermarks for required softbinding
@@ -1035,13 +1034,30 @@ impl Claim {
         Ok(())
     }
 
-    // check the validity of icons in a ClaimGeneratorInfo
+    /// Checks that each icon is a hashed URI that resolves within `claim`.
+    ///
+    /// `source_uri` is the JUMBF URI of the claim or assertion containing the icons, used to
+    /// locate failures for icons that have no hashed URI of their own.
     fn verify_icons(
         claim: &Claim,
-        icon_uris: &[&HashedUri],
+        source_uri: &str,
+        icon_uris: &[&UriOrResource],
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
         for icon in icon_uris {
+            let icon = match icon {
+                UriOrResource::HashedUri(icon) => icon,
+                UriOrResource::ResourceRef(resource) => {
+                    let msg = format!(
+                        "icon must contain a hashed URI, found resource reference: {}",
+                        resource.identifier
+                    );
+                    log_item!(source_uri.to_owned(), msg.clone(), "verify_icons")
+                        .validation_status(validation_status::HASHED_URI_MISSING)
+                        .failure(validation_log, Error::ValidationRule(msg))?;
+                    continue;
+                }
+            };
             // make sure the icon uri is valid
             let (label, instance) = Claim::assertion_label_from_link(&icon.url());
             if let Some(ca) = claim.get_claim_assertion(&label, instance) {
@@ -1061,7 +1077,7 @@ impl Claim {
             } else if claim.get_databox(icon).is_some() {
                 // We have a databox with this icon
                 // todo: check the hash on the databox?
-                return Ok(());
+                continue;
             } else {
                 log_item!(icon.url(), "could not resolve icon address", "verify_icons")
                     .validation_status(validation_status::ASSERTION_MISSING)
@@ -1682,12 +1698,12 @@ impl Claim {
         if let Some(cgi_vec) = claim.claim_generator_info() {
             let mut icons = Vec::new();
             for cgi in cgi_vec {
-                if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                if let Some(icon) = cgi.icon() {
                     icons.push(icon);
                 }
             }
             if !icons.is_empty() {
-                Claim::verify_icons(claim, &icons, validation_log)?;
+                Claim::verify_icons(claim, &claim.to_claim_uri(), &icons, validation_log)?;
             }
         }
 

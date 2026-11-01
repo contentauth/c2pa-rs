@@ -283,6 +283,76 @@ fn test_bad_claim_v2_generation() {
     )));
 }
 
+// Manifests signed before resource-reference icons were converted to hashed URIs (or by
+// another producer that wrote them) remain readable, but report `hashedURI.missing` against
+// the containing actions assertion and are therefore Invalid.
+#[test]
+fn test_legacy_resource_ref_icon_reads_as_invalid() {
+    let mut context = Context::new();
+    // Simulate an older SDK that did not reject these icons after signing.
+    context.settings_mut().verify.verify_after_sign = false;
+
+    let (format, mut input_stream, mut output_stream) = create_test_streams("earth_apollo17.jpg");
+    let mut store = Store::from_context(&context);
+
+    let mut claim = Claim::new("legacy", Some("legacy"), 2);
+    claim.add_claim_generator_info(ClaimGeneratorInfo::new("legacy_icon_test"));
+
+    let mut agent = ClaimGeneratorInfo::new("LegacyApp");
+    agent.set_icon(crate::resource_store::ResourceRef::new(
+        "image/png",
+        "icon.png",
+    ));
+    let mut actions = Actions::new()
+        .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+    actions.add_software_agent(agent);
+    let actions_uri = claim.add_assertion(&actions).unwrap().url();
+
+    store.commit_claim(claim).unwrap();
+    store
+        .save_to_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            test_signer(SigningAlg::Ps256).as_ref(),
+            &context,
+        )
+        .unwrap();
+
+    output_stream.rewind().unwrap();
+    let reader = crate::Reader::default()
+        .with_stream(format, &mut output_stream)
+        .unwrap();
+
+    assert_eq!(reader.validation_state(), crate::ValidationState::Invalid);
+
+    let failures = reader
+        .validation_results()
+        .and_then(|results| results.active_manifest())
+        .map(|status| status.failure().to_vec())
+        .unwrap_or_default();
+    let (actions_label, _) = Claim::assertion_label_from_link(&actions_uri);
+    assert!(
+        failures.iter().any(|status| {
+            status.code() == validation_status::HASHED_URI_MISSING
+                && status
+                    .url()
+                    .is_some_and(|url| url.ends_with(&format!("c2pa.assertions/{actions_label}")))
+        }),
+        "{failures:?}"
+    );
+
+    let actions: Actions = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion(Actions::LABEL)
+        .unwrap();
+    assert_eq!(
+        actions.software_agents().as_ref().unwrap()[0].name,
+        "LegacyApp"
+    );
+}
+
 #[test]
 #[cfg(feature = "file_io")]
 #[ignore = "we need to make this work again"]

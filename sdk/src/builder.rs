@@ -51,7 +51,7 @@ use crate::{
     error::{Error, Result},
     jumbf::labels::manifest_label_from_uri,
     maybe_send_sync::MaybeSend,
-    resource_store::{ResourceRef, ResourceResolver, ResourceStore},
+    resource_store::{ResourceRef, ResourceResolver, ResourceStore, UriOrResource},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
@@ -1808,41 +1808,53 @@ impl Builder {
             actions = actions.update_action(update.0, update.1);
         }
 
-        if let Some(templates) = actions.templates.as_mut() {
-            for template in templates {
-                // replace icon with hashed_uri
-                template.icon = match template.icon.take() {
-                    Some(icon) => Some(icon.to_hashed_uri(&self.resources, claim)?),
-                    None => None,
-                };
+        self.resolve_action_icons(&mut actions, claim)?;
 
-                // replace software agent with hashed_uri
-                template.software_agent = match template.software_agent.take() {
-                    Some(mut info) => {
-                        if let Some(icon) = info.icon.as_mut() {
-                            let icon = icon.to_hashed_uri(&self.resources, claim)?;
-                            info.set_icon(icon);
-                        }
-                        Some(info)
-                    }
-                    agent => agent,
-                };
+        Ok(actions)
+    }
+
+    /// Converts every resource-reference icon in `actions` into a hashed URI, adding the icon
+    /// assertions (or v1 data boxes) to `claim`.
+    ///
+    /// Covers top-level `softwareAgents`, per-action `softwareAgent`, and template `icon` and
+    /// `softwareAgent` icons. Icons that are already hashed URIs are left unchanged.
+    fn resolve_action_icons(&self, actions: &mut Actions, claim: &mut Claim) -> Result<()> {
+        let resolve_info = |info: &mut ClaimGeneratorInfo, claim: &mut Claim| -> Result<()> {
+            if let Some(icon) = info.icon.as_ref() {
+                let icon = icon.to_hashed_uri(&self.resources, claim)?;
+                info.set_icon(icon);
+            }
+            Ok(())
+        };
+
+        if let Some(agents) = actions.software_agents.as_mut() {
+            for info in agents {
+                resolve_info(info, claim)?;
             }
         }
 
-        // convert icons in software agents to hashed uris
-        for action in actions.actions_mut().iter_mut() {
-            if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) = action.software_agent() {
-                if let Some(icon) = info.icon.as_ref() {
-                    let mut info = info.to_owned();
-                    let icon_uri = icon.to_hashed_uri(&self.resources, claim)?;
-                    let update = info.set_icon(icon_uri);
-                    *action = std::mem::take(action).set_software_agent(update.to_owned());
+        if let Some(templates) = actions.templates.as_mut() {
+            for template in templates {
+                if let Some(icon) = template.icon.take() {
+                    template.icon = Some(icon.to_hashed_uri(&self.resources, claim)?);
+                }
+                if let Some(info) = template.software_agent.as_mut() {
+                    resolve_info(info, claim)?;
                 }
             }
         }
 
-        Ok(actions)
+        for action in actions.actions_mut().iter_mut() {
+            if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) = action.software_agent() {
+                if matches!(info.icon, Some(UriOrResource::ResourceRef(_))) {
+                    let mut info = info.to_owned();
+                    resolve_info(&mut info, claim)?;
+                    *action = std::mem::take(action).set_software_agent(info);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the position in `pending` of the Actions assertion that must carry the
@@ -2162,6 +2174,8 @@ impl Builder {
         self.merge_actions_settings(&mut designated)?;
         self.insert_auto_inception_action(&mut designated, ingredient_map)?;
         self.insert_auto_placed_actions(&mut designated, ingredient_map)?;
+        // Settings-supplied templates and actions carry resource-reference icons.
+        self.resolve_action_icons(&mut designated, claim)?;
 
         let has_inception = designated
             .actions()
@@ -5473,6 +5487,134 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    fn sign_and_read_actions(builder: &mut Builder) -> Actions {
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "{:?}",
+            reader.validation_status()
+        );
+
+        reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap()
+    }
+
+    fn assert_resolved_icon(icon: Option<&UriOrResource>) {
+        // The reader may present a resolved icon as a resource ref to the embedded assertion.
+        let url = match icon.expect("icon missing") {
+            UriOrResource::HashedUri(uri) => uri.url(),
+            UriOrResource::ResourceRef(resource) => resource.identifier.clone(),
+        };
+        assert!(
+            url.contains(labels::ICON),
+            "icon must reference an embedded icon assertion: {icon:?}"
+        );
+    }
+
+    #[test]
+    fn test_builder_resolves_top_level_software_agent_icons() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let definition = json!({
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.created",
+                        "digitalSourceType": DigitalSourceType::Empty.to_string(),
+                        "softwareAgentIndex": 0
+                    }],
+                    "softwareAgents": [{
+                        "name": "TestApp",
+                        "icon": {"format": "image/png", "identifier": "icon.png"}
+                    }]
+                }
+            }]
+        })
+        .to_string();
+
+        let context = Context::new().with_signer(test_signer(SigningAlg::Ps256));
+        let mut builder = Builder::from_context(context)
+            .with_definition(definition.as_str())
+            .unwrap();
+        builder
+            .add_resource("icon.png", Cursor::new(b"png data"))
+            .unwrap();
+
+        let actions = sign_and_read_actions(&mut builder);
+
+        let agents = actions.software_agents().as_ref().unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_resolved_icon(agents[0].icon.as_ref());
+    }
+
+    #[test]
+    fn test_builder_resolves_settings_action_icons() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.actions.auto_created_action]
+                    enabled = true
+                    source_type = (DigitalSourceType::Empty.to_string())
+
+                    [[builder.actions.templates]]
+                    action = (c2pa_action::EDITED)
+                    icon = { format = "image/png", identifier = "icon.png" }
+                    software_agent = { name = "TemplateApp", icon = { format = "image/png", identifier = "icon.png" } }
+
+                    [[builder.actions.actions]]
+                    action = (c2pa_action::EDITED)
+                    software_agent = { name = "ActionApp", icon = { format = "image/png", identifier = "icon.png" } }
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+        let mut builder = Builder::from_context(context);
+        builder
+            .add_resource("icon.png", Cursor::new(b"png data"))
+            .unwrap();
+
+        let actions = sign_and_read_actions(&mut builder);
+
+        let templates = actions.templates().as_ref().unwrap();
+        assert_eq!(templates.len(), 1);
+        assert_resolved_icon(templates[0].icon.as_ref());
+        assert_resolved_icon(templates[0].software_agent.as_ref().unwrap().icon.as_ref());
+
+        let edited = actions
+            .actions()
+            .iter()
+            .find(|action| action.action() == c2pa_action::EDITED)
+            .unwrap();
+        let info = match edited.software_agent() {
+            Some(SoftwareAgent::ClaimGeneratorInfo(info)) => Some(info),
+            _ => None,
+        }
+        .expect("expected claim generator info software agent");
+        assert_resolved_icon(info.icon.as_ref());
     }
 
     // Per Gavin's review feedback on #2503: settings-defined actions with no inception step
