@@ -6373,6 +6373,43 @@ fn test_shared_ingredient_inputto_graph_verified_once() {
 }
 
 #[test]
+fn test_trust_eku_defaults_and_overrides() {
+    use x509_parser::extensions::ExtendedKeyUsage;
+
+    let document_signing = "1.3.6.1.5.5.7.3.36";
+    let c2pa_signing = "1.3.6.1.4.1.62558.2.1";
+    for oid in [document_signing, c2pa_signing] {
+        let eku = ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: false,
+            time_stamping: false,
+            ocsp_signing: false,
+            other: vec![oid.parse().unwrap()],
+        };
+        let default_store = Store::from_context(&Context::new());
+        assert!(default_store.ctp.has_allowed_eku(&eku).is_some());
+
+        for value in [
+            serde_json::json!(document_signing),
+            serde_json::json!(""),
+            serde_json::Value::Null,
+        ] {
+            let context = Context::new()
+                .with_settings_value("trust.trust_config", value.clone())
+                .unwrap();
+            let store = Store::from_context(&context);
+            assert_eq!(
+                store.ctp.has_allowed_eku(&eku).is_some(),
+                value.as_str() == Some(oid)
+            );
+        }
+    }
+}
+
+#[test]
 fn test_custom_anchor_ekus() {
     let mut context = crate::context::Context::new();
 

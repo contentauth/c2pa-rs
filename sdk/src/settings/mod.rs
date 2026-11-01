@@ -232,6 +232,15 @@ pub struct Trust {
 
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
+    ///
+    /// Defaults to the SDK's built-in accepted EKUs from `valid_eku_oids.cfg`.
+    /// Settings overlays preserve the current list when this field is omitted.
+    /// An explicit value replaces the list rather than extending it: JSON `null`,
+    /// Rust `None`, or an empty string clears these configured EKUs, including
+    /// document signing and C2PA signing. Passing a typed [`Settings`] to a
+    /// [`Context`](crate::Context) preserves its `None`; it does not restore defaults.
+    /// Email protection, timestamping, and OCSP signing remain accepted independently
+    /// of this setting. This setting does not add any trust anchors.
     pub trust_config: Option<String>,
 }
 
@@ -312,38 +321,14 @@ fn test_load_trust(allowed_list: &[u8]) -> Result<()> {
     }
 }
 
-// The `#[cfg(not(test))]` default is all-`None` (trivially derivable), so
-// `clippy::derivable_impls` fires on non-test builds; the `#[cfg(test)]` variant
-// loads bundled fixtures and cannot be derived.
-#[allow(clippy::derivable_impls)]
-#[allow(deprecated)]
 impl Default for Trust {
     fn default() -> Self {
-        // load test config store for unit tests
-        #[cfg(test)]
-        {
-            let mut trust = Self {
-                anchors: None,
-                trust_config: None,
-            };
-
-            trust.trust_config = Some(
-                String::from_utf8_lossy(include_bytes!(
-                    "../../tests/fixtures/certs/trust/store.cfg"
-                ))
-                .into_owned(),
-            );
-
-            trust.anchors = Some(vec![TrustAnchor::default()]);
-
-            trust
-        }
-        #[cfg(not(test))]
-        {
-            Self {
-                anchors: None,
-                trust_config: None,
-            }
+        Self {
+            #[cfg(test)]
+            anchors: Some(vec![TrustAnchor::default()]),
+            #[cfg(not(test))]
+            anchors: None,
+            trust_config: Some(include_str!("../crypto/cose/valid_eku_oids.cfg").to_owned()),
         }
     }
 }

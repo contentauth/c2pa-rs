@@ -269,18 +269,9 @@ Here's the `Settings` JSON with all default values:
     "max_decompressed_manifest_size_in_mb": 32
   },
   "signer": null,
-  "trust":{ 
-    "anchors": [
-        {
-          "trust_uri": null,
-          "trust_kind": "manifest"
-          "trust_anchors": null,
-          "trust_config": null,
-          "allowed_list": null,
-          "trusted_ica_issuers": null
-        }
-    ]
-    "trust_config": null
+  "trust": {
+    "anchors": null,
+    "trust_config": "// id-kp-emailProtection\n1.3.6.1.5.5.7.3.4\n\n// id-kp-documentSigning\n1.3.6.1.5.5.7.3.36\n\n// id-kp-timeStamping\n1.3.6.1.5.5.7.3.8\n\n// id-kp-OCSPSigning\n1.3.6.1.5.5.7.3.9\n\n// MS C2PA Signing\n1.3.6.1.4.1.311.76.59.1.9\n\n// C2PA Signing\n1.3.6.1.4.1.62558.2.1\n"
   },
   "verify": {
     "verify_after_reading": true,
@@ -401,6 +392,41 @@ Here's the `Settings` JSON with all default values:
 ```
 
 ### Production configuration
+
+New default `Settings` and `Context` instances accept the EKUs listed in
+[`valid_eku_oids.cfg`](../sdk/src/crypto/cose/valid_eku_oids.cfg), including document
+signing (`1.3.6.1.5.5.7.3.36`), Microsoft C2PA signing
+(`1.3.6.1.4.1.311.76.59.1.9`), and C2PA signing (`1.3.6.1.4.1.62558.2.1`).
+This restores acceptance of certificates with these EKUs **without** email
+protection; certificates that also have email protection remain accepted.
+No trust anchors are added to production defaults.
+
+When layering JSON or TOML onto an existing `Settings`, omitting
+`trust.trust_config` preserves its current value, whether built-in, custom, or
+cleared. An explicit value replaces the list; it does not append to it.
+An explicit JSON `null`, Rust `trust_config: None`, or an empty string clears
+these configured EKUs. Passing typed settings to `Context::with_settings`
+preserves `None` rather than restoring defaults. Consequently, document-signing
+and C2PA-signing certificates without another accepted EKU are rejected after
+clearing this setting. Email protection, timestamping, and OCSP signing remain
+accepted independently of it. TOML has no `null` value; use an empty string to
+clear the list.
+
+`Context::with_settings` replaces the context's settings (string inputs start
+from new defaults); use `Settings::with_json`, `Settings::with_toml`, or
+`Context::with_settings_value` to overlay existing values. Settings are
+instance-local: builders and readers using a shared context see the same
+policy, while independently configured contexts do not change each other.
+
+There is no top-level `trust.trust_kind` setting. Its removal from the default
+JSON example above is documentation-only, not a change to trust-list dispatch.
+The purpose belongs on each `trust.anchors[]` entry as `trust_kind`:
+`"manifest"`, `"tsa"`, or `"cawg"`. `TrustAnchor::default()` still selects
+`TrustListKind::Manifest`; JSON/TOML anchor entries must specify their kind.
+
+Per-trust-list `trust.anchors[].trust_config` values continue to overlay the
+top-level policy for a matching manifest trust list; CAWG trust configuration
+continues to use its own policy.
 
 ```json
 {
