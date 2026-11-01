@@ -97,7 +97,8 @@ jobs:
         if: matrix.target == 'wasm32-unknown-emscripten'
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly
+          # Keep in sync with EMSCRIPTEN_TOOLCHAIN in c2pa_c_ffi/Makefile.
+          toolchain: nightly-2026-10-30
           targets: wasm32-unknown-emscripten
           components: rust-src
 
