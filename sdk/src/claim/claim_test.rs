@@ -25,12 +25,12 @@ use crate::{
     context::Context,
     error::{Error, Result},
     hashed_uri::HashedUri,
-    jumbf::labels::to_assertion_uri,
+    jumbf::labels::{to_assertion_uri, to_manifest_uri, to_signature_uri},
     resource_store::UriOrResource,
     settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
-    utils::test::create_test_claim,
+    utils::test::{create_test_claim, create_test_claim_v1},
     validation_status, ClaimGeneratorInfo, DigitalSourceType,
 };
 
@@ -1149,6 +1149,60 @@ fn test_verify_claim_generator_info_missing() {
                 == Some(validation_status::CLAIM_MALFORMED)),
         "should log CLAIM_MALFORMED"
     );
+}
+
+/// Runs `verify_signature_box_uri` on `claim` with its `signature` field set to `signature`.
+/// Returns whether it logged CLAIM_SIGNATURE_MISSING.
+fn signature_box_uri_missing(mut claim: Claim, signature: String) -> bool {
+    claim.signature = signature;
+    let mut validation_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    let result = Claim::verify_signature_box_uri(&claim, &mut validation_log);
+    let logged = validation_log.logged_items().iter().any(|item| {
+        item.validation_status.as_deref() == Some(validation_status::CLAIM_SIGNATURE_MISSING)
+    });
+    assert_eq!(result.is_err(), logged);
+    logged
+}
+
+#[test]
+fn test_verify_signature_box_uri_absolute_to_own_manifest() {
+    let claim = create_test_claim().expect("create test claim");
+    let uri = to_signature_uri(claim.label());
+    assert!(!signature_box_uri_missing(claim, uri));
+}
+
+#[test]
+fn test_verify_signature_box_uri_absolute_to_other_manifest() {
+    let claim = create_test_claim().expect("create test claim");
+    let uri = to_signature_uri("urn:c2pa:2e52408b-4fbe-4557-8e84-e7e4a21a5107");
+    assert!(signature_box_uri_missing(claim, uri));
+}
+
+#[test]
+fn test_verify_signature_box_uri_absolute_to_other_box() {
+    let claim = create_test_claim().expect("create test claim");
+    let uri = format!("{}/c2pa.assertions", to_manifest_uri(claim.label()));
+    assert!(signature_box_uri_missing(claim, uri));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2() {
+    // A relative URI does not name the manifest label, so it cannot bind the label to the
+    // signed claim. A V2 claim must use an absolute URI.
+    let claim = create_test_claim().expect("create test claim");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v1() {
+    let claim = create_test_claim_v1().expect("create test claim");
+    assert!(!signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
 }
 
 #[test]
