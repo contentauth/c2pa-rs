@@ -1344,13 +1344,26 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be read.
     fn old_from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
+        // Entries are read whole, so only stored ones are accepted: a compressed entry could
+        // decompress to far more than the archive's size. (Before ZIP decompression was
+        // compiled in, a compressed entry couldn't be read at all.)
+        fn read_stored(file: &mut zip::read::ZipFile<'_, impl Read>) -> Result<Vec<u8>> {
+            if file.compression() != zip::CompressionMethod::Stored {
+                return Err(Error::BadParam(
+                    "builder archive entries must be stored, not compressed".to_string(),
+                ));
+            }
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)?;
+            Ok(data)
+        }
+
         let mut zip = ZipArchive::new(stream).map_err(|e| Error::OtherError(Box::new(e)))?;
         // First read the manifest.json file.
         let mut manifest_file = zip
             .by_name("manifest.json")
             .map_err(|e| Error::OtherError(Box::new(e)))?;
-        let mut manifest_buf = Vec::new();
-        manifest_file.read_to_end(&mut manifest_buf)?;
+        let manifest_buf = read_stored(&mut manifest_file)?;
         let mut builder: Builder =
             serde_json::from_slice(&manifest_buf).map_err(|e| Error::OtherError(Box::new(e)))?;
         drop(manifest_file);
@@ -1368,8 +1381,7 @@ impl Builder {
                 // Validate the full path from the archive to prevent path traversal
                 let _sanitized_path = sanitize_archive_path(&file_name)?;
 
-                let mut data = Vec::new();
-                file.read_to_end(&mut data)?;
+                let data = read_stored(&mut file)?;
                 let id = file_name
                     .split('/')
                     .nth(1)
@@ -1388,8 +1400,7 @@ impl Builder {
                 // Validate the full path from the archive to prevent path traversal
                 let _sanitized_path = sanitize_archive_path(&file_name)?;
 
-                let mut data = Vec::new();
-                file.read_to_end(&mut data)?;
+                let data = read_stored(&mut file)?;
                 let manifest_label = file_name
                     .split('/')
                     .nth(1)
@@ -1414,8 +1425,7 @@ impl Builder {
                 // Validate the full path from the archive to prevent path traversal
                 let _sanitized_path = sanitize_archive_path(&file_name)?;
 
-                let mut data = Vec::new();
-                file.read_to_end(&mut data)?;
+                let data = read_stored(&mut file)?;
                 let index: usize = file_name
                     .split('/')
                     .nth(1)
@@ -3929,6 +3939,23 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
+
+    #[test]
+    fn old_archive_rejects_compressed_entries() {
+        // A deflated entry can expand to far more than the archive; it is not read.
+        let mut archive = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(&mut archive);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file("manifest.json", options).unwrap();
+        io::Write::write_all(&mut writer, b"{}").unwrap();
+        writer.finish().unwrap();
+        archive.rewind().unwrap();
+        assert!(matches!(
+            Builder::old_from_archive(archive),
+            Err(Error::BadParam(_))
+        ));
+    }
     #[cfg(feature = "file_io")]
     use crate::utils::test::fixture_path;
     use crate::{
