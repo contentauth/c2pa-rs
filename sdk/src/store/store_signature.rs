@@ -101,6 +101,8 @@ impl Store {
         box_size: usize,
         settings: &Settings,
     ) -> Result<Vec<u8>> {
+        claim.check_related_assertion_refs()?;
+
         let claim_bytes = claim.data()?;
 
         // no verification of timestamp trust while signing
