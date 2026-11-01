@@ -1077,10 +1077,18 @@ impl Claim {
     fn classify_hash_verification_error(
         e: &Error,
         malformed: &'static str,
+        unknown_box: Option<&'static str>,
         mismatch: &'static str,
     ) -> &'static str {
         match e {
             Error::C2PAValidation(es) if es == malformed => malformed,
+            // The box-hash verifier signals a box present in the asset but
+            // absent from the list by returning this sentinel string (spec
+            // §14.12.3's `unknownBox`, distinct from a plain hash mismatch).
+            Error::HashMismatch(es) => match unknown_box {
+                Some(ub) if es == ub => ub,
+                _ => mismatch,
+            },
             _ => mismatch,
         }
     }
@@ -1368,6 +1376,7 @@ impl Claim {
                             let err_str = Self::classify_hash_verification_error(
                                 &e,
                                 validation_status::ASSERTION_BMFFHASH_MALFORMED,
+                                None,
                                 validation_status::ASSERTION_BMFFHASH_MISMATCH,
                             );
 
@@ -1478,6 +1487,7 @@ impl Claim {
                             let err_str = Self::classify_hash_verification_error(
                                 &e,
                                 validation_status::ASSERTION_BOXESHASH_MALFORMED,
+                                Some(validation_status::ASSERTION_BOXHASH_UNKNOWN_BOX),
                                 validation_status::ASSERTION_BOXHASH_MISMATCH,
                             );
 
