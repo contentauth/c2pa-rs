@@ -147,6 +147,24 @@ fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<Option<usize>
     Ok(insertion_point)
 }
 
+/// The number of leading segments (after SOI) that a new C2PA APP11 segment is inserted
+/// after: a JFIF APP0 and an Exif APP1, which their formats require at the start of the file
+/// (JFIF 1.02; Exif 2.32 §4.5.4, "APP1 shall be recorded immediately after the SOI marker").
+/// Inserting before any later segment also keeps an MPF APP2 valid: its image offsets are
+/// relative to its own MP header, which moves with the images that follow it.
+///
+/// `segments` yields each segment's marker and the start of its payload.
+fn c2pa_insertion_index<'a>(segments: impl IntoIterator<Item = (u8, &'a [u8])>) -> usize {
+    segments
+        .into_iter()
+        .take_while(|(marker, payload)| match *marker {
+            APP0 => true,
+            markers::APP1 => payload.starts_with(EXIF_SIGNATURE),
+            _ => false,
+        })
+        .count()
+}
+
 pub struct JpegIO {}
 
 impl C2paReader for JpegIO {
@@ -264,16 +282,16 @@ impl C2paWriter for JpegIO {
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
+        // An existing manifest keeps its place, even directly after SOI (index 0, since the
+        // Jpeg::from_bytes Vec does not contain the SOI marker): get_object_locations and
+        // get_box_map report it there.
         let insertion_point = match delete_cai_segments(&mut jpeg)? {
-            Some(i) if i > 0 => i, // note the Jpeg::from_bytes Vec does not contain the SOI marker
-            _ => {
-                // insert after last APP0 if it exists (JFIF compatible), otherwise at the beginning (after SOI)
-                let app0_index = jpeg
-                    .segments()
+            Some(i) => i,
+            None => c2pa_insertion_index(
+                jpeg.segments()
                     .iter()
-                    .rposition(|segment| segment.marker() == APP0);
-                app0_index.map_or(0, |i| i + 1)
-            }
+                    .map(|segment| (segment.marker(), segment.contents().as_ref())),
+            ),
         };
 
         let mut seg_chucks = store_bytes.chunks(MAX_JPEG_MARKER_SIZE);
@@ -355,9 +373,11 @@ impl C2paWriter for JpegIO {
         }
 
         let placeholder = if get_cai_segments(&jpeg)?.is_empty() {
-            let app0_index = jpeg.segments().iter().rposition(|s| s.marker() == APP0);
-
-            let placeholder_index = app0_index.map_or(0, |i| i + 1);
+            let placeholder_index = c2pa_insertion_index(
+                jpeg.segments()
+                    .iter()
+                    .map(|s| (s.marker(), s.contents().as_ref())),
+            );
             // len computed as done in write_cai
             // marker + length_field + CI + EN + Z + data
             let placeholder_len: u64 = 2 + 2 + 2 + 2 + 4 + 50;
@@ -905,9 +925,10 @@ impl AssetBoxHash for JpegIO {
         let (mut box_maps, app_prefixes) = make_box_maps(input_stream)?;
 
         // If no C2PA APP11 segment exists in the source, synthesize a placeholder
-        // entry at the standard insertion point (immediately after the 2-byte SOI
-        // marker at offset 0).  This is needed on the signing path so that the box
-        // list covers the full file layout after embedding: verification re-derives
+        // entry at the standard insertion point (see `c2pa_insertion_index`: after
+        // SOI and any leading JFIF APP0 / Exif APP1).  This is needed on the
+        // signing path so that the box list covers the full file layout after
+        // embedding: verification re-derives
         // byte positions from the current (embedded) file, and the C2PA entry must
         // be present so the name-matching loop in `verify_stream_hash` can skip it.
         // When a real C2PA segment is already present (e.g. during verification or
@@ -918,29 +939,30 @@ impl AssetBoxHash for JpegIO {
 
         if !has_c2pa {
             let mut c2pa_box = BoxMap::new(vec![C2PA_BOXHASH.to_string()], 0, 0).excluded();
-            // SOI is always first; insert the C2PA box right after it or after APP0 if it exists.
-            let app0_index = box_maps
-                .iter()
-                .position(|bm| bm.names.first().is_some_and(|n| n == "APP0"));
-            match app0_index {
-                Some(i) => {
-                    let app0_box = &box_maps[i];
-                    input_stream.seek(std::io::SeekFrom::Start(app0_box.range_start))?;
-                    let size = get_seg_size(input_stream)?;
-
-                    c2pa_box.range_start = app0_box.range_start + size as u64;
-                    box_maps.insert(i + 1, c2pa_box)
-                }
-                None if box_maps.len() > 1 => {
-                    let box0 = &box_maps[0];
-                    input_stream.seek(std::io::SeekFrom::Start(box0.range_start))?;
-                    let size = get_seg_size(input_stream)?;
-
-                    c2pa_box.range_start = box0.range_start + size as u64;
-                    box_maps.insert(1, c2pa_box)
-                }
-                None => return Err(Error::InvalidAsset("JPEG file has no segments".to_string())),
+            if box_maps.len() < 2 {
+                return Err(Error::InvalidAsset("JPEG file has no segments".to_string()));
+            }
+            // SOI is always first; the C2PA box goes after it and any leading JFIF APP0 /
+            // Exif APP1, at the same point `write_c2pa` inserts the APP11 segment.
+            let marker_of = |name: &str| match name {
+                "APP0" => APP0,
+                "APP1" => markers::APP1,
+                _ => 0,
             };
+            let index = 1 + c2pa_insertion_index(box_maps[1..].iter().map(|bm| {
+                let name = bm.names.first().map(String::as_str).unwrap_or_default();
+                let prefix = app_prefixes
+                    .get(&bm.range_start)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                (marker_of(name), prefix)
+            }));
+            let previous = &box_maps[index - 1];
+            input_stream.seek(std::io::SeekFrom::Start(previous.range_start))?;
+            let size = get_seg_size(input_stream)?;
+
+            c2pa_box.range_start = previous.range_start + size as u64;
+            box_maps.insert(index, c2pa_box);
         }
 
         for bm in box_maps.iter_mut() {
@@ -1165,6 +1187,123 @@ pub mod tests {
             b"some vendor's private data"
         ));
         assert!(!app_segment_is_recognized_metadata("COM", b"Exif\0\0stuff"));
+    }
+
+    #[test]
+    fn test_c2pa_insertion_index() {
+        let jfif = (APP0, b"JFIF\0".as_slice());
+        let exif = (markers::APP1, b"Exif\0\0II*\0".as_slice());
+        let xmp = (markers::APP1, b"http://ns.adobe.com/xap/1.0/\0".as_slice());
+        let mpf = (markers::APP2, b"MPF\0".as_slice());
+        let dqt = (DQT, b"\0".as_slice());
+
+        assert_eq!(c2pa_insertion_index([dqt]), 0);
+        assert_eq!(c2pa_insertion_index([jfif, dqt]), 1);
+        // Exif APP1 must stay immediately after SOI (Exif 2.32 §4.5.4).
+        assert_eq!(c2pa_insertion_index([exif, mpf, dqt]), 1);
+        assert_eq!(c2pa_insertion_index([jfif, exif, mpf, dqt]), 2);
+        // An XMP APP1 is not one of the leading segments.
+        assert_eq!(c2pa_insertion_index([xmp, exif, dqt]), 0);
+    }
+
+    // C2PA 2.5 applies the JPEG method to Exif compressed files, whose APP1 shall be
+    // recorded immediately after SOI: the APP11 segment goes after it, and the hash
+    // exclusion and box map agree with where it is written.
+    #[test]
+    fn test_write_c2pa_keeps_exif_app1_first() {
+        let source = include_bytes!("../../tests/fixtures/no_manifest.jpg");
+        let jpeg_io = JpegIO {};
+        let store = jpeg_io
+            .read_c2pa(&mut Cursor::new(include_bytes!(
+                "../../tests/fixtures/CA.jpg"
+            )))
+            .unwrap();
+
+        let mut input = Cursor::new(source.to_vec());
+        let locations = jpeg_io.get_object_locations(&mut input).unwrap();
+        let placeholder = locations
+            .iter()
+            .find(|l| l.htype == ObjectType::C2pa)
+            .unwrap()
+            .offset;
+
+        let mut input = Cursor::new(source.to_vec());
+        let mut output = Cursor::new(Vec::new());
+        jpeg_io.write_c2pa(&mut input, &mut output, &store).unwrap();
+        let signed = output.into_inner();
+
+        let jpeg = Jpeg::from_bytes(signed.clone().into()).unwrap();
+        let segments = jpeg.segments();
+        assert_eq!(segments[0].marker(), markers::APP1);
+        assert!(segments[0].contents().starts_with(EXIF_SIGNATURE));
+        assert_eq!(segments[1].marker(), markers::APP11);
+
+        let app11_offset = 2 + 4 + segments[0].contents().len() as u64;
+        assert_eq!(placeholder, app11_offset);
+
+        let mut signed_stream = Cursor::new(signed.clone());
+        let locations = jpeg_io.get_object_locations(&mut signed_stream).unwrap();
+        let cai = locations
+            .iter()
+            .find(|l| l.htype == ObjectType::C2pa)
+            .unwrap();
+        assert_eq!(cai.offset, app11_offset);
+
+        let mut source_stream = Cursor::new(source.to_vec());
+        let box_map = jpeg_io.get_box_map(&mut source_stream).unwrap();
+        let c2pa_box = box_map
+            .iter()
+            .find(|bm| bm.names.first().is_some_and(|n| n == C2PA_BOXHASH))
+            .unwrap();
+        assert_eq!(c2pa_box.range_start, app11_offset);
+
+        let mut signed_stream = Cursor::new(signed);
+        assert_eq!(jpeg_io.read_c2pa(&mut signed_stream).unwrap(), store);
+    }
+
+    #[test]
+    fn test_write_c2pa_keeps_existing_manifest_after_soi() {
+        // An older signer put the manifest directly after SOI, ahead of the Exif APP1.
+        let source = include_bytes!("../../tests/fixtures/no_manifest.jpg");
+        let jpeg_io = JpegIO {};
+        let store = jpeg_io
+            .read_c2pa(&mut Cursor::new(include_bytes!(
+                "../../tests/fixtures/CA.jpg"
+            )))
+            .unwrap();
+        let mut output = Cursor::new(Vec::new());
+        jpeg_io
+            .write_c2pa(&mut Cursor::new(source.to_vec()), &mut output, &store)
+            .unwrap();
+        let mut jpeg = Jpeg::from_bytes(output.into_inner().into()).unwrap();
+        let segments = jpeg.segments_mut();
+        let app11: Vec<_> = segments
+            .iter()
+            .filter(|s| s.marker() == markers::APP11)
+            .cloned()
+            .collect();
+        segments.retain(|s| s.marker() != markers::APP11);
+        for (i, segment) in app11.into_iter().enumerate() {
+            segments.insert(i, segment);
+        }
+        let mut manifest_first = Vec::new();
+        jpeg.encoder().write_to(&mut manifest_first).unwrap();
+
+        // Re-signing leaves it there, where get_object_locations reports it.
+        let mut input = Cursor::new(manifest_first.clone());
+        let locations = jpeg_io.get_object_locations(&mut input).unwrap();
+        let cai = locations
+            .iter()
+            .find(|l| l.htype == ObjectType::C2pa)
+            .unwrap();
+        assert_eq!(cai.offset, 2);
+
+        let mut output = Cursor::new(Vec::new());
+        jpeg_io
+            .write_c2pa(&mut Cursor::new(manifest_first), &mut output, &store)
+            .unwrap();
+        let jpeg = Jpeg::from_bytes(output.into_inner().into()).unwrap();
+        assert_eq!(jpeg.segments()[0].marker(), markers::APP11);
     }
 
     #[test]
