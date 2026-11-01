@@ -1008,6 +1008,49 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// Parquet files carry the manifest in the footer's `key_value_metadata`, bound by a data
+/// hash that excludes only the Base64-encoded manifest.
+#[test]
+fn test_builder_sign_parquet() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for data in [
+        &include_bytes!("fixtures/sample1.parquet")[..],
+        &include_bytes!("fixtures/sample2_no_kv.parquet")[..],
+    ] {
+        for format in ["parquet", "application/vnd.apache.parquet"] {
+            let mut builder = Builder::from_shared_context(&context);
+            builder.set_intent(BuilderIntent::Edit);
+            let mut dest = Cursor::new(Vec::new());
+            builder.save_to_stream(format, &mut Cursor::new(data), &mut dest)?;
+
+            dest.rewind()?;
+            let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+            assert_eq!(
+                reader.validation_state(),
+                ValidationState::Trusted,
+                "{format}"
+            );
+
+            // Changing column data (just after the leading magic), or the footer outside
+            // the manifest (the last byte before the footer length), is detected.
+            let signed = dest.into_inner();
+            for position in [4, signed.len() - 9] {
+                let mut tampered = signed.clone();
+                tampered[position] ^= 0x01;
+                let state = Reader::from_shared_context(&context)
+                    .with_stream(format, Cursor::new(&tampered))
+                    .map(|r| r.validation_state());
+                assert!(
+                    !matches!(state, Ok(ValidationState::Trusted)),
+                    "{format}: tampering at byte {position} was not detected"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
