@@ -634,6 +634,118 @@ mod tests {
         ));
     }
 
+    /// CA validity failures reject trust and report the C2PA 2.5 section 14.8.2 code.
+    #[c2pa_macros::c2pa_test_async]
+    async fn ca_outside_validity_reports_both_failure_codes() {
+        use std::borrow::Cow;
+
+        use coset::cbor::value::Value;
+
+        use super::*;
+        use crate::crypto::{
+            asn1::{rfc3161::MessageImprint, AlgorithmIdentifier, GeneralizedTime},
+            cert_chain_pem_to_der,
+        };
+
+        let tst_info = TstInfo {
+            version: 1.into(),
+            policy: "1.2.3".parse().unwrap(),
+            message_imprint: MessageImprint {
+                hash_algorithm: AlgorithmIdentifier {
+                    algorithm: "2.16.840.1.101.3.4.2.1".parse().unwrap(),
+                },
+                hashed_message: bcder::OctetString::new(bytes::Bytes::from_static(&[0; 32])),
+            },
+            serial_number: 1.into(),
+            gen_time: GeneralizedTime::from_der_bytes(b"\x18\x0f20260901000000Z").unwrap(),
+            accuracy: None,
+            ordering: None,
+            nonce: None,
+            tsa: None,
+            extensions: None,
+        };
+
+        for (chain_pem, root_pem, outside_validity) in [
+            (
+                include_bytes!(
+                    "../../../tests/fixtures/crypto/cose/chain_trust_expired_intermediate.pub"
+                )
+                .as_slice(),
+                include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_root.pub")
+                    .as_slice(),
+                true,
+            ),
+            (
+                include_bytes!(
+                    "../../../tests/fixtures/crypto/cose/chain_trust_future_intermediate.pub"
+                )
+                .as_slice(),
+                include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_future_root.pub")
+                    .as_slice(),
+                true,
+            ),
+            (
+                include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_valid.pub")
+                    .as_slice(),
+                include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_root.pub")
+                    .as_slice(),
+                false,
+            ),
+        ] {
+            let certs = cert_chain_pem_to_der(chain_pem).unwrap();
+            let mut sign1 = CoseSign1::default();
+            sign1.protected.header.rest.push((
+                coset::Label::Int(coset::iana::HeaderParameter::X5Chain as i64),
+                Value::Array(certs.into_iter().map(Value::Bytes).collect()),
+            ));
+            let mut policy = CertificateTrustPolicy::new();
+            policy
+                .add_trust_anchors(
+                    root_pem,
+                    "http://some_trust_list",
+                    TrustAnchorType::Manifest,
+                    None,
+                )
+                .unwrap();
+            let verifier = Verifier::VerifyTrustPolicy(Cow::Borrowed(&policy));
+
+            for is_async in [false, true] {
+                let mut log = StatusTracker::default();
+                let result = if is_async {
+                    verifier
+                        .verify_trust_async(&sign1, Some(&tst_info), &mut log)
+                        .await
+                } else {
+                    verifier.verify_trust(&sign1, Some(&tst_info), &mut log)
+                };
+                if outside_validity {
+                    assert!(matches!(
+                        result,
+                        Err(CoseError::CertificateTrustError(
+                            CertificateTrustError::CaCertificateOutsideValidity
+                        ))
+                    ));
+                    assert!(log.has_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY));
+                    assert!(log.has_status(SIGNING_CREDENTIAL_UNTRUSTED));
+                    assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+                    assert_eq!(log.logged_items().len(), 2);
+                } else {
+                    assert_eq!(
+                        result.unwrap(),
+                        (
+                            TrustAnchorType::Manifest,
+                            Some("http://some_trust_list".into())
+                        )
+                    );
+                    assert!(log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+                    assert!(!log.has_any_error());
+                    assert!(!log.has_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY));
+                    assert!(!log.has_status(SIGNING_CREDENTIAL_UNTRUSTED));
+                }
+            }
+        }
+    }
+
     /// A certificate that fails the certificate profile check is not a trusted
     /// signing credential, even when it chains to a trust anchor.
     #[c2pa_macros::c2pa_test_async]

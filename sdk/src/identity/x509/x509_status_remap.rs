@@ -129,14 +129,23 @@ mod tests {
         let mut st = StatusTracker::default();
         log_item!("l", "d", "f")
             .validation_status(validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
-            .informational(&mut st);
+            .failure_no_throw(
+                &mut st,
+                crate::crypto::cose::CertificateTrustError::CaCertificateOutsideValidity,
+            );
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+            .failure_no_throw(
+                &mut st,
+                crate::crypto::cose::CertificateTrustError::CaCertificateOutsideValidity,
+            );
 
         remap_x509_cose_status_codes(&mut st, 0);
 
-        assert_eq!(
-            status_of(&st, 0),
-            validation_status::CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY
-        );
+        // CAWG Identity Assertion 1.3 sections 8.2.2.1 and 8.2.2.2.2.
+        assert_eq!(status_of(&st, 0), "cawg.x509.signature.outside_validity");
+        assert_eq!(status_of(&st, 1), "cawg.x509.credential.untrusted");
+        assert!(st.has_any_error());
     }
 
     #[test]
