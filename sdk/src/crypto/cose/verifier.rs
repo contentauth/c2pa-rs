@@ -29,15 +29,15 @@ use crate::{
         base64::encode,
         cose::{
             cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
-            signing_alg_from_sign1, CertificateInfo, CertificateTrustPolicy, CoseError,
-            TrustAnchorType,
+            signing_alg_from_sign1, CertificateInfo, CertificateTrustError, CertificateTrustPolicy,
+            CoseError, TrustAnchorType,
         },
     },
     log_item,
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
-        ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
-        SIGNING_CREDENTIAL_UNTRUSTED,
+        ALGORITHM_UNSUPPORTED, CLAIM_SIGNATURE_OUTSIDE_VALIDITY, SIGNING_CREDENTIAL_INVALID,
+        SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
     },
 };
 
@@ -137,6 +137,7 @@ impl Verifier<'_> {
         }
 
         // check the trust for this item
+        let trust_log_start = validation_log.logged_items().len();
         let result = if _sync {
             self.verify_trust(&sign1, tst_info, validation_log)
         } else {
@@ -161,13 +162,24 @@ impl Verifier<'_> {
         };
 
         // check the profile of the cert
-        if _sync {
+        let profile_log_start = validation_log.logged_items().len();
+        let profile_failed = if _sync {
             self.verify_profile(&sign1, tst_info, override_ekus, validation_log)
         } else {
             self.verify_profile_async(&sign1, tst_info, override_ekus, validation_log)
                 .await
         }
-        .ok(); // Ignore errors here - they have already been logged.
+        .is_err(); // Errors have already been logged.
+
+        // A certificate that fails the profile check is not a trusted signing
+        // credential, even when it chains to a trust anchor.
+        if profile_failed
+            || validation_log.logged_items()[profile_log_start..]
+                .iter()
+                .any(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_INVALID))
+        {
+            validation_log.remove_status_since(trust_log_start, SIGNING_CREDENTIAL_TRUSTED);
+        }
 
         // Reconstruct payload and additional data as it should have been at time of
         // signing.
@@ -333,11 +345,29 @@ impl Verifier<'_> {
 
                 Ok((tat, Some(trust_uri)))
             }
-            Err(e) => Err(
-                log_item!("", "signing certificate untrusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                    .failure_as_err(validation_log, e.into()),
-            ),
+            Err(e) => {
+                // C2PA requires every CA certificate in the chain to be valid at
+                // the validation time, and reports a failure as
+                // claimSignature.outsideValidity.
+                if e == CertificateTrustError::CaCertificateOutsideValidity {
+                    log_item!(
+                        "",
+                        "certificate chain outside validity period",
+                        "verify_cose"
+                    )
+                    .validation_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
+                    .failure_no_throw(
+                        validation_log,
+                        CertificateTrustError::CaCertificateOutsideValidity,
+                    );
+                }
+
+                Err(
+                    log_item!("", "signing certificate untrusted", "verify_cose")
+                        .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                        .failure_as_err(validation_log, e.into()),
+                )
+            }
         }
     }
 }
@@ -389,6 +419,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use c2pa_raw_crypto::SigningAlg;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::prelude::{FromDer, Pem, X509Certificate};
 
     use super::spki_matches_signing_alg;
@@ -436,5 +468,301 @@ mod tests {
         assert!(!key_matches(ES256, SigningAlg::Es512));
         assert!(!key_matches(ES384, SigningAlg::Es256));
         assert!(!key_matches(ES512, SigningAlg::Es256));
+    }
+
+    /// CA validity failures reject trust and report the C2PA 2.5 section 14.8.2 code.
+    #[c2pa_macros::c2pa_test_async]
+    async fn ca_outside_validity_reports_both_failure_codes() {
+        use std::borrow::Cow;
+
+        use coset::cbor::value::Value;
+
+        use super::*;
+        use crate::crypto::{
+            asn1::{rfc3161::MessageImprint, AlgorithmIdentifier, GeneralizedTime},
+            cert_chain_pem_to_der,
+        };
+
+        let tst_info = TstInfo {
+            version: 1.into(),
+            policy: "1.2.3".parse().unwrap(),
+            message_imprint: MessageImprint {
+                hash_algorithm: AlgorithmIdentifier {
+                    algorithm: "2.16.840.1.101.3.4.2.1".parse().unwrap(),
+                },
+                hashed_message: bcder::OctetString::new(bytes::Bytes::from_static(&[0; 32])),
+            },
+            serial_number: 1.into(),
+            gen_time: GeneralizedTime::from_der_bytes(b"\x18\x0f20260901000000Z").unwrap(),
+            accuracy: None,
+            ordering: None,
+            nonce: None,
+            tsa: None,
+            extensions: None,
+        };
+
+        for (chain_pem, root_pem, outside_validity) in [
+            (
+                include_bytes!(
+                    "../../../tests/fixtures/crypto/cose/chain_trust_expired_intermediate.pub"
+                )
+                .as_slice(),
+                include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_root.pub")
+                    .as_slice(),
+                true,
+            ),
+            (
+                include_bytes!(
+                    "../../../tests/fixtures/crypto/cose/chain_trust_future_intermediate.pub"
+                )
+                .as_slice(),
+                include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_future_root.pub")
+                    .as_slice(),
+                true,
+            ),
+            (
+                include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_valid.pub")
+                    .as_slice(),
+                include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_root.pub")
+                    .as_slice(),
+                false,
+            ),
+        ] {
+            let certs = cert_chain_pem_to_der(chain_pem).unwrap();
+            let mut sign1 = CoseSign1::default();
+            sign1.protected.header.rest.push((
+                coset::Label::Int(coset::iana::HeaderParameter::X5Chain as i64),
+                Value::Array(certs.into_iter().map(Value::Bytes).collect()),
+            ));
+            let mut policy = CertificateTrustPolicy::new();
+            policy
+                .add_trust_anchors(
+                    root_pem,
+                    "http://some_trust_list",
+                    TrustAnchorType::Manifest,
+                    None,
+                )
+                .unwrap();
+            let verifier = Verifier::VerifyTrustPolicy(Cow::Borrowed(&policy));
+
+            for is_async in [false, true] {
+                let mut log = StatusTracker::default();
+                let result = if is_async {
+                    verifier
+                        .verify_trust_async(&sign1, Some(&tst_info), &mut log)
+                        .await
+                } else {
+                    verifier.verify_trust(&sign1, Some(&tst_info), &mut log)
+                };
+                if outside_validity {
+                    assert!(matches!(
+                        result,
+                        Err(CoseError::CertificateTrustError(
+                            CertificateTrustError::CaCertificateOutsideValidity
+                        ))
+                    ));
+                    assert!(log.has_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY));
+                    assert!(log.has_status(SIGNING_CREDENTIAL_UNTRUSTED));
+                    assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+                    assert_eq!(log.logged_items().len(), 2);
+                } else {
+                    assert_eq!(
+                        result.unwrap(),
+                        (
+                            TrustAnchorType::Manifest,
+                            Some("http://some_trust_list".into())
+                        )
+                    );
+                    assert!(log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+                    assert!(!log.has_any_error());
+                    assert!(!log.has_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY));
+                    assert!(!log.has_status(SIGNING_CREDENTIAL_UNTRUSTED));
+                }
+            }
+        }
+    }
+
+    /// A certificate that fails the certificate profile check is not a trusted
+    /// signing credential, even when it chains to a trust anchor.
+    #[c2pa_macros::c2pa_test_async]
+    async fn profile_failure_is_not_trusted() {
+        use std::borrow::Cow;
+
+        use c2pa_raw_crypto::signer_from_private_key;
+
+        use super::Verifier;
+        use crate::{
+            crypto::{
+                cert_chain_pem_to_der,
+                cose::{CertificateTrustPolicy, TrustAnchorType},
+            },
+            settings::Settings,
+            signer::RawSignerWrapper,
+            status_tracker::StatusTracker,
+            validation_results::validation_codes::{
+                SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
+            },
+        };
+
+        // The leaf chains to the root, but its only EKU is id-kp-documentSigning,
+        // which this trust policy does not allow, so it fails the certificate profile.
+        let cert_chain = include_bytes!("../../../tests/fixtures/crypto/cose/disallowed_eku.pub");
+        let private_key = include_bytes!("../../../tests/fixtures/crypto/cose/disallowed_eku.priv");
+        let root = include_bytes!("../../../tests/fixtures/crypto/cose/key_usage_root.pub");
+
+        let signer = RawSignerWrapper::new(
+            signer_from_private_key(private_key, SigningAlg::Es256).unwrap(),
+            cert_chain_pem_to_der(cert_chain).unwrap(),
+            None,
+        );
+
+        let mut claim = crate::claim::Claim::new("profile_test", Some("contentauth"), 1);
+        claim.build().unwrap();
+        let claim_bytes = claim.data().unwrap();
+
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
+        let cose_bytes =
+            crate::cose_sign::sign_claim(&claim_bytes, &signer, 10000, &settings).unwrap();
+
+        let sign1 =
+            super::parse_cose_sign1(&cose_bytes, &claim_bytes, &mut StatusTracker::default())
+                .unwrap();
+        for (allow_eku, require_missing_eku) in [(false, false), (true, true), (true, false)] {
+            let mut ctp = CertificateTrustPolicy::new();
+            ctp.add_trust_anchors(
+                root,
+                "http://some_trust_list",
+                TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+            if allow_eku {
+                ctp.add_valid_ekus(b"1.3.6.1.5.5.7.3.36");
+            }
+            if require_missing_eku {
+                ctp.add_mandatory_ekus(b"1.3.6.1.5.5.7.3.8");
+            }
+            let verifier = Verifier::VerifyTrustPolicy(Cow::Owned(ctp));
+            let invalid = !allow_eku || require_missing_eku;
+            for use_async in [false, true] {
+                let mut profile_log = StatusTracker::default();
+                let profile = if use_async {
+                    verifier
+                        .verify_profile_async(&sign1, None, None, &mut profile_log)
+                        .await
+                } else {
+                    verifier.verify_profile(&sign1, None, None, &mut profile_log)
+                };
+                assert_eq!(profile.is_err(), !allow_eku);
+                assert_eq!(profile_log.has_status(SIGNING_CREDENTIAL_INVALID), invalid);
+
+                let mut log = StatusTracker::default();
+                crate::log_item!(
+                    "previous claim",
+                    "trusted",
+                    "profile_failure_is_not_trusted"
+                )
+                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .success(&mut log);
+                crate::log_item!(
+                    "previous claim",
+                    "invalid",
+                    "profile_failure_is_not_trusted"
+                )
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
+                .failure_no_throw(&mut log, super::CoseError::UnsupportedSigningAlgorithm);
+                let verification_log_start = log.logged_items().len();
+                let result = if use_async {
+                    verifier
+                        .verify_signature_async(&cose_bytes, &claim_bytes, b"", None, &mut log)
+                        .await
+                } else {
+                    verifier.verify_signature(&cose_bytes, &claim_bytes, b"", None, &mut log)
+                };
+                assert!(result.unwrap().validated);
+                assert_eq!(
+                    log.logged_items()[verification_log_start..]
+                        .iter()
+                        .any(|item| item.validation_status.as_deref()
+                            == Some(SIGNING_CREDENTIAL_INVALID)),
+                    invalid
+                );
+                assert_eq!(
+                    log.logged_items()
+                        .iter()
+                        .filter(|item| item.validation_status.as_deref()
+                            == Some(SIGNING_CREDENTIAL_TRUSTED))
+                        .count(),
+                    if invalid { 1 } else { 2 }
+                );
+                assert_eq!(log.logged_items()[0].label, "previous claim");
+            }
+        }
+    }
+
+    /// A certificate that chains to a trust anchor but fails a rule only the certificate
+    /// profile enforces is not a trusted signing credential.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn profile_failure_without_key_usage_is_not_trusted() {
+        use std::borrow::Cow;
+
+        use c2pa_raw_crypto::signer_from_private_key;
+
+        use super::Verifier;
+        use crate::{
+            crypto::cose::{
+                cose_signer::RawSignerCoseSigner, sign, CertificateTrustPolicy, TimeStampStorage,
+                TrustAnchorType,
+            },
+            status_tracker::StatusTracker,
+            utils::ephemeral_cert::generate_ephemeral_chain_with_ee_skip,
+            validation_results::validation_codes::{
+                SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
+            },
+        };
+
+        // The leaf chains to the CA, which is a trust anchor, so the trust check passes
+        // and logs signingCredential.trusted. Without a key usage extension it then fails
+        // the certificate profile, which only that check enforces. (The rust_native
+        // backend trusts this chain; OpenSSL already rejects it at the trust check.)
+        let chain =
+            generate_ephemeral_chain_with_ee_skip("profile-test.example.com", &["key_usage"])
+                .unwrap();
+        let raw_signer =
+            signer_from_private_key(chain.ee_private_key_pem.as_bytes(), SigningAlg::Ed25519)
+                .unwrap();
+        let cert_chain = vec![chain.ee_der.clone(), chain.ca_der.clone()];
+        // Sign below the layer that checks the certificate profile, which would refuse it.
+        let signer = RawSignerCoseSigner::new(raw_signer.as_ref(), &cert_chain);
+        let claim_bytes = b"claim";
+        let cose_bytes =
+            sign(&signer, claim_bytes, None, TimeStampStorage::V2_sigTst2_CTT).unwrap();
+
+        let mut ctp = CertificateTrustPolicy::default();
+        ctp.add_trust_anchors(
+            format!(
+                "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+                crate::crypto::base64::encode(&chain.ca_der)
+            )
+            .as_bytes(),
+            "http://some_trust_list",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        let _ = Verifier::VerifyTrustPolicy(Cow::Owned(ctp)).verify_signature(
+            &cose_bytes,
+            claim_bytes,
+            b"",
+            None,
+            &mut log,
+        );
+
+        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
     }
 }
