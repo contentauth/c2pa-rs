@@ -17,7 +17,7 @@ use asn1_rs::FromDer;
 use async_generic::async_generic;
 use bcder::OctetString;
 use c2pa_raw_crypto::validator_for_sig_and_hash_algs;
-use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use der::asn1::ObjectIdentifier;
 use rasn::{prelude::*, types};
 use rasn_cms::{CertificateChoices, SignerIdentifier};
@@ -27,9 +27,12 @@ use sha2::{Sha256, Sha384, Sha512};
 use crate::{
     crypto::{
         asn1::rfc3161::{Accuracy, TstInfo},
-        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
+        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy, TrustAnchorType},
         time_stamp::{
-            response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
+            response::{
+                signed_data_and_bytes_from_time_stamp_response,
+                signed_data_from_time_stamp_response, tst_info_from_signed_data,
+            },
             TimeStampError,
         },
     },
@@ -58,6 +61,127 @@ fn signed_attributes_digested_content(
     }
 }
 
+// Decode the raw SignerInfo entries from the same SignedData bytes used by
+// rasn. Preserve duplicates here: a SET OF decoder may collapse equal entries.
+// Returns None if the entries cannot be parsed, in which case callers fall back
+// to the DER re-encoding of each decoded SignerInfo's attributes.
+fn received_signer_infos(sd_bytes: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
+    use asn1_rs::{Class, Tag};
+
+    let (rest, sd) = asn1_rs::Any::from_der(sd_bytes).ok()?;
+    if !rest.is_empty() || sd.class() != Class::Universal || sd.tag() != Tag::Sequence {
+        return None;
+    }
+    let signer_infos = timestamp_asn1_children(sd.data)?.pop()?;
+    if signer_infos.class() != Class::Universal || signer_infos.tag() != Tag::Set {
+        return None;
+    }
+    let entries = timestamp_asn1_children(signer_infos.data)?;
+    for entry in &entries {
+        if entry.class() != Class::Universal || entry.tag() != Tag::Sequence {
+            return None;
+        }
+        raw_signature(entry)?;
+    }
+    Some(entries)
+}
+
+fn raw_signature<'a>(signer_info: &asn1_rs::Any<'a>) -> Option<&'a [u8]> {
+    use asn1_rs::{Class, Tag};
+
+    timestamp_asn1_children(signer_info.data)?
+        .into_iter()
+        .find(|field| field.class() == Class::Universal && field.tag() == Tag::OctetString)
+        .map(|field| field.data)
+}
+
+// A signature value must identify exactly one SignerInfo. Check the decoded
+// entries and, when available, the raw entries, since rasn may collapse
+// identical entries while decoding the SET OF.
+fn has_duplicate_signatures(
+    sd: &rasn_cms::SignedData,
+    raw_signer_infos: Option<&[asn1_rs::Any<'_>]>,
+) -> bool {
+    let mut decoded = std::collections::HashSet::new();
+    if !sd
+        .signer_infos
+        .to_vec()
+        .iter()
+        .all(|si| decoded.insert(si.signature.as_ref()))
+    {
+        return true;
+    }
+
+    let mut raw = std::collections::HashSet::new();
+    raw_signer_infos.is_some_and(|entries| {
+        !entries
+            .iter()
+            .all(|entry| raw_signature(entry).is_some_and(|sig| raw.insert(sig)))
+    })
+}
+
+fn timestamp_asn1_children(data: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
+    let mut rest = data;
+    let mut items = Vec::new();
+    while !rest.is_empty() {
+        let (rem, item) = asn1_rs::Any::from_der(rest).ok()?;
+        items.push(item);
+        rest = rem;
+    }
+    Some(items)
+}
+
+// RFC 5652 section 5.4 requires DER-encoded signed attributes (including sorted
+// SET OF order). Accepting an unsorted encoding is an interoperability allowance
+// for nonconforming tokens, not an alternative permitted by that RFC.
+//
+// Replace the IMPLICIT [0] tag with a SET OF header, and require the located bytes
+// to decode to the attributes whose message digest was checked.
+// Signature values are unique because verify_time_stamp rejects duplicates.
+fn received_signed_attributes(
+    signer_infos: &[asn1_rs::Any<'_>],
+    signer_info: &rasn_cms::SignerInfo,
+) -> Option<Vec<u8>> {
+    use asn1_rs::{Class, Header, Length, Tag, ToDer};
+
+    let signature: &[u8] = signer_info.signature.as_ref();
+    let expected = signer_info.signed_attrs.as_ref()?;
+    let mut found: Option<&[u8]> = None;
+    for si in signer_infos {
+        let fields = timestamp_asn1_children(si.data)?;
+        let matches = fields.iter().any(|f| {
+            f.class() == Class::Universal && f.tag() == Tag::OctetString && f.data == signature
+        });
+        if !matches {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        // signedAttrs is a constructed [0]. A subjectKeyIdentifier sid is a
+        // primitive [0] and must not be mistaken for the attributes.
+        let attrs = fields.iter().find(|f| {
+            f.class() == Class::ContextSpecific && f.tag() == Tag(0) && f.header.is_constructed()
+        })?;
+        found = Some(attrs.data);
+    }
+    let attrs_body = found?;
+    let header = Header::new(
+        Class::Universal,
+        true,
+        Tag::Set,
+        Length::Definite(attrs_body.len()),
+    );
+    let mut out = header.to_der_vec().ok()?;
+    out.extend_from_slice(attrs_body);
+
+    let decoded: rasn_cms::SignedAttributes = rasn::der::decode(&out).ok()?;
+    if &decoded != expected {
+        return None;
+    }
+    Some(out)
+}
+
 /// Decode the TimeStampToken info and verify it against the supplied data and trust policy
 #[async_generic]
 pub fn verify_time_stamp(
@@ -67,8 +191,8 @@ pub fn verify_time_stamp(
     validation_log: &mut StatusTracker,
     verify_trust: bool,
 ) -> Result<TstInfo, TimeStampError> {
-    // Get the signed data frorm the timestamp data
-    let Ok(Some(sd)) = signed_data_from_time_stamp_response(ts) else {
+    // Get the signed data and the exact bytes supplied to its decoder.
+    let Ok(Some((sd, sd_bytes))) = signed_data_and_bytes_from_time_stamp_response(ts) else {
         log_item!("", "could not parse timestamp data", "verify_time_stamp")
             .validation_status(TIMESTAMP_MALFORMED)
             .informational(validation_log);
@@ -77,6 +201,23 @@ pub fn verify_time_stamp(
             "unable to find signed data".to_string(),
         ));
     };
+
+    // Reject ambiguous signatures before trying any signer, including identical
+    // SignerInfo entries that rasn may have collapsed while decoding the SET OF.
+    let raw_signer_infos = received_signer_infos(&sd_bytes);
+    if has_duplicate_signatures(&sd, raw_signer_infos.as_deref()) {
+        log_item!(
+            "",
+            "timestamp signer infos contain duplicate signatures",
+            "verify_time_stamp"
+        )
+        .validation_status(TIMESTAMP_MALFORMED)
+        .informational(validation_log);
+
+        return Err(TimeStampError::DecodeError(
+            "timestamp signer infos contain duplicate signatures".to_string(),
+        ));
+    }
 
     // Grab the list of certs used in signing this timestamp
     let Some(certs) = &sd.certificates else {
@@ -168,7 +309,7 @@ pub fn verify_time_stamp(
 
         // Load TstInfo. We will verify its contents below against signed
         // values.
-        let Ok(Some(mut tst)) = tst_info_from_signed_data(&sd) else {
+        let Ok(Some(tst)) = tst_info_from_signed_data(&sd) else {
             log_item!("", "timestamp response had no TstInfo", "verify_time_stamp")
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
@@ -180,41 +321,12 @@ pub fn verify_time_stamp(
         let mi = &tst.message_imprint;
 
         // Check for time stamp expiration.
-        let mut signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
+        // The attested time is the TSTInfo genTime (C2PA validation, RFC 3161). A CMS
+        // signingTime attribute is not the attested time and is not used.
+        let signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
 
         // Check the signer info's signed attributes.
         if let Some(attributes) = &signer_info.signed_attrs {
-            // If there is a signed signing time attribute use it
-            if let Some(Some(attrib_signing_time)) = attributes
-                .to_vec()
-                .iter()
-                .find(|attr| attr.r#type == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SIGNING_TIME)
-                .map(|attr| {
-                    if attr.values.len() != 1 {
-                        // per CMS spec can only contain 1 signing time value
-                        return None;
-                    }
-
-                    attr.values
-                        .to_vec()
-                        .first()
-                        .and_then(|v| rasn::der::decode::<rasn_pkix::Time>(v.as_bytes()).ok())
-                })
-            {
-                let signed_signing_time = match attrib_signing_time {
-                    rasn_pkix::Time::Utc(date_time) => date_time.timestamp(),
-                    rasn_pkix::Time::General(date_time) => {
-                        generalized_time_to_datetime(date_time).timestamp()
-                    }
-                };
-
-                if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
-                    // Use actual signed time.
-                    signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    tst.gen_time = gt;
-                };
-            }
-
             // Check that the mandatory signed message digest is self-consistent.
             match attributes
                 .to_vec()
@@ -338,7 +450,10 @@ pub fn verify_time_stamp(
         // use those as the TBS else the TBS is the value of the ContentInfo
         let tbs = match signed_attributes_digested_content(signer_info) {
             Ok(sdc) => match sdc {
-                Some(tbs) => tbs,
+                Some(tbs) => raw_signer_infos
+                    .as_deref()
+                    .and_then(|raw| received_signed_attributes(raw, signer_info))
+                    .unwrap_or(tbs),
                 None => match &sd.encap_content_info.content {
                     Some(d) => d.to_vec(),
                     None => {
@@ -521,7 +636,16 @@ pub fn verify_time_stamp(
                 continue;
             }
 
-            match ctp.check_certificate_trust(
+            // Per C2PA §14.4.3, the private credential store applies only to
+            // manifest signers, never to time-stamps; drop it before checking
+            // timestamp trust so a private entry cannot act as a TSA. C2PA also
+            // keeps TSA anchors separate from signer anchors, so restrict the
+            // check to TSA anchors - a signer anchor must not vouch for a token.
+            let mut ts_ctp = ctp.clone();
+            ts_ctp.clear_end_entity_credentials();
+
+            match ts_ctp.check_certificate_trust_for(
+                Some(TrustAnchorType::TSA),
                 &ordered_cert_ders[0..],
                 &ordered_cert_ders[0],
                 Some(signing_time),
@@ -636,14 +760,6 @@ pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, Time
 
 fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> {
     gt.into()
-}
-
-fn timestamp_to_generalized_time(dt: i64) -> Option<crate::crypto::asn1::GeneralizedTime> {
-    match Utc.timestamp_opt(dt, 0) {
-        // try_into fails for dates outside der's supported 1970-9999 range
-        LocalResult::Single(time) => time.try_into().ok(),
-        _ => None,
-    }
 }
 
 /// Digest algorithm enum compatible with bcder OIDs
@@ -966,12 +1082,10 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_conversions_reject_unsupported_dates() {
+    fn timestamp_conversions_preserve_utc_and_generalized_dates() {
         use chrono::{TimeZone, Utc};
 
-        use super::{time_to_datetime, timestamp_to_generalized_time};
-        assert!(timestamp_to_generalized_time(-1).is_none());
-        assert!(timestamp_to_generalized_time(i64::MAX).is_none());
+        use super::time_to_datetime;
         let utc = Utc.timestamp_opt(1_577_836_800, 0).single().expect("date");
         assert_eq!(time_to_datetime(rasn_pkix::Time::Utc(utc)), utc);
         assert_eq!(time_to_datetime(rasn_pkix::Time::General(utc.into())), utc);
@@ -1338,6 +1452,114 @@ pub(crate) mod message_imprint_regression {
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
     }
 
+    /// Regression for the private-credential-store timestamp-authority bypass.
+    ///
+    /// Per C2PA §14.4.3 the private credential store "shall not apply to
+    /// validating time-stamps". A verifier that privately trusts a signer's
+    /// own certificate must not thereby accept that certificate as a trusted
+    /// time-stamping authority, whose attested time could otherwise suppress
+    /// the signer certificate's expiry.
+    #[test]
+    fn private_credential_store_is_not_a_timestamp_authority() {
+        use openssl::x509::X509;
+
+        use super::tsa_signer_cert_der_from_token;
+        use crate::crypto::cose::TrustAnchorType;
+
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                profile_extensions: true,
+                ..TokenOptions::default()
+            },
+        );
+        let signer_der = tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .expect("token carries its signer certificate");
+        let signer_pem = X509::from_der(&signer_der).unwrap().to_pem().unwrap();
+
+        // The TSA signer certificate is present only in the private credential
+        // store, with no trust anchors. It must NOT be accepted for time-stamps.
+        let mut ctp = CertificateTrustPolicy::default();
+        ctp.add_end_entity_credentials(&signer_pem).unwrap();
+
+        let mut log = StatusTracker::default();
+        let result = verify_time_stamp(&token, DATA, &ctp, &mut log, true);
+        assert!(
+            matches!(result, Err(TimeStampError::Untrusted)),
+            "private-store signer must not be a trusted TSA: {result:?}"
+        );
+        assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+
+        // Positive control: the same certificate on the TSA trust list is
+        // legitimately accepted, so the fix does not over-block real TSAs.
+        let mut trusted_ctp = CertificateTrustPolicy::default();
+        trusted_ctp
+            .add_trust_anchors(
+                &signer_pem,
+                "http://tsa_trust_list",
+                TrustAnchorType::TSA,
+                None,
+            )
+            .unwrap();
+
+        let mut trusted_log = StatusTracker::default();
+        let trusted = verify_time_stamp(&token, DATA, &trusted_ctp, &mut trusted_log, true);
+        assert!(
+            trusted.is_ok(),
+            "a TSA on the trust list must verify: {trusted:?}"
+        );
+        assert!(trusted_log.has_status(TIMESTAMP_TRUSTED));
+    }
+
+    /// A time-stamp must validate against the TSA trust list, not signer
+    /// anchors: C2PA keeps those lists separate, so a token chaining only to a
+    /// manifest (signer) trust anchor must not be reported trusted.
+    #[test]
+    fn manifest_trust_anchor_is_not_a_timestamp_authority() {
+        use openssl::x509::X509;
+
+        use super::tsa_signer_cert_der_from_token;
+        use crate::crypto::cose::TrustAnchorType;
+
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                profile_extensions: true,
+                ..TokenOptions::default()
+            },
+        );
+        let signer_der = tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .expect("token carries its signer certificate");
+        let signer_pem = X509::from_der(&signer_der).unwrap().to_pem().unwrap();
+
+        // The TSA signer certificate is trusted only as a manifest-signer
+        // anchor; it must not thereby be accepted for time-stamps.
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            &signer_pem,
+            "http://manifest_trust_list",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        let result = verify_time_stamp(&token, DATA, &ctp, &mut log, true);
+        assert!(
+            matches!(result, Err(TimeStampError::Untrusted)),
+            "a signer anchor must not vouch for a time-stamp: {result:?}"
+        );
+        assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+    }
+
     fn decode_token(token: &[u8]) -> rasn_cms::SignedData {
         super::signed_data_from_time_stamp_response(token)
             .unwrap()
@@ -1404,7 +1626,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
-    fn signed_signing_time_overrides_tst_info_time() {
+    fn signed_signing_time_does_not_override_expired_tst_info_time() {
         for (tag, time) in [
             (0x17, b"210102030405Z".as_slice()),
             (0x18, b"20210102030405Z".as_slice()),
@@ -1420,18 +1642,16 @@ pub(crate) mod message_imprint_regression {
                     ..Default::default()
                 },
             );
-            let tst = verify_time_stamp(
+            let mut log = StatusTracker::default();
+            let result = verify_time_stamp(
                 &token,
                 DATA,
                 &CertificateTrustPolicy::default(),
-                &mut StatusTracker::default(),
+                &mut log,
                 false,
-            )
-            .unwrap();
-            assert_eq!(
-                generalized_time_to_datetime(tst.gen_time).timestamp(),
-                1_609_556_645
             );
+            assert!(matches!(result, Err(TimeStampError::ExpiredCertificate)));
+            assert!(log.has_status(crate::validation_status::TIMESTAMP_OUTSIDE_VALIDITY));
         }
         // An invalid signing-time value is ignored, not a malformed-token error.
         let token = build_token_with(
@@ -1694,6 +1914,79 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    fn timestamp_trust_respects_tsa_anchor_list() {
+        use crate::crypto::cose::TrustAnchorType;
+
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                profile_extensions: true,
+                ..Default::default()
+            },
+        );
+        let cert = super::tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .unwrap();
+        let pem = openssl::x509::X509::from_der(&cert)
+            .unwrap()
+            .to_pem()
+            .unwrap();
+
+        for kind in [TrustAnchorType::Manifest, TrustAnchorType::CAWG] {
+            let mut policy = CertificateTrustPolicy::new();
+            policy
+                .add_trust_anchors(&pem, "test:legacy", kind, None)
+                .unwrap();
+
+            let mut log = StatusTracker::default();
+            assert!(matches!(
+                verify_time_stamp(&token, DATA, &policy, &mut log, true),
+                Err(TimeStampError::Untrusted)
+            ));
+            assert!(log.has_status(TIMESTAMP_VALIDATED));
+            assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+            assert!(!log.has_status(TIMESTAMP_TRUSTED));
+
+            policy
+                .add_trust_anchors(
+                    include_bytes!(
+                        "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+                    ),
+                    "test:unrelated_tsa",
+                    TrustAnchorType::TSA,
+                    None,
+                )
+                .unwrap();
+            let mut log = StatusTracker::default();
+            assert!(matches!(
+                verify_time_stamp(&token, DATA, &policy, &mut log, true),
+                Err(TimeStampError::Untrusted)
+            ));
+            assert!(log.has_status(TIMESTAMP_VALIDATED));
+            assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+            assert!(!log.has_status(TIMESTAMP_TRUSTED));
+
+            policy
+                .add_trust_anchors(&pem, "test:tsa", TrustAnchorType::TSA, None)
+                .unwrap();
+            let mut log = StatusTracker::default();
+            let trusted_tst = verify_time_stamp(&token, DATA, &policy, &mut log, true).unwrap();
+            assert_eq!(
+                generalized_time_to_datetime(trusted_tst.gen_time).timestamp(),
+                1_577_836_800
+            );
+            assert!(log.has_status(TIMESTAMP_TRUSTED));
+            assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
+            assert!(log
+                .logged_items()
+                .iter()
+                .any(|item| item.description.contains("test:tsa")));
+        }
+    }
+
+    #[test]
     fn trust_is_separate_from_signature_and_profile_validation() {
         use crate::crypto::cose::TrustAnchorType;
         for valid_profile in [false, true] {
@@ -1894,5 +2187,380 @@ pub(crate) mod message_imprint_regression {
             super::order_certificates_leaf_to_root(&[cycle_a.clone(), cycle_b.clone()], 0).unwrap(),
             vec![cycle_a, cycle_b]
         );
+    }
+}
+
+#[cfg(test)]
+mod signed_attrs_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    const DATA: &[u8] = b"some sample content to sign";
+
+    #[test]
+    fn verifies_signed_attributes_in_encoded_order() {
+        // The signer wrote its signed attributes in an order other than DER's
+        // sorted order, and signed that encoding.
+        let ts =
+            include_bytes!("../../../tests/fixtures/crypto/time_stamp/unsorted_signed_attrs.tst");
+        let mut log = StatusTracker::default();
+
+        verify_time_stamp(
+            ts,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+        assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
+    }
+
+    #[test]
+    fn verifies_signed_attributes_in_timestamp_response() {
+        let mut response = tlv(0x30, &tlv(0x02, &[0]));
+        response.extend_from_slice(TOKEN);
+        let mut log = StatusTracker::default();
+        verify_time_stamp(
+            &tlv(0x30, &response),
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+    }
+
+    // Returns the TLV for `tag` wrapping `body`.
+    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        let len = body.len();
+        if len < 0x80 {
+            out.push(len as u8);
+        } else {
+            let lb: Vec<u8> = len
+                .to_be_bytes()
+                .into_iter()
+                .skip_while(|b| *b == 0)
+                .collect();
+            out.push(0x80 | lb.len() as u8);
+            out.extend_from_slice(&lb);
+        }
+        out.extend_from_slice(body);
+        out
+    }
+
+    const TOKEN: &[u8] =
+        include_bytes!("../../../tests/fixtures/crypto/time_stamp/unsorted_signed_attrs.tst");
+    const FORGED_DATA: &[u8] = b"attacker-controlled content";
+
+    // Preserve each SignerInfo's original attribute order when rebuilding the
+    // envelope; re-encoding SignedData with rasn would sort those attributes.
+    fn rebuild_token(token: &[u8], content: Option<&[u8]>, signer_infos: &[Vec<u8>]) -> Vec<u8> {
+        let (_, outer) = asn1_rs::Any::from_der(token).unwrap();
+        let ci = timestamp_asn1_children(outer.data).unwrap();
+        let (_, sd) = asn1_rs::Any::from_der(ci[1].data).unwrap();
+        let sd_items = timestamp_asn1_children(sd.data).unwrap();
+        let (_, head) = sd_items.split_last().unwrap();
+        let mut sd_body = Vec::new();
+        for (i, item) in head.iter().enumerate() {
+            if let (2, Some(content)) = (i, content) {
+                let eci = timestamp_asn1_children(item.data).unwrap();
+                let mut body = tlv_of(&eci[0]);
+                body.extend(tlv(0xa0, &tlv(0x04, content)));
+                sd_body.extend(tlv(0x30, &body));
+            } else {
+                sd_body.extend(tlv_of(item));
+            }
+        }
+        sd_body.extend(tlv(0x31, &signer_infos.concat()));
+        let mut ci_body = tlv_of(&ci[0]);
+        ci_body.extend(tlv(0xa0, &tlv(0x30, &sd_body)));
+        tlv(0x30, &ci_body)
+    }
+
+    fn original_signer_info(token: &[u8]) -> Vec<u8> {
+        let (_, bytes) = signed_data_and_bytes_from_time_stamp_response(token)
+            .unwrap()
+            .unwrap();
+        tlv_of(&received_signer_infos(&bytes).unwrap()[0])
+    }
+
+    fn replace_hash(bytes: &mut [u8], old: &[u8], new: &[u8]) {
+        let positions: Vec<_> = bytes
+            .windows(old.len())
+            .enumerate()
+            .filter_map(|(i, window)| (window == old).then_some(i))
+            .collect();
+        assert_eq!(positions.len(), 1);
+        let start = positions[0];
+        bytes[start..start + old.len()].copy_from_slice(new);
+    }
+
+    // Change the imprint and the second signer's messageDigest without access
+    // to the TSA key. Both SignerInfos retain the genuine signature bytes.
+    fn forged_token(token: &[u8], keep_original: bool, original_first: bool) -> Vec<u8> {
+        use sha2::Digest;
+
+        let sd = signed_data_from_time_stamp_response(token)
+            .unwrap()
+            .unwrap();
+        let original_content = sd.encap_content_info.content.unwrap().to_vec();
+        let mut forged_content = original_content.clone();
+        replace_hash(
+            &mut forged_content,
+            &Sha256::digest(DATA),
+            &Sha256::digest(FORGED_DATA),
+        );
+        let original = original_signer_info(token);
+        let mut forged = original.clone();
+        replace_hash(
+            &mut forged,
+            &Sha256::digest(&original_content),
+            &Sha256::digest(&forged_content),
+        );
+        let mut signers = vec![forged];
+        if keep_original {
+            signers.push(original);
+            if original_first {
+                signers.reverse();
+            }
+        }
+        rebuild_token(token, Some(&forged_content), &signers)
+    }
+
+    fn assert_rejected(token: &[u8], data: &[u8]) {
+        let mut log = StatusTracker::default();
+        let result = verify_time_stamp(
+            token,
+            data,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "unexpected timestamp validation: {result:?}"
+        );
+        assert!(!log.has_status(TIMESTAMP_VALIDATED));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+    }
+
+    fn tlv_of(item: &asn1_rs::Any<'_>) -> Vec<u8> {
+        let tag = item.header.raw_tag().map(|t| t[0]).unwrap_or_else(|| {
+            let class = (item.class() as u8) << 6;
+            let constructed = if item.header.is_constructed() {
+                0x20
+            } else {
+                0
+            };
+            class | constructed | item.tag().0 as u8
+        });
+        tlv(tag, item.data)
+    }
+
+    #[test]
+    fn rejects_token_with_duplicated_signature() {
+        let si = original_signer_info(TOKEN);
+        let token = rebuild_token(TOKEN, None, &[si.clone(), si]);
+        assert_rejected(&token, DATA);
+    }
+
+    #[test]
+    fn rejects_forged_timestamp_with_copied_signature() {
+        for original_first in [false, true] {
+            let token = forged_token(TOKEN, true, original_first);
+            // Ensure the attack passes the messageDigest check for the forged
+            // signer; rejection must not merely be an imprint mismatch.
+            let sd = signed_data_from_time_stamp_response(&token)
+                .unwrap()
+                .unwrap();
+            let content = sd.encap_content_info.content.as_ref().unwrap();
+            let digest = DigestAlgorithm::Sha256;
+            let mut hasher = digest.digester();
+            hasher.update(content);
+            let expected = hasher.finish();
+            assert!(sd.signer_infos.to_vec().iter().any(|si| {
+                si.signed_attrs
+                    .as_ref()
+                    .unwrap()
+                    .to_vec()
+                    .iter()
+                    .any(|attr| {
+                        attr.r#type == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_MESSAGE_DIGEST
+                            && rasn::der::decode::<types::OctetString>(
+                                attr.values.to_vec()[0].as_bytes(),
+                            )
+                            .unwrap()
+                            .as_ref()
+                                == expected.as_ref()
+                    })
+            }));
+            assert_rejected(&token, FORGED_DATA);
+        }
+    }
+
+    #[test]
+    fn rejects_forged_timestamp_with_only_modified_signer() {
+        assert_rejected(&forged_token(TOKEN, false, false), FORGED_DATA);
+    }
+
+    // A valid, sorted token would pass the old DER fallback even with duplicate
+    // signatures. Re-sign with the existing fixture key to cover that path.
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    #[test]
+    fn rejects_duplicate_signatures_in_der_sorted_token() {
+        use openssl::{hash::MessageDigest, pkey::PKey, sign::Signer};
+
+        let sd = signed_data_from_time_stamp_response(TOKEN)
+            .unwrap()
+            .unwrap();
+        let si = sd.signer_infos.to_vec()[0];
+        let attrs = rasn::der::encode(si.signed_attrs.as_ref().unwrap()).unwrap();
+        let key = PKey::private_key_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.priv"
+        ))
+        .unwrap();
+        let signature = Signer::new(MessageDigest::sha256(), &key)
+            .unwrap()
+            .sign_oneshot_to_vec(&attrs)
+            .unwrap();
+        let original = original_signer_info(TOKEN);
+        let (_, raw_si) = asn1_rs::Any::from_der(&original).unwrap();
+        let fields = timestamp_asn1_children(raw_si.data).unwrap();
+        let (_, raw_attrs) = asn1_rs::Any::from_der(&attrs).unwrap();
+        let mut body = Vec::new();
+        for (i, field) in fields.iter().enumerate() {
+            match i {
+                3 => body.extend(tlv(0xa0, raw_attrs.data)),
+                5 => body.extend(tlv(0x04, &signature)),
+                _ => body.extend(tlv_of(field)),
+            }
+        }
+        let sorted_si = tlv(0x30, &body);
+        let valid = rebuild_token(TOKEN, None, std::slice::from_ref(&sorted_si));
+        let mut log = StatusTracker::default();
+        verify_time_stamp(
+            &valid,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+        assert_rejected(
+            &rebuild_token(&valid, None, &[sorted_si.clone(), sorted_si]),
+            DATA,
+        );
+        for original_first in [false, true] {
+            assert_rejected(&forged_token(&valid, true, original_first), FORGED_DATA);
+        }
+    }
+
+    // A version 3 SignerInfo identifies its signer by subjectKeyIdentifier, a
+    // primitive [0] that precedes the constructed [0] signedAttrs.
+    #[test]
+    fn locates_unsorted_attributes_with_subject_key_identifier() {
+        use x509_parser::extensions::ParsedExtension;
+
+        let (_, pem) = x509_parser::pem::parse_x509_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ))
+        .unwrap();
+        let cert = pem.parse_x509().unwrap();
+        let ski = cert
+            .extensions()
+            .iter()
+            .find_map(|e| match e.parsed_extension() {
+                ParsedExtension::SubjectKeyIdentifier(k) => Some(k.0.to_vec()),
+                _ => None,
+            })
+            .unwrap();
+
+        let original = original_signer_info(TOKEN);
+        let (_, raw_si) = asn1_rs::Any::from_der(&original).unwrap();
+        let fields = timestamp_asn1_children(raw_si.data).unwrap();
+        let mut body = tlv(0x02, &[3]);
+        body.extend(tlv(0x80, &ski));
+        for field in &fields[2..] {
+            body.extend(tlv_of(field));
+        }
+        let token = rebuild_token(TOKEN, None, &[tlv(0x30, &body)]);
+
+        let (sd, bytes) = signed_data_and_bytes_from_time_stamp_response(&token)
+            .unwrap()
+            .unwrap();
+        let si = sd.signer_infos.to_vec()[0];
+        assert!(matches!(si.sid, SignerIdentifier::SubjectKeyIdentifier(_)));
+        let raw = received_signer_infos(&bytes).unwrap();
+        let encoded = received_signed_attributes(&raw, si).unwrap();
+        assert_ne!(
+            encoded,
+            rasn::der::encode(si.signed_attrs.as_ref().unwrap()).unwrap()
+        );
+    }
+
+    // Duplicate signatures must be detected from the decoded SignerInfos even
+    // when the raw entries cannot be parsed.
+    #[test]
+    fn detects_duplicate_signatures_without_raw_signer_infos() {
+        let genuine = signed_data_from_time_stamp_response(TOKEN)
+            .unwrap()
+            .unwrap();
+        assert!(!has_duplicate_signatures(&genuine, None));
+
+        let forged = signed_data_from_time_stamp_response(&forged_token(TOKEN, true, false))
+            .unwrap()
+            .unwrap();
+        assert!(has_duplicate_signatures(&forged, None));
+    }
+
+    #[test]
+    fn rejects_encoded_attributes_that_differ_from_signer_info() {
+        let ts =
+            include_bytes!("../../../tests/fixtures/crypto/time_stamp/unsorted_signed_attrs.tst");
+        let (sd, bytes) = signed_data_and_bytes_from_time_stamp_response(ts)
+            .unwrap()
+            .unwrap();
+        let raw = received_signer_infos(&bytes).unwrap();
+        let mut si = sd.signer_infos.to_vec()[0].clone();
+        assert!(received_signed_attributes(&raw, &si).is_some());
+
+        // Attributes the caller checked are not the ones that were encoded.
+        si.signed_attrs = si.signed_attrs.map(|a| {
+            let mut v: Vec<_> = a.to_vec().into_iter().cloned().collect();
+            v.pop();
+            rasn::types::SetOf::from_vec(v)
+        });
+        assert!(received_signed_attributes(&raw, &si).is_none());
+    }
+
+    #[test]
+    fn uses_gen_time_not_cms_signing_time() {
+        // genTime is within the signing certificate's validity; the CMS
+        // signingTime attribute is after the certificate expires.
+        let ts = include_bytes!(
+            "../../../tests/fixtures/crypto/time_stamp/signing_time_after_expiry.tst"
+        );
+        let mut log = StatusTracker::default();
+
+        let tst = verify_time_stamp(
+            ts,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+
+        let gen_time = generalized_time_to_datetime(tst.gen_time).timestamp();
+        assert_eq!(gen_time, 1_735_689_600); // 2025-01-01T00:00:00Z
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+        assert!(!log.has_status(TIMESTAMP_OUTSIDE_VALIDITY));
     }
 }

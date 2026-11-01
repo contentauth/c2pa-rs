@@ -49,6 +49,20 @@ use crate::{
 
 pub(super) const LEGACY_WATERMARKED_ACTION: &str = "c2pa.watermarked";
 
+/// Failure codes that reject a claim because of its signing credential, before
+/// the claim signature itself is validated.
+///
+/// `signingCredential.untrusted` is deliberately not included: a manifest whose
+/// signer is not on a trust list can still be Valid (C2PA Trust Model, "Valid
+/// Manifest"), which requires `claimSignature.validated`.
+const SIGNING_CREDENTIAL_REJECTIONS: &[&str] = &[
+    validation_status::SIGNING_CREDENTIAL_INVALID,
+    validation_status::SIGNING_CREDENTIAL_REVOKED,
+    validation_status::SIGNING_CREDENTIAL_EXPIRED,
+    validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+    validation_status::ALGORITHM_UNSUPPORTED,
+];
+
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
@@ -112,6 +126,39 @@ fn data_hash_exclusions_match_manifest(
 }
 
 impl Claim {
+    /// Verify that the claim `signature` field points to the signature box of this manifest.
+    ///
+    /// The claim label comes from the JUMBF label of the manifest, which is outside the signed
+    /// claim. For V2 and greater claims the `signature` field must be an absolute URI. That URI
+    /// names the manifest label, so it binds the label to the signed claim. Without it, the label
+    /// could be changed without invalidating the signature. V1 claims may use a relative URI.
+    pub(crate) fn verify_signature_box_uri(
+        claim: &Claim,
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
+        let is_signature_box = jumbf::labels::box_name_from_uri(&claim.signature)
+            .unwrap_or_default()
+            == jumbf::labels::SIGNATURE;
+
+        let sig_box_err = match manifest_label_from_uri(&claim.signature) {
+            Some(signature_url) if signature_url != claim.label() => true,
+            Some(_) => !is_signature_box,
+            // relative signature box
+            None => claim.version() > 1 || !is_signature_box,
+        };
+
+        if sig_box_err {
+            log_item!(
+                to_signature_uri(claim.label()),
+                "signature missing",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+        }
+        Ok(())
+    }
+
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
@@ -136,24 +183,7 @@ impl Claim {
         // use the signature uri as the current uri while validating the signature info
         validation_log.push_current_uri(to_signature_uri(claim.label()));
 
-        // make sure signature manifest if present points to this manifest
-        let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
-            Some(signature_url) if signature_url != claim.label() => true,
-            _ => {
-                jumbf::labels::box_name_from_uri(&claim.signature).unwrap_or_default()
-                    != jumbf::labels::SIGNATURE
-            } // relative signature box
-        };
-
-        if sig_box_err {
-            log_item!(
-                to_signature_uri(claim.label()),
-                "signature missing",
-                "verify_claim"
-            )
-            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
-            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
-        }
+        Claim::verify_signature_box_uri(claim, validation_log)?;
 
         // for V2 and greater claims the label must conform
         if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
@@ -204,14 +234,17 @@ impl Claim {
             )
             .await
         };
+        let mut ocsp_rejected = false;
         if let Err(err) = ocsp_result {
             if !matches!(err, Error::CertificateTrustError(_)) {
                 validation_log.pop_current_uri();
                 return Err(err);
             }
+            ocsp_rejected = true;
         }
 
         context.check_progress(ProgressPhase::VerifyingSignature, 1, 1)?;
+        let cose_log_start = validation_log.logged_items().len();
         let verified = if _sync {
             verify_cose(
                 sig,
@@ -236,6 +269,16 @@ impl Claim {
             )
             .await
         };
+
+        // The OCSP check found the signing credential revoked. That outranks
+        // the certificate chain reaching a trust anchor, so do not report the
+        // credential as trusted.
+        if ocsp_rejected {
+            validation_log.remove_status_since(
+                cose_log_start,
+                validation_status::SIGNING_CREDENTIAL_TRUSTED,
+            );
+        }
 
         let result = Claim::verify_internal(claim, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
@@ -1575,6 +1618,34 @@ impl Claim {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
+        // Statuses for this claim's signature are logged under its signature URI.
+        let signature_uri = to_signature_uri(claim.label());
+        let signature_has_status = |codes: &[&str]| {
+            validation_log.logged_items().iter().any(|item| {
+                item.label == signature_uri
+                    && item
+                        .validation_status
+                        .as_deref()
+                        .is_some_and(|code| codes.contains(&code))
+            })
+        };
+
+        // C2PA only validates the claim signature, and issues
+        // claimSignature.validated, "if the claim has not yet been rejected" by
+        // the checks on its signing credential. An untrusted credential does not
+        // count here; see SIGNING_CREDENTIAL_REJECTIONS.
+        let credential_rejected = signature_has_status(SIGNING_CREDENTIAL_REJECTIONS);
+
+        // claimSignature.insideValidity means the signer's certificate and all CA
+        // certificates up to the trust anchor were valid at the validation time,
+        // so it cannot be reported alongside claimSignature.outsideValidity, or
+        // alongside signingCredential.expired, which the certificate profile check
+        // has also used for an expired signer.
+        let outside_validity = signature_has_status(&[
+            validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+            validation_status::SIGNING_CREDENTIAL_EXPIRED,
+        ]);
+
         // signature check
         match verified {
             Ok(vi) => {
@@ -1587,23 +1658,26 @@ impl Claim {
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
                     .failure(validation_log, Error::CoseSignature)?;
                 } else {
-                    // signing cert has not expired
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                    .success(validation_log);
+                    if !outside_validity {
+                        log_item!(
+                            to_signature_uri(claim.label()),
+                            "claim signature valid",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                        .success(validation_log);
+                    }
 
                     // add signature validated status
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
-                    .success(validation_log);
+                    if !credential_rejected {
+                        log_item!(
+                            to_signature_uri(claim.label()),
+                            "claim signature valid",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                        .success(validation_log);
+                    }
                 }
             }
             Err(parse_err) => {
