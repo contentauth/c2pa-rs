@@ -19,19 +19,67 @@ use coset::CoseSign1;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         base64,
         cose::{
             cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
             signing_time_from_sign1, signing_time_from_sign1_async, validate_cose_tst_info,
-            validate_cose_tst_info_async, CertificateInfo, CertificateTrustPolicy, Verifier,
+            validate_cose_tst_info_async, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy,
+            Verifier,
         },
+        ocsp::OcspResponse,
     },
     error::{Error, Result},
     settings::Settings,
     status_tracker::StatusTracker,
 };
+
+#[allow(dead_code, clippy::too_many_arguments)]
+#[async_generic]
+pub(crate) fn check_ocsp_status(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    context: &Context,
+) -> Result<OcspResponse> {
+    let fetch_policy = if context.settings().verify.ocsp_fetch
+        || context.settings().verify.ocsp_fetch_should_override
+    {
+        OcspFetchPolicy::FetchAllowed
+    } else {
+        OcspFetchPolicy::DoNotFetch
+    };
+
+    if _sync {
+        Ok(crate::crypto::cose::check_ocsp_status(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            ocsp_responses,
+            tst_info,
+            validation_log,
+            context,
+        )?)
+    } else {
+        Ok(crate::crypto::cose::check_ocsp_status_async(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            ocsp_responses,
+            tst_info,
+            validation_log,
+            context,
+        )
+        .await?)
+    }
+}
 
 fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
     // element 0 is the signing cert
