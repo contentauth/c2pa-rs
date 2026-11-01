@@ -221,13 +221,13 @@ impl Claim {
             )
             .await
         };
-        let mut credential_revoked = false;
+        let mut ocsp_rejected = false;
         if let Err(err) = ocsp_result {
             if !matches!(err, Error::CertificateTrustError(_)) {
                 validation_log.pop_current_uri();
                 return Err(err);
             }
-            credential_revoked = true;
+            ocsp_rejected = true;
         }
 
         context.check_progress(ProgressPhase::VerifyingSignature, 1, 1)?;
@@ -260,7 +260,7 @@ impl Claim {
         // The OCSP check found the signing credential revoked. That outranks
         // the certificate chain reaching a trust anchor, so do not report the
         // credential as trusted.
-        if credential_revoked {
+        if ocsp_rejected {
             validation_log.remove_status_since(
                 cose_log_start,
                 validation_status::SIGNING_CREDENTIAL_TRUSTED,
