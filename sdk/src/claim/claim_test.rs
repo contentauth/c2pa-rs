@@ -1442,31 +1442,39 @@ fn test_claim_signature_not_validated_after_credential_rejected() {
         );
     };
 
-    // The claim's signing credential was rejected.
-    let mut validation_log =
-        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
-    log_item!(
-        signature_uri.clone(),
-        "certificate params incorrect",
-        "test"
-    )
-    .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-    .failure_no_throw(&mut validation_log, Error::CoseSignature);
-    verify(&mut validation_log);
-    assert!(!validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+    for rejection in [
+        validation_status::SIGNING_CREDENTIAL_INVALID,
+        validation_status::SIGNING_CREDENTIAL_REVOKED,
+        validation_status::SIGNING_CREDENTIAL_EXPIRED,
+        validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+        validation_status::ALGORITHM_UNSUPPORTED,
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(signature_uri.clone(), "signing credential rejected", "test")
+            .validation_status(rejection)
+            .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            !validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED),
+            "{rejection} should suppress claimSignature.validated"
+        );
 
-    // A rejection logged for a different claim's signature does not count.
-    let mut validation_log =
-        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
-    log_item!(
-        "self#jumbf=/c2pa/other/c2pa.signature",
-        "certificate params incorrect",
-        "test"
-    )
-    .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-    .failure_no_throw(&mut validation_log, Error::CoseSignature);
-    verify(&mut validation_log);
-    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            "self#jumbf=/c2pa/other/c2pa.signature",
+            "signing credential rejected",
+            "test"
+        )
+        .validation_status(rejection)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED),
+            "{rejection} for another claim should not suppress claimSignature.validated"
+        );
+    }
 
     // An untrusted signing credential does not stop the claim being Valid.
     let mut validation_log =

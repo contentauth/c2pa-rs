@@ -12684,7 +12684,8 @@ mod tests {
         use crate::{
             crypto::{cert_chain_pem_to_der, cose::cose_reserve_size},
             validation_status::{
-                ValidationStatus, SIGNING_CREDENTIAL_REVOKED, SIGNING_CREDENTIAL_TRUSTED,
+                ValidationStatus, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_REVOKED,
+                SIGNING_CREDENTIAL_TRUSTED,
             },
         };
 
@@ -12769,5 +12770,6 @@ mod tests {
         let has = |codes: &[ValidationStatus], code: &str| codes.iter().any(|s| s.code() == code);
         assert!(has(results.failure(), SIGNING_CREDENTIAL_REVOKED));
         assert!(!has(results.success(), SIGNING_CREDENTIAL_TRUSTED));
+        assert!(!has(results.success(), CLAIM_SIGNATURE_VALIDATED));
     }
 }
