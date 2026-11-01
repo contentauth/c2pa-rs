@@ -615,6 +615,11 @@ pub enum CertificateTrustError {
     #[error("the certificate is not trusted")]
     CertificateNotTrusted,
 
+    /// A CA certificate in the chain was outside its validity period at the
+    /// time the chain was evaluated.
+    #[error("a CA certificate in the chain is outside its validity period")]
+    CaCertificateOutsideValidity,
+
     /// The certificate contains an invalid extended key usage (EKU) value.
     #[error("the certificate contains an invalid extended key usage (EKU) value")]
     InvalidEku,
@@ -1160,8 +1165,77 @@ zGxQnM2hCA==
         let expired_certs = cert_ders_from_pem(include_bytes!(
             "../../../tests/fixtures/crypto/cose/chain_trust_expired_intermediate.pub"
         ));
-        ctp.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None)
-            .expect_err("an expired intermediate CA certificate must not be trusted");
+        assert_eq!(
+            ctp.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None),
+            Err(CertificateTrustError::CaCertificateOutsideValidity),
+            "an expired intermediate CA certificate must not be trusted"
+        );
+
+        // With no anchor the chain reaches, it's simply untrusted, on either
+        // backend: the expired intermediate is only reported for a chain that
+        // would otherwise be trusted.
+        let mut unrelated = CertificateTrustPolicy::new();
+        unrelated
+            .add_trust_anchors(
+                include_bytes!("../../../tests/fixtures/crypto/cose/ca_authorization_root.pub"),
+                "http://some_trust_list",
+                TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            unrelated.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None),
+            Err(CertificateTrustError::CertificateNotTrusted)
+        );
+    }
+
+    /// C2PA 2.5 section 14.8.2 also rejects a CA certificate before its notBefore.
+    #[c2pa_macros::c2pa_test_async]
+    async fn test_not_yet_valid_intermediate_is_checked() {
+        use x509_parser::prelude::{FromDer, X509Certificate};
+
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_future_root.pub"),
+            "http://some_trust_list",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+        let certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/chain_trust_future_intermediate.pub"
+        ));
+        let (_, leaf) = X509Certificate::from_der(&certs[0]).unwrap();
+        let (_, intermediate) = X509Certificate::from_der(&certs[1]).unwrap();
+
+        // Only the intermediate is not yet valid on 2026-09-01; it becomes valid in 2027.
+        let before = 1_788_220_800;
+        let check_time = x509_parser::time::ASN1Time::from_timestamp(before).unwrap();
+        assert!(leaf.validity().is_valid_at(check_time));
+        assert!(check_time < intermediate.validity().not_before);
+        assert_eq!(
+            ctp.check_certificate_trust(&certs[1..], &certs[0], Some(before)),
+            Err(CertificateTrustError::CaCertificateOutsideValidity)
+        );
+        assert_eq!(
+            ctp.check_certificate_trust_async(&certs[1..], &certs[0], Some(before))
+                .await,
+            Err(CertificateTrustError::CaCertificateOutsideValidity)
+        );
+
+        // The same chain must be trusted on 2028-09-01, inside every validity window.
+        let after = 1_851_379_200;
+        assert_eq!(
+            ctp.check_certificate_trust(&certs[1..], &certs[0], Some(after))
+                .unwrap(),
+            (TrustAnchorType::Manifest, "http://some_trust_list".into())
+        );
+        assert_eq!(
+            ctp.check_certificate_trust_async(&certs[1..], &certs[0], Some(after))
+                .await
+                .unwrap(),
+            (TrustAnchorType::Manifest, "http://some_trust_list".into())
+        );
     }
 
     /// A trust anchor only counts for the kind of trust list it was added to:
