@@ -1737,6 +1737,69 @@ fn test_update_manifest_with_claim_thumbnail_rejected() {
 }
 
 #[test]
+fn test_claim_signature_not_validated_after_credential_rejected() {
+    use crate::{crypto::cose::CertificateInfo, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let signature_uri = to_signature_uri(claim.label());
+    let verify = |validation_log: &mut StatusTracker| {
+        let _ = Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Ok(CertificateInfo {
+                validated: true,
+                ..Default::default()
+            }),
+            validation_log,
+            &Context::new(),
+        );
+    };
+
+    for rejection in [
+        validation_status::SIGNING_CREDENTIAL_INVALID,
+        validation_status::SIGNING_CREDENTIAL_REVOKED,
+        validation_status::SIGNING_CREDENTIAL_EXPIRED,
+        validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+        validation_status::ALGORITHM_UNSUPPORTED,
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(signature_uri.clone(), "signing credential rejected", "test")
+            .validation_status(rejection)
+            .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            !validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED),
+            "{rejection} should suppress claimSignature.validated"
+        );
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            "self#jumbf=/c2pa/other/c2pa.signature",
+            "signing credential rejected",
+            "test"
+        )
+        .validation_status(rejection)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED),
+            "{rejection} for another claim should not suppress claimSignature.validated"
+        );
+    }
+
+    // An untrusted signing credential does not stop the claim being Valid.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    log_item!(signature_uri, "signing certificate untrusted", "test")
+        .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+}
+
+#[test]
 fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
     let mut validation_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut claim = create_test_claim().expect("create test claim");
@@ -1752,4 +1815,66 @@ fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
         validation_log.has_any_error(),
         "actions in cloud-data of a non-update manifest should fail"
     );
+}
+
+#[test]
+fn test_inside_validity_not_reported_with_outside_validity() {
+    use crate::{crypto::cose::CertificateInfo, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let verify = |validation_log: &mut StatusTracker| {
+        let _ = Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Ok(CertificateInfo {
+                validated: true,
+                ..Default::default()
+            }),
+            validation_log,
+            &Context::new(),
+        );
+    };
+
+    // A CA certificate in the claim's chain was outside its validity period, or the
+    // signer itself expired (reported as signingCredential.expired by the profile check).
+    for code in [
+        validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+        validation_status::SIGNING_CREDENTIAL_EXPIRED,
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            to_signature_uri(claim.label()),
+            "certificate outside validity period",
+            "test"
+        )
+        .validation_status(code)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            !validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY),
+            "{code}"
+        );
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            "self#jumbf=/c2pa/other/c2pa.signature",
+            "certificate outside validity period",
+            "test"
+        )
+        .validation_status(code)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY),
+            "{code} for another claim should not suppress claimSignature.insideValidity"
+        );
+    }
+
+    // Without it, insideValidity is reported as before.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY));
 }
