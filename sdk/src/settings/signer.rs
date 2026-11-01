@@ -304,6 +304,10 @@ impl Signer for CawgX509IdentitySigner {
         self.c2pa_signer.ocsp_val()
     }
 
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        self.c2pa_signer.ocsp_vals()
+    }
+
     fn direct_cose_handling(&self) -> bool {
         self.c2pa_signer.direct_cose_handling()
     }
@@ -426,6 +430,10 @@ impl Signer for CawgIdentitySigner {
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         self.c2pa_signer.ocsp_val()
+    }
+
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        self.c2pa_signer.ocsp_vals()
     }
 
     fn direct_cose_handling(&self) -> bool {

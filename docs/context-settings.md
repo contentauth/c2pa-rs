@@ -75,6 +75,48 @@ fn main() -> Result<()> {
 }
 ```
 
+### Limiting remote manifest responses
+
+`verify.max_manifest_response_size` sets the maximum remote manifest response size
+in **bytes**, independently for each `Context`. The default is **10 MiB**
+(10,485,760 bytes). It applies when the `fetch_remote_manifests` feature is enabled.
+
+For example, to allow responses up to 20 MiB:
+
+```rust
+use c2pa::{Context, Result};
+
+fn main() -> Result<()> {
+    let context = Context::new()
+        .with_settings_value("verify.max_manifest_response_size", 20 * 1024 * 1024u64)?;
+    Ok(())
+}
+```
+
+Equivalent JSON configuration:
+
+```json
+{
+  "verify": {
+    "max_manifest_response_size": 20971520
+  }
+}
+```
+
+The value must be positive and no greater than the platform's `isize::MAX`.
+Zero does not disable the limit. Responses whose advertised `Content-Length` or
+actual body exceeds the configured limit return `Error::RemoteManifestFetch`;
+responses exactly at the limit are accepted.
+
+This limit is enforced after the HTTP resolver returns. It does **not** bound
+resolver-internal buffering, including buffering in the built-in reqwest adapters.
+It also does not bound downloads or allocations performed by language bindings
+before their resolver callbacks return. For example, the C HTTP callback supplies
+an already-buffered body, which is copied into Rust memory before Store checks it.
+End-to-end protection requires the binding or HTTP adapter to enforce a limit
+while receiving the response, before buffering or copying it.
+Increasing it allows correspondingly larger Store allocations.
+
 ## Using Context
 
 ### With Reader
@@ -246,7 +288,9 @@ Here's the `Settings` JSON with all default values:
     "verify_trust": true,
     "verify_timestamp_trust": true,
     "ocsp_fetch": false,
+    "ocsp_fetch_should_override": false,
     "remote_manifest_fetch": true,
+    "max_manifest_response_size": 10485760,
     "skip_ingredient_conflict_resolution": false,
     "strict_v1_validation": false
   },
