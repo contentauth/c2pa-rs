@@ -137,6 +137,8 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
                 self.handle_non_fatal_error(err, status_tracker)
             })?;
 
+        ok &= self.check_revocation(payload_bytes, status_tracker)?;
+
         ok &= self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker)?;
 
         if ok {
@@ -231,7 +233,7 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
                 self.handle_non_fatal_error(err, status_tracker)
             })?;
 
-        // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
+        ok &= self.check_revocation(payload_bytes, status_tracker)?;
 
         ok &= self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker)?;
 
@@ -462,6 +464,39 @@ impl<'a> IcaSignatureVerifier<'a> {
         subject.c2pa_asset.referenced_assertions = decoded_assertions;
 
         Ok(ica_credential)
+    }
+
+    /// Check the credential's revocation information (CAWG Identity Assertion
+    /// 1.3 §8.1.5, "Verify the credential's revocation status").
+    ///
+    /// No revocation method is supported yet, so a credential with a
+    /// `credentialStatus` entry is reported with the failure code
+    /// `cawg.ica.revocation.unsupported` ("the validator MAY continue validation
+    /// and SHOULD issue the failure code"). Returns `false` in that case so that
+    /// `cawg.ica.credential_valid` is withheld.
+    ///
+    /// TO DO (CAI-7993): Check revocation status for supported methods (such as
+    /// `BitstringStatusListEntry`, which the specification recommends).
+    fn check_revocation(
+        &self,
+        payload_bytes: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<bool, ValidationError<IcaValidationError>> {
+        let Some(status_type) = credential_status_type(payload_bytes) else {
+            return Ok(true);
+        };
+
+        let err = ValidationError::SignatureError(IcaValidationError::UnsupportedRevocationMethod(
+            status_type,
+        ));
+        log_current_item!(
+            "Unsupported credential revocation method",
+            "IcaSignatureVerifier::check_signature"
+        )
+        .validation_status("cawg.ica.revocation.unsupported")
+        .failure(status_tracker, err)?;
+
+        Ok(false)
     }
 
     // Discover public key for issuer DID and validate signature.
@@ -911,5 +946,56 @@ impl<'a> IcaSignatureVerifier<'a> {
         }
 
         Ok(true)
+    }
+}
+
+/// If the credential has a `credentialStatus` entry (an object, or a non-empty
+/// array of them), return a description of its `type`(s).
+fn credential_status_type(payload_bytes: &[u8]) -> Option<String> {
+    let vc: serde_json::Value = serde_json::from_slice(payload_bytes).ok()?;
+    let entries: Vec<&serde_json::Value> = match vc.get("credentialStatus")? {
+        serde_json::Value::Array(entries) => entries.iter().collect(),
+        serde_json::Value::Null => return None,
+        entry => vec![entry],
+    };
+    if entries.is_empty() {
+        return None;
+    }
+    let types: Vec<&str> = entries
+        .iter()
+        .map(|e| {
+            e.get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("(no type)")
+        })
+        .collect();
+    Some(types.join(", "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::credential_status_type;
+
+    #[test]
+    fn detects_credential_status() {
+        assert_eq!(
+            credential_status_type(br#"{"issuer": "did:example:1"}"#),
+            None
+        );
+        assert_eq!(credential_status_type(br#"{"credentialStatus": []}"#), None);
+        assert_eq!(
+            credential_status_type(br#"{"credentialStatus": null}"#),
+            None
+        );
+        assert_eq!(
+            credential_status_type(
+                br#"{"credentialStatus": {"type": "BitstringStatusListEntry", "statusPurpose": "revocation"}}"#
+            ),
+            Some("BitstringStatusListEntry".to_owned())
+        );
+        assert_eq!(
+            credential_status_type(br#"{"credentialStatus": [{"type": "A"}, {"id": "x"}]}"#),
+            Some("A, (no type)".to_owned())
+        );
     }
 }
