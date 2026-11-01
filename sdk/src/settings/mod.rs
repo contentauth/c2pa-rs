@@ -233,10 +233,14 @@ pub struct Trust {
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
     ///
-    /// Defaults to the SDK's built-in accepted EKUs. An explicit value replaces
-    /// that list rather than extending it; `None` or an empty string disables
-    /// these configured EKUs. Email protection, timestamping, and OCSP signing
-    /// remain accepted independently of this setting.
+    /// Defaults to the SDK's built-in accepted EKUs from `valid_eku_oids.cfg`.
+    /// Settings overlays preserve the current list when this field is omitted.
+    /// An explicit value replaces the list rather than extending it: JSON `null`,
+    /// Rust `None`, or an empty string clears these configured EKUs, including
+    /// document signing and C2PA signing. Passing a typed [`Settings`] to a
+    /// [`Context`](crate::Context) preserves its `None`; it does not restore defaults.
+    /// Email protection, timestamping, and OCSP signing remain accepted independently
+    /// of this setting. This setting does not add any trust anchors.
     pub trust_config: Option<String>,
 }
 
