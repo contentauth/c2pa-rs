@@ -1620,6 +1620,16 @@ impl Claim {
         // count here; see SIGNING_CREDENTIAL_REJECTIONS.
         let credential_rejected = signature_has_status(SIGNING_CREDENTIAL_REJECTIONS);
 
+        // claimSignature.insideValidity means the signer's certificate and all CA
+        // certificates up to the trust anchor were valid at the validation time,
+        // so it cannot be reported alongside claimSignature.outsideValidity, or
+        // alongside signingCredential.expired, which the certificate profile check
+        // has also used for an expired signer.
+        let outside_validity = signature_has_status(&[
+            validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+            validation_status::SIGNING_CREDENTIAL_EXPIRED,
+        ]);
+
         // signature check
         match verified {
             Ok(vi) => {
@@ -1633,13 +1643,15 @@ impl Claim {
                     .failure(validation_log, Error::CoseSignature)?;
                 } else {
                     // signing cert has not expired
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                    .success(validation_log);
+                    if !outside_validity {
+                        log_item!(
+                            to_signature_uri(claim.label()),
+                            "claim signature valid",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                        .success(validation_log);
+                    }
 
                     // add signature validated status
                     if !credential_rejected {
