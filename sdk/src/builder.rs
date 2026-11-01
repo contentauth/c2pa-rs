@@ -55,7 +55,7 @@ use crate::{
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
-        hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
+        hash_utils::hash_to_b64, json, merkle::MerkleAccumulator, mime::format_to_mime,
         path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
@@ -3770,7 +3770,7 @@ impl Builder {
 
 impl std::fmt::Display for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut json = serde_json::to_value(self).map_err(|_| std::fmt::Error)?;
+        let mut json = json::to_value(self).map_err(|_| std::fmt::Error)?;
         json = hash_to_b64(json);
         let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
         f.write_str(&output)
@@ -4051,6 +4051,346 @@ mod tests {
     const TEST_IMAGE_TIFF: &[u8] = include_bytes!("../tests/fixtures/test.tiff");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
     const TEST_MANIFEST_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+
+    fn json_report_reader(mut builder: Builder) -> Reader {
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut output)
+            .unwrap();
+        output.rewind().unwrap();
+        Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap()
+    }
+
+    fn json_report_data(reader: &Reader, label: &str) -> (serde_json::Value, serde_json::Value) {
+        let normal: serde_json::Value =
+            serde_json::from_str(&reader.json_checked().unwrap()).unwrap();
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let active = normal["active_manifest"].as_str().unwrap();
+        let assertion = normal["manifests"][active]["assertions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["label"] == label)
+            .unwrap();
+        (
+            assertion["data"].clone(),
+            detailed["manifests"][active]["assertion_store"][label].clone(),
+        )
+    }
+
+    #[test]
+    fn json_report_preserves_numeric_arrays() {
+        let data = json!({
+            "values": [96, 384],
+            "hash": [0, 255],
+            "empty": [],
+            "negative": [-1, -256],
+            "fractional": [1.5, 2.5],
+            "large": [u32::MAX],
+            "nested": [[96, 384], {"values": [0, 255]}]
+        });
+        let mut builder = Builder::default();
+        for (label, value) in [
+            ("org.example.nested", data.clone()),
+            ("org.example.root", json!([96, 384])),
+        ] {
+            builder.add_assertion(label, &value).unwrap();
+            builder
+                .add_assertion_json(format!("{label}.json"), &value)
+                .unwrap();
+        }
+        let reader = json_report_reader(builder);
+        for (label, value) in [
+            ("org.example.nested", data),
+            ("org.example.root", json!([96, 384])),
+        ] {
+            for label in [label.to_owned(), format!("{label}.json")] {
+                let (normal, detailed) = json_report_data(&reader, &label);
+                assert_eq!(normal, value, "{label}: normal report");
+                assert_eq!(detailed, value, "{label}: detailed report");
+                let typed: serde_json::Value = reader
+                    .active_manifest()
+                    .unwrap()
+                    .find_assertion(&label)
+                    .unwrap();
+                assert_eq!(typed, value, "{label}: typed API");
+            }
+        }
+    }
+
+    #[test]
+    fn json_report_preserves_cbor_bytes() {
+        #[derive(Serialize)]
+        struct Data {
+            #[serde(with = "serde_bytes")]
+            bytes: Vec<u8>,
+            #[serde(with = "serde_bytes")]
+            empty: Vec<u8>,
+            nested: Vec<serde_bytes::ByteBuf>,
+            values: Vec<u64>,
+        }
+
+        let mut builder = Builder::default();
+        builder
+            .add_assertion(
+                "org.example.bytes",
+                &Data {
+                    bytes: vec![96, 128],
+                    empty: vec![],
+                    nested: vec![
+                        serde_bytes::ByteBuf::from(vec![0, 255]),
+                        serde_bytes::ByteBuf::new(),
+                    ],
+                    values: vec![0, 255],
+                },
+            )
+            .unwrap();
+        builder
+            .add_assertion(
+                "org.example.root",
+                &serde_bytes::ByteBuf::from(vec![96, 128]),
+            )
+            .unwrap();
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        let expected = json!({
+            "bytes": "YIA=",
+            "empty": "",
+            "nested": ["AP8=", ""],
+            "values": [0, 255]
+        });
+        assert_eq!(display["assertions"][0]["data"], expected);
+        assert_eq!(display["assertions"][1]["data"], json!("YIA="));
+        let reader = json_report_reader(builder);
+        let (normal, detailed) = json_report_data(&reader, "org.example.bytes");
+        assert_eq!(normal, expected);
+        assert_eq!(detailed, expected);
+        let (normal, detailed) = json_report_data(&reader, "org.example.root");
+        assert_eq!(normal, json!("YIA="));
+        assert_eq!(detailed, json!("YIA="));
+
+        let typed = reader
+            .active_manifest()
+            .unwrap()
+            .assertions
+            .iter()
+            .find(|a| a.label() == "org.example.bytes")
+            .unwrap()
+            .value()
+            .unwrap();
+        assert_eq!(typed["bytes"], json!("b64'YIA='"));
+        assert_eq!(typed["values"], json!([0, 255]));
+    }
+
+    #[test]
+    fn json_report_preserves_builder_display() {
+        let definition = json!({
+            "assertions": [
+                {"label": "org.example.cbor", "data": {"values": [96, 384]}},
+                {"label": "org.example.json", "kind": "Json", "data": [0, 255]}
+            ]
+        });
+        let builder = Builder::default()
+            .with_definition(definition.to_string())
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(report["assertions"][0]["data"]["values"], json!([96, 384]));
+        assert_eq!(report["assertions"][1]["data"], json!([0, 255]));
+        assert_eq!(serde_json::to_value(&builder).unwrap(), report);
+    }
+
+    #[test]
+    fn json_report_keeps_post_validation_instances() {
+        struct Validator;
+        impl crate::reader::PostValidator for Validator {
+            fn validate(
+                &self,
+                label: &str,
+                _assertion: &crate::ManifestAssertion,
+                uri: &str,
+                _claim: &crate::dynamic_assertion::PartialClaim,
+                _tracker: &mut crate::status_tracker::StatusTracker,
+            ) -> Result<Option<serde_json::Value>> {
+                Ok(label
+                    .starts_with("org.example.instances")
+                    .then(|| json!({"uri": uri, "values": [96, 384], "literal": "b64'YIA='"})))
+            }
+        }
+
+        let mut builder = Builder::default();
+        builder
+            .add_assertion("org.example.instances", &json!({"values": [96, 384]}))
+            .unwrap();
+        builder
+            .add_assertion("org.example.instances", &json!({"values": [0, 255]}))
+            .unwrap();
+        let mut reader = json_report_reader(builder);
+        reader.post_validate(&Validator).unwrap();
+        let normal: serde_json::Value =
+            serde_json::from_str(&reader.json_checked().unwrap()).unwrap();
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let active = normal["active_manifest"].as_str().unwrap();
+        let assertions: Vec<_> = normal["manifests"][active]["assertions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["label"] == "org.example.instances")
+            .collect();
+        assert_eq!(assertions.len(), 2);
+        for assertion in assertions {
+            let instance = assertion["instance"].as_u64().unwrap_or(0);
+            let label = if instance > 0 {
+                format!("org.example.instances__{instance}")
+            } else {
+                "org.example.instances".to_owned()
+            };
+            let uri = crate::jumbf::labels::to_assertion_uri(active, &label);
+            let expected = json!({"uri": uri, "values": [96, 384], "literal": "b64'YIA='"});
+            assert_eq!(assertion["data"], expected);
+            assert_eq!(
+                detailed["manifests"][active]["assertion_store"][&label],
+                expected
+            );
+        }
+
+        // Decoded identity assertions can already include the instance in their label.
+        let mut serialized = serde_json::to_value(&reader).unwrap();
+        let second = serialized["manifests"][active]["assertions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|a| a["label"] == "org.example.instances" && a["instance"] == 1)
+            .unwrap();
+        second["label"] = json!("org.example.instances__1");
+        let mut suffixed: Reader = serde_json::from_value(serialized).unwrap();
+        suffixed.store = reader.store.clone();
+        suffixed.post_validate(&Validator).unwrap();
+        let (normal, detailed) = json_report_data(&suffixed, "org.example.instances__1");
+        let uri = crate::jumbf::labels::to_assertion_uri(active, "org.example.instances__1");
+        let expected = json!({"uri": uri, "values": [96, 384], "literal": "b64'YIA='"});
+        assert_eq!(normal, expected);
+        assert_eq!(detailed, expected);
+    }
+
+    #[test]
+    fn json_report_preserves_normalized_metadata_instances() {
+        let mut builder = Builder::default();
+        for values in [vec![96, 384], vec![0, 255]] {
+            let metadata = AssertionMetadata::new()
+                .set_date_time("2026-09-08T00:00:00Z".to_owned())
+                .set_field("@context", json!({"ex": "https://example.test/"}))
+                .set_field("values", json!(values));
+            builder
+                .add_assertion("c2pa.assertion.metadata", &metadata)
+                .unwrap();
+        }
+        let reader = json_report_reader(builder);
+        let normal: serde_json::Value =
+            serde_json::from_str(&reader.json_checked().unwrap()).unwrap();
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let active = normal["active_manifest"].as_str().unwrap();
+        let assertions: Vec<_> = normal["manifests"][active]["assertions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["label"] == "c2pa.assertion.metadata")
+            .collect();
+        assert_eq!(assertions.len(), 2);
+        for (instance, (assertion, values)) in assertions
+            .iter()
+            .zip([vec![96, 384], vec![0, 255]])
+            .enumerate()
+        {
+            let label = if instance > 0 {
+                format!("c2pa.assertion.metadata__{instance}")
+            } else {
+                "c2pa.assertion.metadata".to_owned()
+            };
+            let expected = json!({
+                "@context": {"ex": "https://example.test/"},
+                "dateTime": "2026-09-08T00:00:00Z",
+                "values": values
+            });
+            assert_eq!(assertion["data"], expected);
+            assert_eq!(
+                detailed["manifests"][active]["assertion_store"][&label],
+                expected
+            );
+            let typed = reader
+                .active_manifest()
+                .unwrap()
+                .assertions
+                .iter()
+                .filter(|a| a.label() == "c2pa.assertion.metadata")
+                .nth(instance)
+                .unwrap();
+            assert_eq!(typed.value().unwrap()["values"], json!(values));
+        }
+    }
+
+    #[test]
+    fn json_report_preserves_normalized_actions_and_claim_hashes() {
+        let mut builder = Builder::default();
+        builder
+            .add_assertion(
+                "c2pa.actions",
+                &json!({"actions": [{
+                    "action": "c2pa.created",
+                    "digitalSourceType": DigitalSourceType::Empty,
+                    "parameters": {"values": [96, 384]}
+                }]}),
+            )
+            .unwrap();
+        let reader = json_report_reader(builder);
+        let normal: serde_json::Value =
+            serde_json::from_str(&reader.json_checked().unwrap()).unwrap();
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let active = normal["active_manifest"].as_str().unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        for assertion in &manifest.assertions {
+            if assertion.label().starts_with("c2pa.actions") {
+                let reported = normal["manifests"][active]["assertions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|a| a["label"] == assertion.label())
+                    .unwrap();
+                assert_eq!(&reported["data"], assertion.value().unwrap());
+            }
+        }
+        let claims = reader.store.claims();
+        let claim = claims.last().unwrap();
+        let claim_json = &detailed["manifests"][active]["claim"];
+        let expected = json::to_value(claim).unwrap();
+        assert_eq!(
+            claim_json["created_assertions"],
+            expected["created_assertions"]
+        );
+        let references = claim_json["created_assertions"].as_array().unwrap();
+        assert!(!references.is_empty());
+        for reference in references {
+            let original = claim
+                .assertions()
+                .iter()
+                .find(|a| reference["url"] == a.url())
+                .unwrap();
+            assert_eq!(
+                reference["hash"],
+                json!(crate::crypto::base64::encode(&original.hash()))
+            );
+        }
+
+        let detached: Reader =
+            serde_json::from_value(serde_json::to_value(&reader).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&detached.json_checked().unwrap()).unwrap(),
+            normal
+        );
+    }
 
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]

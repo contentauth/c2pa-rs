@@ -617,9 +617,7 @@ pub fn concat_and_hash(alg: &str, left: &[u8], right: Option<&[u8]>) -> Vec<u8> 
     hash_by_alg(alg, &temp, None)
 }
 
-/// replace byte arrays with base64 encoded strings
-///
-/// Also unwraps crJSON `b64'<base64>'` strings (as produced by
+/// Unwrap crJSON `b64'<base64>'` strings (as produced by
 /// [`crate::assertion::Assertion::as_json_object`] for CBOR byte strings) down to
 /// plain base64, since this is the legacy `Reader::json()` convention rather than
 /// the crJSON one.
@@ -631,35 +629,15 @@ pub fn hash_to_b64(mut value: Value) -> Value {
 
     while let Some(current) = queue.pop_front() {
         match current {
-            Value::Object(obj) => {
-                for (_, v) in obj.iter_mut() {
-                    match v {
-                        Value::Array(hash_arr)
-                            if !hash_arr.is_empty() && hash_arr.iter().all(|x| x.is_number()) =>
-                        {
-                            // Pre-allocate with capacity to avoid reallocations
-                            let mut hash_bytes = Vec::with_capacity(hash_arr.len());
-                            // Convert numbers to bytes safely
-                            for n in hash_arr.iter() {
-                                if let Some(num) = n.as_u64() {
-                                    hash_bytes.push(num as u8);
-                                }
-                            }
-                            *v = Value::String(encode(&hash_bytes));
-                        }
-                        Value::String(s) => {
-                            if let Some(bytes) = decode_b64_wrapped(s) {
-                                *v = Value::String(encode(&bytes));
-                            }
-                        }
-                        _ => {}
-                    }
-                    queue.push_back(v);
-                }
-            }
+            Value::Object(obj) => queue.extend(obj.values_mut()),
             Value::Array(arr) => {
                 for v in arr.iter_mut() {
                     queue.push_back(v);
+                }
+            }
+            Value::String(s) => {
+                if let Some(bytes) = decode_b64_wrapped(s) {
+                    *s = encode(&bytes);
                 }
             }
             _ => {}
