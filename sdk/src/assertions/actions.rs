@@ -353,6 +353,35 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
     }
 }
 
+/// A `relatedAssertions` entry as it appears on the wire, where `hash` may be missing.
+///
+/// A missing hash is not a decoding error: the [`Builder`](crate::Builder) fills it in, and
+/// validation reports any entry whose hash doesn't match as `assertion.hashedURI.mismatch`.
+#[derive(Deserialize)]
+struct RelatedAssertionRef {
+    url: String,
+    #[serde(default)]
+    alg: Option<String>,
+    #[serde(default, with = "serde_bytes")]
+    hash: Vec<u8>,
+}
+
+impl From<RelatedAssertionRef> for HashedUri {
+    fn from(r: RelatedAssertionRef) -> Self {
+        HashedUri::new(r.url, r.alg, &r.hash)
+    }
+}
+
+fn deserialize_related_assertions<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Vec<HashedUri>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let refs: Option<Vec<RelatedAssertionRef>> = Option::deserialize(deserializer)?;
+    Ok(refs.map(|refs| refs.into_iter().map(HashedUri::from).collect()))
+}
+
 /// Additional parameters of the action.
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
@@ -383,7 +412,15 @@ pub struct ActionParameters {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multiple_instances: Option<bool>,
     /// Hashed JUMBF URI(s) to assertion(s) related to this action that are neither ingredients nor actions.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    ///
+    /// When building a manifest, an entry may omit `alg` and `hash` and give only the label (or
+    /// JUMBF URI) of an assertion in the same manifest; the [`Builder`](crate::Builder) fills in
+    /// the full URI and hash when it creates the claim.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_related_assertions"
+    )]
     pub related_assertions: Option<Vec<HashedUri>>,
 
     /// Anything from the common parameters.
@@ -522,6 +559,9 @@ impl Action {
                     "multiple_instances" => {
                         c2pa_cbor::value::to_value(parameters.multiple_instances).ok()
                     }
+                    "related_assertions" | "relatedAssertions" => {
+                        c2pa_cbor::value::to_value(&parameters.related_assertions).ok()
+                    }
                     _ => parameters.common.get(key).cloned(),
                 };
                 value.and_then(|value| c2pa_cbor::value::from_value(value).ok())
@@ -607,6 +647,11 @@ impl Action {
             }
             "multiple_instances" => {
                 parameters.multiple_instances = c2pa_cbor::value::from_value(value)?;
+            }
+            "related_assertions" | "relatedAssertions" => {
+                let refs: Option<Vec<RelatedAssertionRef>> = c2pa_cbor::value::from_value(value)?;
+                parameters.related_assertions =
+                    refs.map(|refs| refs.into_iter().map(HashedUri::from).collect());
             }
             key => {
                 parameters.common.insert(key.to_owned(), value);
@@ -1339,6 +1384,43 @@ pub mod tests {
                 ..Default::default()
             }]
         );
+    }
+
+    #[test]
+    fn test_related_assertions_without_hash_decode() {
+        let json = serde_json::json!({
+            "actions": [{
+                "action": "c2pa.edited",
+                "parameters": { "relatedAssertions": [{ "url": "com.example.related" }] }
+            }]
+        });
+
+        // From JSON, as a manifest definition supplies it.
+        let actions: Actions = serde_json::from_value(json.clone()).unwrap();
+        let related = actions.actions()[0].related_assertions().unwrap();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].url(), "com.example.related");
+        assert!(related[0].hash().is_empty());
+
+        // From CBOR, as a reader decodes it from an asset.
+        let cbor = c2pa_cbor::to_vec(&json).unwrap();
+        let actions: Actions = c2pa_cbor::from_slice(&cbor).unwrap();
+        assert!(actions.actions()[0].related_assertions().unwrap()[0]
+            .hash()
+            .is_empty());
+
+        // `set_parameter` accepts the same shape and populates the typed field directly.
+        let action = Action::new(c2pa_action::EDITED)
+            .set_parameter(
+                "relatedAssertions",
+                serde_json::json!([{ "url": "com.example.related" }]),
+            )
+            .unwrap();
+        assert_eq!(
+            action.related_assertions().unwrap()[0].url(),
+            "com.example.related"
+        );
+        assert!(action.parameters().unwrap().common.is_empty());
     }
 
     #[test]

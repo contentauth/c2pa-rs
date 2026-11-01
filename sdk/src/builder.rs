@@ -49,14 +49,17 @@ use crate::{
     context::{Context, ProgressPhase},
     crypto::cose,
     error::{Error, Result},
-    jumbf::labels::manifest_label_from_uri,
+    jumbf::labels::{manifest_label_from_uri, to_assertion_uri, to_relative_uri},
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
-        hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
-        path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
+        hash_utils::{hash_size_by_alg, hash_to_b64},
+        merkle::MerkleAccumulator,
+        mime::format_to_mime,
+        path_utils::sanitize_archive_path,
+        xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
@@ -1845,6 +1848,60 @@ impl Builder {
         Ok(actions)
     }
 
+    /// Fills in each action's `relatedAssertions` entries with the hashed URI of the assertion
+    /// it names in `claim`.
+    ///
+    /// An entry's `url` may be a bare assertion label (`c2pa.soft-binding`), a
+    /// `c2pa.assertions/<label>` path, or a full JUMBF URI into this manifest; any `alg` and
+    /// `hash` it carries are replaced. This must run after every non-actions assertion has been
+    /// added to `claim`, so that references to assertions declared after the actions assertion
+    /// still resolve.
+    fn resolve_related_assertions(claim: &Claim, actions: &mut Actions) -> Result<()> {
+        for action in actions.actions_mut() {
+            let Some(related) = action
+                .parameters
+                .as_mut()
+                .and_then(|p| p.related_assertions.as_mut())
+            else {
+                continue;
+            };
+
+            for uri in related.iter_mut() {
+                let url = uri.url();
+                if manifest_label_from_uri(&url).is_some_and(|label| label != claim.label()) {
+                    return Err(Error::AssertionSpecificError(format!(
+                        "relatedAssertions must reference an assertion in the current manifest: {url}"
+                    )));
+                }
+
+                let (label, instance) = Claim::assertion_label_from_link(&url);
+                let base = labels::base(&label);
+                if base == labels::ACTIONS || base == labels::INGREDIENT {
+                    return Err(Error::AssertionSpecificError(format!(
+                        "relatedAssertions must not reference an actions or ingredient assertion: {url}"
+                    )));
+                }
+
+                let full_label = Claim::label_with_instance(&label, instance);
+                if let Some((resolved, _)) = claim.assertion_hashed_uri_from_label(&full_label) {
+                    *uri = resolved.clone();
+                } else if labels::is_hard_binding_label(&label) {
+                    // The hard binding is added while signing, after this. Reserve a hash of
+                    // the right length; `Claim` fills it in when the hard binding is added and
+                    // again each time it's patched with its final contents.
+                    let link = to_relative_uri(&to_assertion_uri(claim.label(), &full_label));
+                    let placeholder = vec![0u8; hash_size_by_alg(claim.alg())?];
+                    *uri = HashedUri::new(link, None, &placeholder);
+                } else {
+                    return Err(Error::AssertionSpecificError(format!(
+                        "relatedAssertions reference not found in manifest: {url}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Returns the position in `pending` of the Actions assertion that must carry the
     /// manifest's inception (`c2pa.created`/`c2pa.opened`) action, per the C2PA 2.4 rule that
     /// the inception action must be the first action of the first `c2pa.actions`/
@@ -2181,6 +2238,11 @@ impl Builder {
                 .iter()
                 .all(|(_, _, actions)| actions.actions().is_empty());
         self.maybe_set_all_actions_included(&mut designated, is_sole_action_context);
+
+        Self::resolve_related_assertions(claim, &mut designated)?;
+        for (_, _, actions) in pending.iter_mut() {
+            Self::resolve_related_assertions(claim, actions)?;
+        }
 
         if target.is_some() || !designated.actions().is_empty() {
             if commit_as_created {
@@ -4889,6 +4951,174 @@ mod tests {
         );
     }
 
+    /// Builds a manifest whose `c2pa.edited` action lists `related` as its `relatedAssertions`,
+    /// with a `com.example.related` assertion declared *after* the actions assertion.
+    fn sign_with_related_assertions(related: serde_json::Value) -> Result<Cursor<Vec<u8>>> {
+        sign_asset_with_related_assertions("image/jpeg", TEST_IMAGE, related)
+    }
+
+    fn sign_asset_with_related_assertions(
+        format: &str,
+        asset: &[u8],
+        related: serde_json::Value,
+    ) -> Result<Cursor<Vec<u8>>> {
+        let context = test_context().with_signer(test_signer(SigningAlg::Ps256));
+
+        let mut builder = Builder::from_context(context).with_definition(
+            json!({
+                "assertions": [
+                    {
+                        "label": "c2pa.actions.v2",
+                        "data": { "actions": [ {
+                            "action": "c2pa.edited",
+                            "parameters": { "relatedAssertions": related }
+                        } ] }
+                    },
+                    {
+                        "label": "com.example.related",
+                        "data": { "note": "related payload" }
+                    }
+                ]
+            })
+            .to_string(),
+        )?;
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let mut output = Cursor::new(Vec::new());
+        builder.save_to_stream(format, &mut Cursor::new(asset), &mut output)?;
+        output.rewind()?;
+        Ok(output)
+    }
+
+    /// Unhashed `relatedAssertions` entries are filled in with the referenced assertion's URI
+    /// and hash, whether given as a bare label, an assertion path, or a JUMBF URI.
+    #[test]
+    fn test_related_assertions_resolved_by_builder() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        for url in [
+            "com.example.related",
+            "c2pa.assertions/com.example.related",
+            "self#jumbf=c2pa.assertions/com.example.related",
+        ] {
+            let mut output = sign_with_related_assertions(json!([{ "url": url }])).unwrap();
+            let reader = Reader::default()
+                .with_stream("image/jpeg", &mut output)
+                .unwrap();
+
+            // A hash that didn't match the assertion would fail validation.
+            assert_eq!(reader.validation_state(), ValidationState::Trusted, "{url}");
+
+            // The auto inception action lands in its own created actions assertion, so look
+            // through every actions assertion for the edited action.
+            let edited = reader
+                .active_manifest()
+                .unwrap()
+                .assertions()
+                .iter()
+                .filter(|a| a.label().starts_with(Actions::LABEL))
+                .flat_map(|a| a.to_assertion::<Actions>().unwrap().actions)
+                .find(|a| a.action() == c2pa_action::EDITED)
+                .unwrap();
+            let related = edited.related_assertions().unwrap();
+            assert_eq!(related.len(), 1);
+            assert!(
+                related[0]
+                    .url()
+                    .ends_with("c2pa.assertions/com.example.related"),
+                "{url} resolved to {}",
+                related[0].url()
+            );
+            assert!(!related[0].hash().is_empty());
+        }
+    }
+
+    /// A `relatedAssertions` entry may name the hard binding, which is only added (and then
+    /// patched with its final hash) while signing.
+    #[test]
+    fn test_related_assertions_to_hard_binding() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        for (format, asset, label) in [
+            ("image/jpeg", TEST_IMAGE, labels::DATA_HASH),
+            ("video/mp4", TEST_VIDEO_MP4, "c2pa.hash.bmff.v3"),
+        ] {
+            let mut output =
+                sign_asset_with_related_assertions(format, asset, json!([{ "url": label }]))
+                    .unwrap();
+            let reader = Reader::default().with_stream(format, &mut output).unwrap();
+
+            // A stale or placeholder hash would fail validation.
+            assert_eq!(
+                reader.validation_state(),
+                ValidationState::Trusted,
+                "{label}: {:?}",
+                reader.validation_status()
+            );
+
+            let edited = reader
+                .active_manifest()
+                .unwrap()
+                .assertions()
+                .iter()
+                .filter(|a| a.label().starts_with(Actions::LABEL))
+                .flat_map(|a| a.to_assertion::<Actions>().unwrap().actions)
+                .find(|a| a.action() == c2pa_action::EDITED)
+                .unwrap();
+            let related = edited.related_assertions().unwrap();
+            assert!(
+                related[0]
+                    .url()
+                    .ends_with(&format!("c2pa.assertions/{label}")),
+                "{label} resolved to {}",
+                related[0].url()
+            );
+            assert!(related[0].hash().iter().any(|b| *b != 0), "{label}");
+        }
+    }
+
+    /// A reference to a hard binding the asset never gets is reported before signing.
+    #[test]
+    fn test_related_assertions_to_missing_hard_binding_rejected() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        // JPEGs get a data hash, not a BMFF hash.
+        let err =
+            sign_with_related_assertions(json!([{ "url": "c2pa.hash.bmff.v3" }])).unwrap_err();
+        assert!(
+            matches!(err, Error::AssertionSpecificError(ref m) if m.contains("c2pa.hash.bmff.v3")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn test_related_assertions_unresolvable_rejected() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let err =
+            sign_with_related_assertions(json!([{ "url": "com.example.missing" }])).unwrap_err();
+        assert!(
+            matches!(err, Error::AssertionSpecificError(ref m) if m.contains("com.example.missing")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn test_related_assertions_to_actions_rejected() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let err = sign_with_related_assertions(json!([{ "url": "c2pa.actions.v2" }])).unwrap_err();
+        assert!(
+            matches!(err, Error::AssertionSpecificError(ref m) if m.contains("must not reference")),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn test_builder_settings_auto_created() {
         #[cfg(target_os = "wasi")]
@@ -6234,6 +6464,68 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         // 7. The embedded manifest validates successfully after reading the completed asset.
         assert!(!signed_manifest.is_empty());
+
+        Ok(())
+    }
+
+    /// The placeholder workflow adds the data hash to the builder and patches it later; a
+    /// `relatedAssertions` reference to it must carry the final hash.
+    #[test]
+    fn test_data_hashed_placeholder_workflow_related_assertions() -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let mut builder = Builder::default().with_definition(
+            json!({
+                "assertions": [{
+                    "label": "c2pa.actions.v2",
+                    "created": true,
+                    "data": { "actions": [ {
+                        "action": "c2pa.created",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+                        "parameters": { "relatedAssertions": [ { "url": "c2pa.hash.data" } ] }
+                    } ] }
+                }]
+            })
+            .to_string(),
+        )?;
+
+        let composed_placeholder = builder.placeholder("image/jpeg")?;
+
+        let mut output_stream = Cursor::new(Vec::new());
+        let offset = write_jpeg_placeholder_stream(
+            &composed_placeholder,
+            "image/jpeg",
+            &mut Cursor::new(TEST_IMAGE_CLOUD),
+            &mut output_stream,
+            None,
+        )?;
+        builder.set_data_hash_exclusions(vec![HashRange::new(
+            offset as u64,
+            composed_placeholder.len() as u64,
+        )])?;
+        output_stream.rewind()?;
+        builder.update_hash_from_stream("image/jpeg", &mut output_stream)?;
+
+        let signed_manifest = builder.sign_embeddable("image/jpeg")?;
+        assert!(signed_manifest.len() <= composed_placeholder.len());
+        output_stream.seek(SeekFrom::Start(offset as u64))?;
+        output_stream.write_all(&signed_manifest)?;
+
+        output_stream.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", output_stream)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "{:?}",
+            reader.validation_status()
+        );
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL_VERSIONED)?;
+        let related = actions.actions()[0].related_assertions().unwrap();
+        assert!(related[0].url().ends_with("c2pa.assertions/c2pa.hash.data"));
 
         Ok(())
     }
