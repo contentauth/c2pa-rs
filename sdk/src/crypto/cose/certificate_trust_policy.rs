@@ -564,8 +564,18 @@ impl CertificateTrustPolicy {
     }
 
     /// Return `true` if the EKU OID is allowed.
+    ///
+    /// `c2pa-kp-claimSigning` is always allowed: a validator always has a trust
+    /// list for it (C2PA Trust Model, "C2PA Signers"). `id-kp-emailProtection`,
+    /// which earlier versions of the specification required, is allowed unless
+    /// a list of valid EKUs has been configured that leaves it out.
     pub(crate) fn has_allowed_eku<'a>(&self, eku: &'a ExtendedKeyUsage) -> Option<Oid<'a>> {
-        if eku.email_protection {
+        if eku.email_protection
+            && (self.additional_ekus.is_empty()
+                || self
+                    .additional_ekus
+                    .contains(&EMAIL_PROTECTION_OID.to_id_string()))
+        {
             return Some(EMAIL_PROTECTION_OID.clone());
         }
 
@@ -582,7 +592,8 @@ impl CertificateTrustPolicy {
 
         for extra_oid in eku.other.iter().as_ref() {
             let extra_oid_str = extra_oid.to_string();
-            if self.additional_ekus.contains(&extra_oid_str) {
+            if *extra_oid == C2PA_CLAIM_SIGNING_OID || self.additional_ekus.contains(&extra_oid_str)
+            {
                 return Some(extra_oid.clone());
             }
         }
@@ -672,6 +683,7 @@ impl fmt::Display for InvalidCertificateError {
 impl Error for InvalidCertificateError {}
 
 static EMAIL_PROTECTION_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .4);
+static C2PA_CLAIM_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .62558 .2 .1);
 static TIMESTAMPING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .8);
 static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9);
 
@@ -921,6 +933,47 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
+    fn c2pa_claim_signing_eku_always_allowed() {
+        // With no list of valid EKUs configured.
+        let ctp = CertificateTrustPolicy::new();
+        assert_eq!(
+            ctp.has_allowed_eku(&c2pa_claim_signing_eku()).unwrap(),
+            super::C2PA_CLAIM_SIGNING_OID
+        );
+
+        // With a list that does not mention it.
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_valid_ekus(b"1.3.6.1.5.5.7.3.36");
+        assert_eq!(
+            ctp.has_allowed_eku(&c2pa_claim_signing_eku()).unwrap(),
+            super::C2PA_CLAIM_SIGNING_OID
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn configured_eku_list_controls_email_protection() {
+        // A configured list without id-kp-emailProtection excludes it.
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_valid_ekus(b"1.3.6.1.4.1.62558.2.1");
+        assert!(ctp.has_allowed_eku(&email_eku()).is_none());
+
+        // A configured list that includes it allows it.
+        ctp.add_valid_ekus(b"1.3.6.1.5.5.7.3.4");
+        assert_eq!(
+            ctp.has_allowed_eku(&email_eku()).unwrap(),
+            EMAIL_PROTECTION_OID
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn add_valid_ekus_err_bad_utf8() {
         let mut ctp = CertificateTrustPolicy::new();
         ctp.add_valid_ekus(&[128, 0]);
@@ -1011,6 +1064,19 @@ mod tests {
             time_stamping: false,
             ocsp_signing: false,
             other: vec![DOCUMENT_SIGNING_OID.clone()],
+        }
+    }
+
+    fn c2pa_claim_signing_eku() -> ExtendedKeyUsage<'static> {
+        ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: false,
+            time_stamping: false,
+            ocsp_signing: false,
+            other: vec![super::C2PA_CLAIM_SIGNING_OID.clone()],
         }
     }
 
