@@ -1845,6 +1845,52 @@ impl Builder {
         Ok(actions)
     }
 
+    /// Fills in each action's `relatedAssertions` entries with the hashed URI of the assertion
+    /// it names in `claim`.
+    ///
+    /// An entry's `url` may be a bare assertion label (`c2pa.soft-binding`), a
+    /// `c2pa.assertions/<label>` path, or a full JUMBF URI into this manifest; any `alg` and
+    /// `hash` it carries are replaced. This must run after every non-actions assertion has been
+    /// added to `claim`, so that references to assertions declared after the actions assertion
+    /// still resolve.
+    fn resolve_related_assertions(claim: &Claim, actions: &mut Actions) -> Result<()> {
+        for action in actions.actions_mut() {
+            let Some(related) = action
+                .parameters
+                .as_mut()
+                .and_then(|p| p.related_assertions.as_mut())
+            else {
+                continue;
+            };
+
+            for uri in related.iter_mut() {
+                let url = uri.url();
+                if manifest_label_from_uri(&url).is_some_and(|label| label != claim.label()) {
+                    return Err(Error::AssertionSpecificError(format!(
+                        "relatedAssertions must reference an assertion in the current manifest: {url}"
+                    )));
+                }
+
+                let (label, instance) = Claim::assertion_label_from_link(&url);
+                let base = labels::base(&label);
+                if base == labels::ACTIONS || base == labels::INGREDIENT {
+                    return Err(Error::AssertionSpecificError(format!(
+                        "relatedAssertions must not reference an actions or ingredient assertion: {url}"
+                    )));
+                }
+
+                let full_label = Claim::label_with_instance(&label, instance);
+                let Some((resolved, _)) = claim.assertion_hashed_uri_from_label(&full_label) else {
+                    return Err(Error::AssertionSpecificError(format!(
+                        "relatedAssertions reference not found in manifest: {url}"
+                    )));
+                };
+                *uri = resolved.clone();
+            }
+        }
+        Ok(())
+    }
+
     /// Returns the position in `pending` of the Actions assertion that must carry the
     /// manifest's inception (`c2pa.created`/`c2pa.opened`) action, per the C2PA 2.4 rule that
     /// the inception action must be the first action of the first `c2pa.actions`/
@@ -2181,6 +2227,11 @@ impl Builder {
                 .iter()
                 .all(|(_, _, actions)| actions.actions().is_empty());
         self.maybe_set_all_actions_included(&mut designated, is_sole_action_context);
+
+        Self::resolve_related_assertions(claim, &mut designated)?;
+        for (_, _, actions) in pending.iter_mut() {
+            Self::resolve_related_assertions(claim, actions)?;
+        }
 
         if target.is_some() || !designated.actions().is_empty() {
             if commit_as_created {
@@ -4886,6 +4937,106 @@ mod tests {
         assert_eq!(
             actions.actions().first().unwrap().action(),
             c2pa_action::CREATED
+        );
+    }
+
+    /// Builds a manifest whose `c2pa.edited` action lists `related` as its `relatedAssertions`,
+    /// with a `com.example.related` assertion declared *after* the actions assertion.
+    fn sign_with_related_assertions(related: serde_json::Value) -> Result<Cursor<Vec<u8>>> {
+        let context = test_context().with_signer(test_signer(SigningAlg::Ps256));
+
+        let mut builder = Builder::from_context(context).with_definition(
+            json!({
+                "assertions": [
+                    {
+                        "label": "c2pa.actions.v2",
+                        "data": { "actions": [ {
+                            "action": "c2pa.edited",
+                            "parameters": { "relatedAssertions": related }
+                        } ] }
+                    },
+                    {
+                        "label": "com.example.related",
+                        "data": { "note": "related payload" }
+                    }
+                ]
+            })
+            .to_string(),
+        )?;
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let mut output = Cursor::new(Vec::new());
+        builder.save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)?;
+        output.rewind()?;
+        Ok(output)
+    }
+
+    /// Unhashed `relatedAssertions` entries are filled in with the referenced assertion's URI
+    /// and hash, whether given as a bare label, an assertion path, or a JUMBF URI.
+    #[test]
+    fn test_related_assertions_resolved_by_builder() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        for url in [
+            "com.example.related",
+            "c2pa.assertions/com.example.related",
+            "self#jumbf=c2pa.assertions/com.example.related",
+        ] {
+            let mut output = sign_with_related_assertions(json!([{ "url": url }])).unwrap();
+            let reader = Reader::default()
+                .with_stream("image/jpeg", &mut output)
+                .unwrap();
+
+            // A hash that didn't match the assertion would fail validation.
+            assert_eq!(reader.validation_state(), ValidationState::Trusted, "{url}");
+
+            // The auto inception action lands in its own created actions assertion, so look
+            // through every actions assertion for the edited action.
+            let edited = reader
+                .active_manifest()
+                .unwrap()
+                .assertions()
+                .iter()
+                .filter(|a| a.label().starts_with(Actions::LABEL))
+                .flat_map(|a| a.to_assertion::<Actions>().unwrap().actions)
+                .find(|a| a.action() == c2pa_action::EDITED)
+                .unwrap();
+            let related = edited.related_assertions().unwrap();
+            assert_eq!(related.len(), 1);
+            assert!(
+                related[0]
+                    .url()
+                    .ends_with("c2pa.assertions/com.example.related"),
+                "{url} resolved to {}",
+                related[0].url()
+            );
+            assert!(!related[0].hash().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_related_assertions_unresolvable_rejected() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let err =
+            sign_with_related_assertions(json!([{ "url": "com.example.missing" }])).unwrap_err();
+        assert!(
+            matches!(err, Error::AssertionSpecificError(ref m) if m.contains("com.example.missing")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn test_related_assertions_to_actions_rejected() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let err = sign_with_related_assertions(json!([{ "url": "c2pa.actions.v2" }])).unwrap_err();
+        assert!(
+            matches!(err, Error::AssertionSpecificError(ref m) if m.contains("must not reference")),
+            "{err:?}"
         );
     }
 

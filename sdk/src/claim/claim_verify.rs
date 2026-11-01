@@ -957,7 +957,23 @@ impl Claim {
                             None
                         };
 
-                        if assertion.is_none() {
+                        if let Some(assertion) = assertion {
+                            // 2.f.ii.A the hashed URI must match the referenced assertion
+                            if !vec_compare(assertion.hash(), &related.hash()) {
+                                log_item!(
+                                    url.clone(),
+                                    format!("relatedAssertions hash does not match assertion data: {url}"),
+                                    "verify_actions"
+                                )
+                                .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
+                                .failure_no_throw(
+                                    validation_log,
+                                    Error::HashMismatch(format!(
+                                        "relatedAssertions hash does not match assertion data: {url}"
+                                    )),
+                                );
+                            }
+                        } else {
                             log_item!(
                                 url.clone(),
                                 format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
