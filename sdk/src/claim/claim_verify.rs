@@ -458,7 +458,7 @@ impl Claim {
             }
             // check top level icons
             if !icons.is_empty() {
-                Claim::verify_icons(claim, &icons, validation_log)?;
+                Claim::verify_icons(claim, &label, &icons, validation_log)?;
             }
 
             for (action_index, action) in actions.actions().iter().enumerate() {
@@ -960,7 +960,7 @@ impl Claim {
                     }
                 }
                 if !icons.is_empty() {
-                    Claim::verify_icons(claim, &icons, validation_log)?;
+                    Claim::verify_icons(claim, &label, &icons, validation_log)?;
                 }
 
                 // check watermarks for required softbinding
@@ -991,9 +991,13 @@ impl Claim {
         Ok(())
     }
 
-    // check the validity of icons in a ClaimGeneratorInfo
+    /// Checks that each icon is a hashed URI that resolves within `claim`.
+    ///
+    /// `source_uri` is the JUMBF URI of the claim or assertion containing the icons, used to
+    /// locate failures for icons that have no hashed URI of their own.
     fn verify_icons(
         claim: &Claim,
+        source_uri: &str,
         icon_uris: &[&UriOrResource],
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
@@ -1001,18 +1005,13 @@ impl Claim {
             let icon = match icon {
                 UriOrResource::HashedUri(icon) => icon,
                 UriOrResource::ResourceRef(resource) => {
-                    log_item!(
-                        claim.label().to_owned(),
-                        "icon must contain a hashed URI",
-                        "verify_icons"
-                    )
-                    .validation_status(validation_status::HASHED_URI_MISSING)
-                    .failure(
-                        validation_log,
-                        Error::AssertionMissing {
-                            url: resource.identifier.clone(),
-                        },
-                    )?;
+                    let msg = format!(
+                        "icon must contain a hashed URI, found resource reference: {}",
+                        resource.identifier
+                    );
+                    log_item!(source_uri.to_owned(), msg.clone(), "verify_icons")
+                        .validation_status(validation_status::HASHED_URI_MISSING)
+                        .failure(validation_log, Error::ValidationRule(msg))?;
                     continue;
                 }
             };
@@ -1630,7 +1629,7 @@ impl Claim {
                 }
             }
             if !icons.is_empty() {
-                Claim::verify_icons(claim, &icons, validation_log)?;
+                Claim::verify_icons(claim, &claim.to_claim_uri(), &icons, validation_log)?;
             }
         }
 

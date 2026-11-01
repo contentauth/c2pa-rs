@@ -1114,8 +1114,22 @@ fn test_verify_claim_generator_resource_ref_icons_rejected() {
             &Context::new(),
         )
         .unwrap();
-        assert!(validation_log.has_status(validation_status::HASHED_URI_MISSING));
+        assert_eq!(
+            hashed_uri_missing_location(&validation_log),
+            Some(claim.to_claim_uri())
+        );
     }
+}
+
+/// Returns the location reported for the first `hashedURI.missing` failure.
+fn hashed_uri_missing_location(validation_log: &StatusTracker) -> Option<String> {
+    validation_log
+        .logged_items()
+        .iter()
+        .find(|item| {
+            item.validation_status.as_deref() == Some(validation_status::HASHED_URI_MISSING)
+        })
+        .map(|item| item.label.to_string())
 }
 
 #[test]
@@ -1129,7 +1143,9 @@ fn test_verify_resource_ref_icons_rejected() {
     for case in cases {
         let mut claim = Claim::new("test", Some("test"), 2);
         let actions: Actions = serde_json::from_value(case.clone()).unwrap();
-        claim.add_assertion(&actions).unwrap();
+        let actions_uri = claim.add_assertion(&actions).unwrap().url();
+        let (actions_label, _) = Claim::assertion_label_from_link(&actions_uri);
+        let expected_location = to_assertion_uri(claim.label(), &actions_label);
         for behavior in [
             ErrorBehavior::ContinueWhenPossible,
             ErrorBehavior::StopOnFirstError,
@@ -1142,12 +1158,15 @@ fn test_verify_resource_ref_icons_rejected() {
                 &mut validation_log,
                 &Settings::default(),
             );
-            assert!(
-                validation_log.has_status(validation_status::HASHED_URI_MISSING),
-                "resource reference icon must be rejected: {case}"
+            assert_eq!(
+                hashed_uri_missing_location(&validation_log).as_deref(),
+                Some(expected_location.as_str()),
+                "resource reference icon must be rejected at its actions assertion: {case}"
             );
             if stop_on_error {
-                assert!(result.is_err());
+                assert!(
+                    matches!(result, Err(Error::ValidationRule(ref msg)) if msg.contains("icon.png"))
+                );
             } else {
                 assert!(result.is_ok());
             }
