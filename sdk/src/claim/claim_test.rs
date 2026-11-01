@@ -893,14 +893,188 @@ fn test_verify_signature_box_uri_absolute_to_other_box() {
     assert!(signature_box_uri_missing(claim, uri));
 }
 
+/// Creates a V2 test claim declaring `spec_version` in `claim_generator_info` (Spec 2.4 style).
+fn create_test_claim_with_cgi_spec_version(spec_version: &str) -> Claim {
+    let mut claim = create_test_claim().expect("create test claim");
+    let cgi = claim
+        .claim_generator_info
+        .as_mut()
+        .expect("test claim has claim_generator_info");
+    cgi[0].set_spec_version(spec_version);
+    claim
+}
+
 #[test]
-fn test_verify_signature_box_uri_relative_v2() {
+fn test_verify_signature_box_uri_relative_v2_spec_2_3() {
     // A relative URI does not name the manifest label, so it cannot bind the label to the
-    // signed claim. A V2 claim must use an absolute URI.
-    let claim = create_test_claim().expect("create test claim");
+    // signed claim. Since Spec 2.3, a V2 claim must use an absolute URI.
+    for version in ["2.3", "2.3.0", "2.4.0", "2.10.0", "3"] {
+        let claim = create_test_claim_with_cgi_spec_version(version);
+        assert!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            "relative URI should be rejected for spec {version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_claim_map_spec_2_3() {
+    // Spec 2.3 declared specVersion in the claim map rather than in claim_generator_info.
+    let mut claim = create_test_claim().expect("create test claim");
+    claim.spec_version = Some("2.3.0".to_string());
     assert!(signature_box_uri_missing(
         claim,
         "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_spec_version_precedence() {
+    for (cgi_version, claim_map_version, missing) in [
+        ("2.2.0", "2.3.0", false),
+        ("2.3.0", "2.2.0", true),
+        ("2.4.0", "2.3.0", true),
+        ("next", "2.2.0", true),
+        ("2.2.0", "next", false),
+    ] {
+        let mut claim = create_test_claim_with_cgi_spec_version(cgi_version);
+        claim.spec_version = Some(claim_map_version.to_string());
+
+        assert_eq!(
+            claim.spec_version().map(String::as_str),
+            Some(cgi_version),
+            "claim_generator_info should take precedence over the claim map"
+        );
+        assert_eq!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            missing,
+            "unexpected result for CGI spec {cgi_version}, claim-map spec {claim_map_version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_claim_map_fallback() {
+    for (version, missing) in [("2.2.0", false), ("2.3.0", true), ("next", true)] {
+        let mut claim = create_test_claim().expect("create test claim");
+        claim.spec_version = Some(version.to_string());
+        assert_eq!(claim.spec_version(), None);
+
+        assert_eq!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            missing,
+            "claim-map spec {version} should be used when CGI has no specVersion"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_signed_jpeg() -> Result<()> {
+    use crate::{
+        store::Store,
+        utils::{
+            test::{create_min_test_claim, create_test_streams, test_context},
+            test_signer::test_signer,
+        },
+        Reader, SigningAlg, ValidationState,
+    };
+
+    for version in [None, Some("2.2.0"), Some("2.3.0")] {
+        let mut context = test_context();
+        // Also produce the invalid 2.3 case so the reader, not the signer, checks the URI.
+        context.settings_mut().verify.verify_after_sign = false;
+        context.settings_mut().verify.verify_after_reading = true;
+        context.settings_mut().verify.verify_trust = false;
+
+        let mut claim = create_min_test_claim()?;
+        if let Some(version) = version {
+            claim
+                .claim_generator_info
+                .as_mut()
+                .expect("test claim has claim_generator_info")[0]
+                .set_spec_version(version);
+        }
+        let mut store = Store::from_context(&context);
+        store.commit_claim(claim)?;
+        store
+            .provenance_claim_mut()
+            .expect("store has a provenance claim")
+            .signature = "self#jumbf=c2pa.signature".to_string();
+
+        let (format, mut source, mut asset) = create_test_streams("earth_apollo17.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+        store.save_to_stream(format, &mut source, &mut asset, signer.as_ref(), &context)?;
+
+        let mut report = StatusTracker::default();
+        let restored = Store::from_stream(format, &mut asset, &mut report, &context)?;
+        let claim = restored
+            .provenance_claim()
+            .expect("signed JPEG has a provenance claim");
+        assert_eq!(claim.version(), 2);
+        assert_eq!(claim.spec_version().map(String::as_str), version);
+        assert_eq!(claim.signature, "self#jumbf=c2pa.signature");
+        assert!(!claim.signature_val().is_empty());
+
+        asset.set_position(0);
+        let reader = Reader::from_context(context).with_stream(format, &mut asset)?;
+        if version == Some("2.3.0") {
+            assert_eq!(reader.validation_state(), ValidationState::Invalid);
+            assert!(reader
+                .validation_status()
+                .expect("invalid JPEG has validation errors")
+                .iter()
+                .any(|status| status.code() == validation_status::CLAIM_SIGNATURE_MISSING));
+        } else {
+            assert_eq!(
+                reader.validation_state(),
+                ValidationState::Valid,
+                "signed pre-2.3 JPEG should validate for spec {version:?}"
+            );
+            assert!(
+                !report.has_any_error(),
+                "pre-2.3 JPEG has validation errors: {report:?}"
+            );
+            assert_eq!(reader.validation_status(), None);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_unparseable_spec_version() {
+    let claim = create_test_claim_with_cgi_spec_version("next");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_before_spec_2_3() {
+    // Spec 2.2 allows a relative URI to this manifest's signature box (its own claim example
+    // uses one), so V2 claims that do not declare Spec 2.3 or later remain valid.
+    let undeclared = create_test_claim().expect("create test claim");
+    assert!(!signature_box_uri_missing(
+        undeclared,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+
+    for version in ["2.2", "2.2.0", "2"] {
+        let claim = create_test_claim_with_cgi_spec_version(version);
+        assert!(
+            !signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            "relative URI should be accepted for spec {version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_to_other_box() {
+    // The relaxation only covers a relative URI to the signature box itself.
+    let claim = create_test_claim().expect("create test claim");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.assertions".to_string()
     ));
 }
 
