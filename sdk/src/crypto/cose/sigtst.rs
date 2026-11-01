@@ -325,3 +325,244 @@ pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
         CoseError::InternalError(format!("failed to encode timestamp token: {err:?}"))
     })?)
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+    use crate::crypto::cose::cose_signer::tests::TestSigner;
+
+    fn timestamp_value(tokens: &[&[u8]]) -> Value {
+        Value::Map(vec![(
+            Value::Text("tstTokens".into()),
+            Value::Array(
+                tokens
+                    .iter()
+                    .map(|token| {
+                        Value::Map(vec![(
+                            Value::Text("val".into()),
+                            Value::Bytes(token.to_vec()),
+                        )])
+                    })
+                    .collect(),
+            ),
+        )])
+    }
+
+    #[test]
+    fn timestamp_headers_preserve_legacy_version_and_first_token() {
+        for (name, version) in [
+            ("sigTst", TimeStampStorage::V1_sigTst),
+            ("sigTst2", TimeStampStorage::V2_sigTst2_CTT),
+        ] {
+            let mut sign1 = coset::CoseSign1::default();
+            assert!(get_cose_tst_info(&sign1).is_none());
+            assert!(timestamp_token_bytes_from_sign1(&sign1).is_none());
+            sign1
+                .unprotected
+                .rest
+                .push((Label::Text("unrelated".into()), Value::Null));
+            sign1.unprotected.rest.push((
+                Label::Text(name.into()),
+                timestamp_value(&[b"first", b"second"]),
+            ));
+            assert_eq!(get_cose_tst_info(&sign1).unwrap().1, version);
+            assert_eq!(timestamp_token_bytes_from_sign1(&sign1).unwrap(), b"first");
+            for malformed in [Value::Null, timestamp_value(&[])] {
+                sign1.unprotected.rest[1].1 = malformed;
+                assert!(timestamp_token_bytes_from_sign1(&sign1).is_none());
+            }
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn missing_malformed_empty_and_multiple_tokens_have_no_valid_timestamp() {
+        let policy = CertificateTrustPolicy::passthrough();
+        for (value, malformed) in [
+            (None, false),
+            (Some(Value::Null), false),
+            (Some(timestamp_value(&[])), false),
+            (Some(timestamp_value(&[b"bad DER"])), true),
+            (Some(timestamp_value(&[b"first", b"second"])), true),
+        ] {
+            let mut sign1 = coset::CoseSign1::default();
+            if let Some(value) = value {
+                sign1
+                    .unprotected
+                    .rest
+                    .push((Label::Text("sigTst".into()), value));
+            }
+
+            let mut log = StatusTracker::default();
+            assert!(validate_cose_tst_info(&sign1, b"payload", &policy, &mut log, false).is_err());
+            assert_eq!(
+                log.has_status(validation_status::TIMESTAMP_MALFORMED),
+                malformed
+            );
+
+            let mut log = StatusTracker::default();
+            assert!(
+                validate_cose_tst_info_async(&sign1, b"payload", &policy, &mut log, false)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                log.has_status(validation_status::TIMESTAMP_MALFORMED),
+                malformed
+            );
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn timestamp_provider_is_optional_and_invalid_v2_response_is_an_error() {
+        let mut signer = TestSigner::new(c2pa_raw_crypto::SigningAlg::Ed25519);
+        let protected = ProtectedHeader::default();
+        for version in [
+            TimeStampStorage::V1_sigTst,
+            TimeStampStorage::V2_sigTst2_CTT,
+        ] {
+            let header =
+                add_sigtst_header(&signer, b"data", &protected, HeaderBuilder::new(), version)
+                    .unwrap()
+                    .build();
+            assert!(header.rest.is_empty());
+            let header = add_sigtst_header_async(
+                &signer,
+                b"data",
+                &protected,
+                HeaderBuilder::new(),
+                version,
+            )
+            .await
+            .unwrap()
+            .build();
+            assert!(header.rest.is_empty());
+        }
+        signer.timestamp = Some(b"invalid DER".to_vec());
+        assert!(matches!(
+            add_sigtst_header(
+                &signer,
+                b"data",
+                &protected,
+                HeaderBuilder::new(),
+                TimeStampStorage::V2_sigTst2_CTT
+            ),
+            Err(CoseError::TimeStampError(TimeStampError::DecodeError(_)))
+        ));
+        assert!(matches!(
+            add_sigtst_header_async(
+                &signer,
+                b"data",
+                &protected,
+                HeaderBuilder::new(),
+                TimeStampStorage::V2_sigTst2_CTT
+            )
+            .await,
+            Err(CoseError::TimeStampError(TimeStampError::DecodeError(_)))
+        ));
+        assert!(timestamptoken_from_timestamprsp(&[0x30, 5, 0x30, 3, 2, 1, 0]).is_err());
+    }
+
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    #[c2pa_macros::c2pa_test_async]
+    async fn locally_signed_timestamps_round_trip_both_versions_and_apis() {
+        use openssl::hash::MessageDigest;
+
+        use crate::crypto::{
+            cose::{signing_time_from_sign1, signing_time_from_sign1_async},
+            time_stamp::verify::message_imprint_regression::{build_token, OID_SHA256},
+        };
+
+        let protected = ProtectedHeader::default();
+        let policy = CertificateTrustPolicy::passthrough();
+        for version in [
+            TimeStampStorage::V1_sigTst,
+            TimeStampStorage::V2_sigTst2_CTT,
+        ] {
+            let mut signer = TestSigner::new(c2pa_raw_crypto::SigningAlg::Ed25519);
+            let signature = vec![7; 64];
+            let mut signature_cbor = Vec::new();
+            coset::cbor::into_writer(&ByteBuf::from(signature.clone()), &mut signature_cbor)
+                .unwrap();
+            let data = if version == TimeStampStorage::V1_sigTst {
+                b"payload".as_slice()
+            } else {
+                signature_cbor.as_slice()
+            };
+            let token = build_token(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                &cose_countersign_data(data, &protected),
+            );
+            signer.timestamp = Some(crate::crypto::time_stamp::response_der(0, Some(&token)));
+            assert_eq!(
+                timestamptoken_from_timestamprsp(signer.timestamp.as_ref().unwrap()).unwrap(),
+                token
+            );
+            let sync = add_sigtst_header(&signer, data, &protected, HeaderBuilder::new(), version)
+                .unwrap()
+                .build();
+            let asynchronous =
+                add_sigtst_header_async(&signer, data, &protected, HeaderBuilder::new(), version)
+                    .await
+                    .unwrap()
+                    .build();
+            assert_eq!(sync, asynchronous);
+            let sign1 = coset::CoseSign1 {
+                protected: protected.clone(),
+                unprotected: sync,
+                signature,
+                ..Default::default()
+            };
+
+            let expected_bytes = if version == TimeStampStorage::V1_sigTst {
+                signer.timestamp.as_ref().unwrap()
+            } else {
+                &token
+            };
+
+            assert_eq!(
+                &timestamp_token_bytes_from_sign1(&sign1).unwrap(),
+                expected_bytes
+            );
+            let sync = validate_cose_tst_info(
+                &sign1,
+                b"payload",
+                &policy,
+                &mut StatusTracker::default(),
+                false,
+            )
+            .unwrap();
+            let asynchronous = validate_cose_tst_info_async(
+                &sign1,
+                b"payload",
+                &policy,
+                &mut StatusTracker::default(),
+                false,
+            )
+            .await
+            .unwrap();
+            let expected = chrono::DateTime::<chrono::Utc>::from_timestamp(1577836800, 0).unwrap();
+            assert_eq!(
+                chrono::DateTime::<chrono::Utc>::from(sync.gen_time),
+                expected
+            );
+            assert_eq!(
+                chrono::DateTime::<chrono::Utc>::from(asynchronous.gen_time),
+                expected
+            );
+            assert_eq!(
+                signing_time_from_sign1(&sign1, b"payload", false),
+                Some(expected)
+            );
+            assert_eq!(
+                signing_time_from_sign1_async(&sign1, b"payload", false).await,
+                Some(expected)
+            );
+        }
+    }
+}
