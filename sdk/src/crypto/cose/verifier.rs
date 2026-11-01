@@ -734,4 +734,69 @@ mod tests {
             }
         }
     }
+
+    /// A certificate that chains to a trust anchor but fails a rule only the certificate
+    /// profile enforces is not a trusted signing credential.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn profile_failure_without_key_usage_is_not_trusted() {
+        use std::borrow::Cow;
+
+        use c2pa_raw_crypto::signer_from_private_key;
+
+        use super::Verifier;
+        use crate::{
+            crypto::cose::{
+                cose_signer::RawSignerCoseSigner, sign, CertificateTrustPolicy, TimeStampStorage,
+                TrustAnchorType,
+            },
+            status_tracker::StatusTracker,
+            utils::ephemeral_cert::generate_ephemeral_chain_with_ee_skip,
+            validation_results::validation_codes::{
+                SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
+            },
+        };
+
+        // The leaf chains to the CA, which is a trust anchor, so the trust check passes
+        // and logs signingCredential.trusted. Without a key usage extension it then fails
+        // the certificate profile, which only that check enforces. (The rust_native
+        // backend trusts this chain; OpenSSL already rejects it at the trust check.)
+        let chain =
+            generate_ephemeral_chain_with_ee_skip("profile-test.example.com", &["key_usage"])
+                .unwrap();
+        let raw_signer =
+            signer_from_private_key(chain.ee_private_key_pem.as_bytes(), SigningAlg::Ed25519)
+                .unwrap();
+        let cert_chain = vec![chain.ee_der.clone(), chain.ca_der.clone()];
+        // Sign below the layer that checks the certificate profile, which would refuse it.
+        let signer = RawSignerCoseSigner::new(raw_signer.as_ref(), &cert_chain);
+        let claim_bytes = b"claim";
+        let cose_bytes =
+            sign(&signer, claim_bytes, None, TimeStampStorage::V2_sigTst2_CTT).unwrap();
+
+        let mut ctp = CertificateTrustPolicy::default();
+        ctp.add_trust_anchors(
+            format!(
+                "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+                crate::crypto::base64::encode(&chain.ca_der)
+            )
+            .as_bytes(),
+            "http://some_trust_list",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        let _ = Verifier::VerifyTrustPolicy(Cow::Owned(ctp)).verify_signature(
+            &cose_bytes,
+            claim_bytes,
+            b"",
+            None,
+            &mut log,
+        );
+
+        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+    }
 }
