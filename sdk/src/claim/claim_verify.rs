@@ -1642,7 +1642,6 @@ impl Claim {
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
                     .failure(validation_log, Error::CoseSignature)?;
                 } else {
-                    // signing cert has not expired
                     if !outside_validity {
                         log_item!(
                             to_signature_uri(claim.label()),
