@@ -1008,6 +1008,47 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// SafeTensors files carry the manifest in the JSON header's `__metadata__`, bound by a data
+/// hash that excludes only the Base64-encoded manifest.
+#[test]
+fn test_builder_sign_safetensors() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for data in [
+        &include_bytes!("fixtures/sample1.safetensors")[..],
+        &include_bytes!("fixtures/sample2_no_metadata.safetensors")[..],
+    ] {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+        let mut dest = Cursor::new(Vec::new());
+        builder.save_to_stream("safetensors", &mut Cursor::new(data), &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream("safetensors", &mut dest)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        // Changing a tensor byte, or the header outside the manifest, is detected.
+        let signed = dest.into_inner();
+        let header_end = signed
+            .windows(2)
+            .position(|w| w == b"\"}")
+            .map(|i| i + 1)
+            .unwrap();
+        for position in [signed.len() - 1, header_end] {
+            let mut tampered = signed.clone();
+            tampered[position] ^= 0x01;
+            let state = Reader::from_shared_context(&context)
+                .with_stream("safetensors", Cursor::new(&tampered))
+                .map(|r| r.validation_state());
+            assert!(
+                !matches!(state, Ok(ValidationState::Trusted)),
+                "tampering at byte {position} was not detected"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
