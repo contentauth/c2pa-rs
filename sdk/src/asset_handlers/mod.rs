@@ -13,6 +13,7 @@
 
 pub mod bmff_io;
 pub mod c2pa_io;
+pub mod facti_io;
 pub mod flac_io;
 pub mod gif_io;
 pub(crate) mod id3_helper;

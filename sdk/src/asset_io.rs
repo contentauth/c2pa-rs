@@ -1139,6 +1139,21 @@ fn sniff_container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'stati
         return Some("pdf");
     }
 
+    // BlockFact .facti: FA 49 41 00
+    if n >= 4 && buf[0..4] == [0xFA, 0x49, 0x41, 0x00] {
+        return Some("facti");
+    }
+
+    // BlockFact .facta: FA 41 41 00
+    if n >= 4 && buf[0..4] == [0xFA, 0x41, 0x41, 0x00] {
+        return Some("facta");
+    }
+
+    // BlockFact .factv: FA 56 41 00
+    if n >= 4 && buf[0..4] == [0xFA, 0x56, 0x41, 0x00] {
+        return Some("factv");
+    }
+
     None
 }
 
