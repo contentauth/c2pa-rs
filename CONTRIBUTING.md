@@ -58,6 +58,12 @@ for more information on sending pull requests.
 Code submissions will need to pass all automated tests in place at the time of submission.
 These include such things as Rust code format, Clippy/lint checks, and unit test coverage.
 
+### Code formatting
+
+Set multi-line code blocks apart from adjacent statements and sibling blocks with a blank
+line wherever rustfmt permits. This includes loops, conditionals, matches, and multi-line
+expressions; keep related continuations such as `else` attached to their block.
+
 We encourage you to raise an issue in GitHub before starting work on a major addition to the crate.
 This will give us an opportunity to discuss API design and avoid duplicate efforts.
 
