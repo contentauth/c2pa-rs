@@ -121,6 +121,12 @@ impl ArchiveKind {
 #[non_exhaustive]
 pub struct ManifestDefinition {
     /// The version of the claim.  Defaults to 2.
+    ///
+    /// C2PA v1 claim signing (`Some(1)`) is deprecated as of 0.92.0 and will be
+    /// removed in 0.93.0, scheduled for mid-January 2027. Omit this field or set
+    /// it to `Some(2)` to sign C2PA v2 claims instead. Reading and validating
+    /// existing C2PA v1 claims is unaffected.
+    /// See the [migration guide](https://github.com/contentauth/c2pa-rs/blob/main/docs/c2pa-v1-signing-migration.md).
     pub claim_version: Option<u8>,
 
     /// Optional prefix added to the generated Manifest Label
@@ -650,6 +656,7 @@ impl Builder {
     /// Returns the claim version for this builder.
     ///
     /// If not set, defaults to 2.
+    /// Signing C2PA v1 claims is deprecated; see [`ManifestDefinition::claim_version`].
     pub fn claim_version(&self) -> u8 {
         self.definition.claim_version.unwrap_or(2)
     }
@@ -1583,6 +1590,11 @@ impl Builder {
 
         // Build the claim_generator string since this is required
         let claim_generator: String = if self.claim_version() == 1 {
+            log::warn!(
+                "C2PA v1 claim signing is deprecated as of 0.92.0 and will be removed in \
+                 0.93.0 (scheduled for mid-January 2027). Omit claim_version or set it to 2 \
+                 to sign C2PA v2 claims instead."
+            );
             claim_generator_info
                 .iter()
                 .map(|s| {
@@ -4715,7 +4727,9 @@ mod tests {
             .unwrap();
 
         dest.rewind().unwrap();
-        let reader = Reader::default().with_stream(format, &mut dest).unwrap();
+        let reader = Reader::from_context(test_context())
+            .with_stream(format, &mut dest)
+            .unwrap();
         assert_ne!(reader.validation_state(), ValidationState::Invalid);
 
         // Exactly one c2pa.actions assertion must exist for the v1 claim.
@@ -6226,6 +6240,49 @@ mod tests {
         assert!(
             builder2.find_assertion::<BoxHash>(BoxHash::LABEL).is_err(),
             "BoxHash must NOT be auto-created by placeholder() — caller creates it via update_hash_from_stream()"
+        );
+
+        Ok(())
+    }
+
+    /// Regression (PR#2949): signing a JPEG that has bytes after its EOI marker
+    /// must produce a hard binding that lists and hashes those bytes as the
+    /// `c2pa.after` box (C2PA 2.5 §16.3.3.2), so the signed asset validates
+    /// rather than being rejected by its own box hash. Box-hash generation and
+    /// verification must agree on the trailer.
+    #[test]
+    fn test_box_hash_sign_verify_with_trailing_bytes() -> Result<()> {
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
+
+        // A clean JPEG with arbitrary data appended after the EOI marker.
+        const TRAILER: &[u8] = b"trailing bytes not part of the JPEG image";
+        let mut asset = TEST_IMAGE_CLEAN.to_vec();
+        asset.extend_from_slice(TRAILER);
+
+        let mut builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        let signer = test_signer(SigningAlg::Ed25519);
+        let mut source = Cursor::new(asset);
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        // The signer must have preserved the trailer (otherwise the scenario is
+        // not exercised), and it must be hashed by a `c2pa.after` box.
+        let signed = dest.get_ref().clone();
+        assert!(
+            signed.ends_with(TRAILER),
+            "signing must preserve bytes after EOI"
+        );
+
+        dest.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "a box-hash-signed JPEG with trailing bytes must validate: {:?}",
+            reader.validation_status()
         );
 
         Ok(())
