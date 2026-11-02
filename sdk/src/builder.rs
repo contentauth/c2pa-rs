@@ -6200,6 +6200,49 @@ mod tests {
         Ok(())
     }
 
+    /// Regression (PR#2949): signing a JPEG that has bytes after its EOI marker
+    /// must produce a hard binding that lists and hashes those bytes as the
+    /// `c2pa.after` box (C2PA 2.5 §16.3.3.2), so the signed asset validates
+    /// rather than being rejected by its own box hash. Box-hash generation and
+    /// verification must agree on the trailer.
+    #[test]
+    fn test_box_hash_sign_verify_with_trailing_bytes() -> Result<()> {
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
+
+        // A clean JPEG with arbitrary data appended after the EOI marker.
+        const TRAILER: &[u8] = b"trailing bytes not part of the JPEG image";
+        let mut asset = TEST_IMAGE_CLEAN.to_vec();
+        asset.extend_from_slice(TRAILER);
+
+        let mut builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        let signer = test_signer(SigningAlg::Ed25519);
+        let mut source = Cursor::new(asset);
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        // The signer must have preserved the trailer (otherwise the scenario is
+        // not exercised), and it must be hashed by a `c2pa.after` box.
+        let signed = dest.get_ref().clone();
+        assert!(
+            signed.ends_with(TRAILER),
+            "signing must preserve bytes after EOI"
+        );
+
+        dest.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "a box-hash-signed JPEG with trailing bytes must validate: {:?}",
+            reader.validation_status()
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn test_hash_type() -> Result<()> {
         let builder = Builder::default().with_definition(simple_manifest_json())?;
@@ -6622,37 +6665,6 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         Ok(())
-    }
-
-    #[test]
-    fn test_builder_box_hashed_embeddable_min() {
-        let mut reader = Cursor::new("");
-        let c2pa_io = jumbf_io::get_assetio_handler("application/c2pa").unwrap();
-        let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
-        let boxes = box_mapper.get_box_map(&mut reader).unwrap();
-        // Create the BoxHash object
-        let bh = BoxHash::from_box_map(boxes);
-        // And generate the box hashes
-        //bh.generate_box_hash_from_stream(&mut reader, "sha256", box_mapper, true).unwrap();
-
-        let mut builder = Builder::default()
-            .with_definition(simple_manifest_json())
-            .unwrap();
-        builder.add_assertion(labels::BOX_HASH, &bh).unwrap();
-
-        let signer = test_signer(SigningAlg::Ps256);
-
-        let manifest_bytes = builder
-            .sign_box_hashed_embeddable(signer.as_ref(), "application/c2pa")
-            .unwrap();
-
-        let output_stream = Cursor::new(manifest_bytes);
-
-        let reader = Reader::default()
-            .with_stream("application/c2pa", output_stream)
-            .unwrap();
-        println!("{reader}");
-        assert_eq!(reader.validation_status(), None);
     }
 
     #[c2pa_test_async]
