@@ -46,8 +46,5 @@ tokio = { version = "1.52.3", features = ["rt-multi-thread", "rt"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1.52.3", features = ["rt", "macros", "io-util", "time"] }
 
-[dev-dependencies]
-tempfile = "3.27.0"
-
 [build-dependencies]
 cbindgen = "0.29"
