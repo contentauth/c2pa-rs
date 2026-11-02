@@ -622,11 +622,13 @@ fn add_c2pa_content_type(content_types: &str) -> Option<String> {
 }
 
 /// Inserts a package relationship that targets the manifest as the first child of
-/// `Relationships`, unless one already does or a relationship already has the C2PA type (for
-/// example when an already signed file is signed again). OPC compares part names
-/// case-insensitively, and a target may be written with or without a leading `/`. Returns `None`
-/// if nothing needs to change, or if the part is not well-formed XML with a non-empty
-/// `Relationships` element, so it is left alone.
+/// `Relationships`, unless an internal relationship already targets it (for example when an
+/// already signed file is signed again). Only the target counts, not the type: a relationship
+/// with the C2PA type but another or an external target does not keep the manifest in the
+/// package, and matching by target also recognizes relationships written with an earlier type
+/// value. OPC compares part names case-insensitively, and a target may be written with or without
+/// a leading `/`. Returns `None` if nothing needs to change, or if the part is not well-formed XML
+/// with a non-empty `Relationships` element, so it is left alone.
 fn add_c2pa_relationship(rels: &str) -> Option<String> {
     let mut reader = XmlReader::from_str(rels);
     let mut insert_at = None;
@@ -643,13 +645,14 @@ fn add_c2pa_relationship(rels: &str) -> Option<String> {
                         insert_at = Some(reader.buffer_position() as usize);
                     }
                     b"Relationship" => {
-                        let targets_manifest = xml_attribute(&e, b"Target").is_some_and(|v| {
-                            v.trim_start_matches('/')
-                                .eq_ignore_ascii_case(MANIFEST_PATH)
-                        });
-                        let has_c2pa_type = xml_attribute(&e, b"Type")
-                            .is_some_and(|v| v == OPC_C2PA_RELATIONSHIP_TYPE);
-                        if targets_manifest || has_c2pa_type {
+                        let external = xml_attribute(&e, b"TargetMode")
+                            .is_some_and(|v| v.eq_ignore_ascii_case("External"));
+                        let targets_manifest = !external
+                            && xml_attribute(&e, b"Target").is_some_and(|v| {
+                                v.trim_start_matches('/')
+                                    .eq_ignore_ascii_case(MANIFEST_PATH)
+                            });
+                        if targets_manifest {
                             return None;
                         }
                         ids.extend(xml_attribute(&e, b"Id"));
@@ -1210,15 +1213,34 @@ mod tests {
             )
         );
 
-        // Already present, e.g. when re-signing: by target (any case, with or without a leading
-        // slash) or by relationship type.
+        // Already present, e.g. when re-signing: an internal relationship to the manifest, whatever
+        // its type (any case, with or without a leading slash, explicit `Internal` mode).
         for present in [
             format!(r#"<Relationships><Relationship Id="a" Type="t" Target="{MANIFEST_PATH}"/></Relationships>"#),
             r#"<Relationships><Relationship Id="a" Type="t" Target="/meta-inf/CONTENT_CREDENTIAL.c2pa"/></Relationships>"#.to_owned(),
-            format!(r#"<Relationships><Relationship Id='a' Type='{OPC_C2PA_RELATIONSHIP_TYPE}' Target='x.c2pa'/></Relationships>"#),
+            format!(r#"<Relationships><Relationship Id="a" Type="t" Target="{MANIFEST_PATH}" TargetMode="Internal"/></Relationships>"#),
             format!(r#"<pr:Relationships xmlns:pr="r"><pr:Relationship Id="a" Type="t" Target="{MANIFEST_PATH}"/></pr:Relationships>"#),
         ] {
             assert_eq!(add_c2pa_relationship(&present), None, "{present}");
+        }
+
+        // Relationships that do not reach the manifest part don't count, even with the C2PA type:
+        // one to another part, and an external one that only looks like the manifest's path.
+        for unreachable in [
+            format!(
+                r#"<Relationships><Relationship Id='a' Type='{OPC_C2PA_RELATIONSHIP_TYPE}' Target='x.c2pa'/></Relationships>"#
+            ),
+            format!(
+                r#"<Relationships><Relationship Id="a" Type="{OPC_C2PA_RELATIONSHIP_TYPE}" Target="{MANIFEST_PATH}" TargetMode="External"/></Relationships>"#
+            ),
+        ] {
+            let updated = add_c2pa_relationship(&unreachable).unwrap();
+            assert!(
+                updated.contains(&format!(
+                    r#"<Relationship Id="{OPC_C2PA_RELATIONSHIP_ID}" Type="{OPC_C2PA_RELATIONSHIP_TYPE}" Target="{MANIFEST_PATH}"/>"#
+                )),
+                "{updated}"
+            );
         }
 
         // The ID does not collide with an existing one.
