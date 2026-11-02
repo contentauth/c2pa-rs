@@ -1513,4 +1513,37 @@ pub mod tests {
             .unwrap();
         assert_eq!(tampered.validation_state(), ValidationState::Invalid);
     }
+
+    // End-to-end: a real box-hash-signed JPEG with a PDF appended after the EOI
+    // marker (a polyglot) must be rejected, not reported Valid/Trusted. Per C2PA
+    // 2.5 §16.3.3.2 the trailing bytes are an unlisted `c2pa.after` box, so
+    // validation fails with `assertion.boxesHash.unknownBox` (§14.12.3).
+    #[test]
+    fn polyglot_data_after_eoi_rejected_by_reader() {
+        use crate::{
+            validation_results::validation_codes::ASSERTION_BOXHASH_UNKNOWN_BOX, Context, Reader,
+            ValidationState,
+        };
+
+        let mut buf = Vec::new();
+        std::fs::File::open(crate::utils::test::fixture_path("polyglot_signed.jpg"))
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+
+        let reader = Reader::from_context(Context::new())
+            .with_stream("image/jpeg", Cursor::new(buf))
+            .unwrap();
+
+        assert_eq!(reader.validation_state(), ValidationState::Invalid);
+        assert!(
+            reader
+                .validation_status()
+                .unwrap_or_default()
+                .iter()
+                .any(|s| s.code() == ASSERTION_BOXHASH_UNKNOWN_BOX),
+            "expected unknownBox failure, got: {:?}",
+            reader.validation_status()
+        );
+    }
 }

@@ -34,3 +34,18 @@ make test
 
 The build will have two features activated: `rust_native_crypto` and `file_io`.
 Note that running the `make test` command will also check formatting of the code.
+
+### Building for Emscripten
+
+With the Emscripten SDK activated, run:
+
+```sh
+make release TARGET=wasm32-unknown-emscripten
+```
+
+This installs and uses `nightly-2026-10-30`, including `rust-src`, to rebuild the
+standard library. This is the last-green compiler before a newer nightly caused
+an async-drop query cycle in `rasn`. The Emscripten pins in the Tier 2 and library
+release workflows must stay in sync with `EMSCRIPTEN_TOOLCHAIN` in the Makefile.
+To test another compiler locally, pass `EMSCRIPTEN_TOOLCHAIN=nightly-YYYY-MM-DD`
+to `make`; other targets and formatting keep their existing toolchains.
