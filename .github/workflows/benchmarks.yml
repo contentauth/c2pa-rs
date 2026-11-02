@@ -195,5 +195,8 @@ jobs:
         uses: CodSpeedHQ/action@78102a468f96d8e0ccb92d0ec49425753fc42062 # v5.6.0
         with:
           mode: ${{ matrix.build_mode || 'simulation' }}
+          # TODO: disabled as it causes ~15% variation in mp3 benchmark, consider re-enabling when asset IO
+          #       is refactored.
+          cycle-estimation: false
           run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}{2}"', matrix.bench, matrix.format, steps.size.outputs.suffix) || '' }}
           token: ${{ secrets.CODSPEED_TOKEN }}
