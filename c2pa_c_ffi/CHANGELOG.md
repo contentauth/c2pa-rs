@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.91.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.7...c2pa-c-ffi-v0.91.8)
+_02 November 2026_
+
+### Fixed
+
+* Pin Emscripten to the last-green Rust nightly (backport #2987) ([#2988](https://github.com/contentauth/c2pa-rs/pull/2988))
+* *(c2pa_c_ffi)* Validate callback signature length (backport #2758) ([#2947](https://github.com/contentauth/c2pa-rs/pull/2947))
+
 ## [0.91.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.2...c2pa-c-ffi-v0.91.3)
 _16 October 2026_
 
