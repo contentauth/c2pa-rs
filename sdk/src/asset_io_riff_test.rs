@@ -15,7 +15,7 @@
 
 use std::{fs, io::Cursor, path::PathBuf};
 
-use asset_io::{containers::riff, NullSink, SegmentKind, Structure, Updates};
+use asset_io::{containers::riff, ItemKind, NullSink, Structure, Updates};
 
 use crate::{
     asset_handlers::riff_io::RiffIO,
@@ -37,10 +37,10 @@ fn fixtures() -> Vec<(PathBuf, String)> {
     v
 }
 
-fn entity(s: &Structure, bytes: &[u8], kind: SegmentKind) -> Option<Vec<u8>> {
-    s.entities(kind)
+fn item(s: &Structure, bytes: &[u8], kind: ItemKind) -> Option<Vec<u8>> {
+    s.items_of(kind)
         .next()
-        .map(|e| s.read_entity(&mut Cursor::new(bytes), e).unwrap())
+        .map(|e| s.read_item(&mut Cursor::new(bytes), e).unwrap())
 }
 
 fn old_write(io: &RiffIO, bytes: &[u8], store: &[u8]) -> crate::Result<Vec<u8>> {
@@ -59,10 +59,10 @@ fn new_write(bytes: &[u8], u: &Updates) -> asset_io::Result<Vec<u8>> {
 /// What the old handler's `get_object_locations` would say, from the layout of a
 /// file that has a manifest chunk.
 fn locations(s: &Structure, total: u64) -> Option<Vec<(u64, u64, ObjectType)>> {
-    let e = s.entities(SegmentKind::Jumbf).next()?;
-    let seg = s.segment(e.parts().next()?.segment()).ok()?;
+    let e = s.items_of(ItemKind::Jumbf).next()?;
+    let seg = s.segment(e.extents().next()?.segment()).ok()?;
     let (off, len) = (
-        seg.extent().offset(),
+        seg.range().offset(),
         seg.header().len() + seg.payload().len(),
     );
     let end = off + len;
@@ -99,7 +99,7 @@ fn riff_matches_existing_handler() {
         checked += 1;
 
         // 2. Manifest and XMP.
-        let new_store = entity(&s, &bytes, SegmentKind::Jumbf);
+        let new_store = item(&s, &bytes, ItemKind::Jumbf);
         match (&old_read, &new_store) {
             (Ok(a), Some(b)) if a == b => {}
             (Err(crate::Error::JumbfNotFound), None) => {}
@@ -111,7 +111,7 @@ fn riff_matches_existing_handler() {
         }
         let old_xmp = io.get_reader().read_xmp(&mut Cursor::new(&bytes));
         let new_xmp =
-            entity(&s, &bytes, SegmentKind::Xmp).map(|b| String::from_utf8_lossy(&b).to_string());
+            item(&s, &bytes, ItemKind::Xmp).map(|b| String::from_utf8_lossy(&b).to_string());
         if old_xmp != new_xmp {
             problems.push(format!("{name}: xmp differs"));
         }

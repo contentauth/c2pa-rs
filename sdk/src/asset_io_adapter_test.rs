@@ -242,6 +242,52 @@ fn manifest_locations_agree() {
 }
 
 #[test]
+fn xmp_locations_follow_item_extents() {
+    let registry = ::asset_io::HandlerRegistry::builtin();
+    let mut compared = 0;
+    for (name, bytes, _, new) in fixtures() {
+        if ![".jpg", ".jpeg", ".png"]
+            .iter()
+            .any(|ext| name.ends_with(ext))
+        {
+            continue;
+        }
+        let Ok(s) = registry.parse_detect(&mut Cursor::new(&bytes)) else {
+            continue;
+        };
+        if s.items_of(::asset_io::ItemKind::Jumbf).next().is_none() {
+            continue;
+        }
+        let mut expected = Vec::new();
+        for item in s.items_of(::asset_io::ItemKind::Xmp) {
+            for extent in item.extents() {
+                let range = s.segment(extent.segment()).unwrap().range();
+                expected.push((range.offset(), range.len()));
+            }
+        }
+        expected.sort_unstable();
+        expected.dedup();
+        if expected.is_empty() {
+            continue;
+        }
+        let locations = new
+            .get_writer("x")
+            .unwrap()
+            .get_object_locations(&mut Cursor::new(&bytes))
+            .unwrap();
+        let mut actual: Vec<_> = locations
+            .iter()
+            .filter(|l| l.htype == ObjectType::Xmp)
+            .map(|l| (l.offset, l.length))
+            .collect();
+        actual.sort_unstable();
+        assert_eq!(actual, expected, "{name}");
+        compared += 1;
+    }
+    assert!(compared > 0, "no fixture with a manifest and XMP");
+}
+
+#[test]
 fn written_manifests_read_back_with_either_reader() {
     let s = store(b"hello");
     let mut problems = Vec::new();
@@ -332,14 +378,14 @@ fn other_jumbf_is_left_alone() {
         .find(|f| f.0.ends_with(".jpg"))
         .expect("a JPEG fixture");
     let writer = new.get_writer("x").unwrap();
-    let entities = |data: &[u8]| {
+    let items = |data: &[u8]| {
         let reg = ::asset_io::HandlerRegistry::builtin();
         let s = reg.parse("jpg", &mut Cursor::new(data.to_vec())).unwrap();
-        s.entities(::asset_io::SegmentKind::Jumbf)
+        s.items_of(::asset_io::ItemKind::Jumbf)
             .map(|e| {
                 (
                     e.jumbf_type(),
-                    s.read_entity(&mut Cursor::new(data.to_vec()), e).unwrap(),
+                    s.read_item(&mut Cursor::new(data.to_vec()), e).unwrap(),
                 )
             })
             .collect::<Vec<_>>()
@@ -363,7 +409,7 @@ fn other_jumbf_is_left_alone() {
     .unwrap();
     let with_other = with_other.into_inner();
     assert_eq!(
-        entities(&with_other),
+        items(&with_other),
         [(Some([9; 16]), other.clone())],
         "{name}"
     );
@@ -384,7 +430,7 @@ fn other_jumbf_is_left_alone() {
         new.get_reader().read_c2pa(&mut Cursor::new(&both)).unwrap(),
         c2pa
     );
-    let found = entities(&both);
+    let found = items(&both);
     assert_eq!(found.len(), 2, "{name}");
     assert!(found.contains(&(Some([9; 16]), other.clone())));
 
@@ -401,14 +447,14 @@ fn other_jumbf_is_left_alone() {
             .unwrap(),
         c2pa2
     );
-    assert!(entities(&replaced).contains(&(Some([9; 16]), other.clone())));
+    assert!(items(&replaced).contains(&(Some([9; 16]), other.clone())));
 
     // Removing the store leaves only the other JUMBF.
     let mut removed = Cursor::new(Vec::new());
     writer
         .remove_c2pa(&mut Cursor::new(&replaced), &mut removed)
         .unwrap();
-    assert_eq!(entities(&removed.into_inner()), [(Some([9; 16]), other)]);
+    assert_eq!(items(&removed.into_inner()), [(Some([9; 16]), other)]);
 }
 
 #[test]
