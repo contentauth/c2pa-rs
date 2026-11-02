@@ -1411,6 +1411,31 @@ fn test_verify_related_assertions_valid() {
         !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
         "relatedAssertions referencing an allowed assertion should not be malformed"
     );
+    assert!(
+        !log.has_status(validation_status::ASSERTION_HASHEDURI_MISMATCH),
+        "relatedAssertions with the referenced assertion's hash should not mismatch"
+    );
+}
+
+#[test]
+fn test_verify_related_assertions_hash_mismatch_rejected() {
+    use crate::assertions::UserCbor;
+
+    for bad_hash in [b"wrong".to_vec(), Vec::new()] {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = claim
+            .add_assertion(&UserCbor::new(
+                "com.example.related",
+                c2pa_cbor::to_vec(&"related payload").unwrap(),
+            ))
+            .unwrap();
+        let uri = HashedUri::new(uri.url(), uri.alg(), &bad_hash);
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_HASHEDURI_MISMATCH),
+            "relatedAssertions with hash {bad_hash:?} should be a hashedURI mismatch"
+        );
+    }
 }
 
 #[test]

@@ -1335,6 +1335,12 @@ impl Claim {
         self.assertion_store.push(ca);
         self.assertions.push(c2pa_assertion.clone());
 
+        // Hard bindings are added after the actions assertions, so fill in any action
+        // relatedAssertions entries that were waiting for this one.
+        if labels::is_hard_binding_label(&assertion_label) {
+            self.update_related_assertion_refs(&as_label, &hash)?;
+        }
+
         Ok(c2pa_assertion)
     }
 
@@ -1569,7 +1575,7 @@ impl Claim {
         target_assertion.update_assertion(replace_with, replacement_hash)?;
 
         let target_label = target_assertion.label();
-        let target_hash = target_assertion.hash();
+        let target_hash = target_assertion.hash().to_vec();
 
         // Replace the existing hash in the hashed URI reference
         // with the newly-calculated hash.
@@ -1603,6 +1609,11 @@ impl Claim {
         };
         // clear original since content has changed
         self.clear_data();
+
+        // keep action relatedAssertions references to this assertion in step
+        if labels::base(&target_label) != ACTIONS {
+            self.update_related_assertion_refs(&target_label, &target_hash)?;
+        }
 
         Ok(())
     }
@@ -1656,6 +1667,98 @@ impl Claim {
             |ca: &ClaimAssertion| ca.instance() == instance,
             |_: &ClaimAssertion, a: Assertion| Ok(a),
         )
+    }
+
+    /// Sets the hash of every action `relatedAssertions` entry that references `target` (an
+    /// assertion label including any `__N` instance) to `hash`, rewriting the actions
+    /// assertions that contain one.
+    ///
+    /// Hard-binding assertions are added to the claim and later patched with their final
+    /// contents after the actions assertions are in place, so references to them must follow
+    /// along. The hash keeps its length, so a rewritten actions assertion keeps its size and the
+    /// manifest layout already reserved for it stays valid.
+    pub(crate) fn update_related_assertion_refs(
+        &mut self,
+        target: &str,
+        hash: &[u8],
+    ) -> Result<()> {
+        let mut updates = Vec::new();
+        for ca in &self.assertion_store {
+            if labels::base(&ca.label_raw()) != ACTIONS {
+                continue;
+            }
+            let mut actions = Actions::from_assertion(ca.assertion())?;
+            let mut changed = false;
+            for action in actions.actions_mut() {
+                let Some(related) = action
+                    .parameters
+                    .as_mut()
+                    .and_then(|p| p.related_assertions.as_mut())
+                else {
+                    continue;
+                };
+                for uri in related.iter_mut() {
+                    let (label, instance) = Claim::assertion_label_from_link(&uri.url());
+                    if Claim::label_with_instance(&label, instance) == target && uri.hash() != hash
+                    {
+                        uri.update_hash(hash.to_vec());
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                let updated = actions.to_assertion()?;
+                if updated.data().len() != ca.assertion().data().len() {
+                    return Err(Error::AssertionSpecificError(format!(
+                        "updating relatedAssertions references to {target} changed the size of {}",
+                        ca.label()
+                    )));
+                }
+                updates.push((ca.instance(), updated));
+            }
+        }
+
+        for (instance, updated) in updates {
+            self.replace_assertion_instance(updated, instance)?;
+        }
+        Ok(())
+    }
+
+    /// Checks that every action `relatedAssertions` entry carries the current hash of an
+    /// assertion in this claim.
+    ///
+    /// Run just before signing: a reference the builder reserved for a hard binding that never
+    /// got added (e.g. `c2pa.hash.bmff.v3` on a JPEG) is still a placeholder at that point.
+    pub(crate) fn check_related_assertion_refs(&self) -> Result<()> {
+        for ca in &self.assertion_store {
+            if labels::base(&ca.label_raw()) != ACTIONS {
+                continue;
+            }
+            let actions = Actions::from_assertion(ca.assertion())?;
+            for uri in actions
+                .actions()
+                .iter()
+                .filter_map(|a| a.related_assertions())
+                .flatten()
+            {
+                let url = uri.url();
+                let (label, instance) = Claim::assertion_label_from_link(&url);
+                match self.get_claim_assertion(&label, instance) {
+                    Some(target) if vec_compare(target.hash(), &uri.hash()) => {}
+                    Some(_) => {
+                        return Err(Error::AssertionSpecificError(format!(
+                            "relatedAssertions hash does not match assertion data: {url}"
+                        )))
+                    }
+                    None => {
+                        return Err(Error::AssertionSpecificError(format!(
+                            "relatedAssertions reference not found in manifest: {url}"
+                        )))
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Redact an assertion from a given claim.
