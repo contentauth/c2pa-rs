@@ -235,6 +235,15 @@ impl C2paReader for JpegIO {
             return Err(Error::JumbfNotFound);
         }
 
+        let declared_size = Cursor::new(&buffer).read_u32::<BigEndian>()?;
+        if u64::from(declared_size) > buffer.len() as u64 {
+            return Err(Error::InvalidAsset(format!(
+                "Incomplete JPEG C2PA manifest: JUMBF box declares {declared_size} bytes, \
+                 but APP11 segments provide {}; missing or malformed APP11 continuation segments",
+                buffer.len()
+            )));
+        }
+
         Ok(buffer)
     }
 
@@ -1431,6 +1440,63 @@ pub mod tests {
         let mut output_stream = Cursor::new(output);
 
         let _ = jpeg_io.write_c2pa(&mut source_stream, &mut output_stream, &some_data);
+    }
+
+    #[test]
+    fn read_c2pa_reports_missing_or_resegmented_continuations() {
+        let jpeg_io = JpegIO {};
+        let source = include_bytes!("../../tests/fixtures/CA.jpg");
+        let store = jpeg_io
+            .read_c2pa(&mut Cursor::new(source.as_slice()))
+            .unwrap();
+        let mut output = Cursor::new(Vec::new());
+        jpeg_io
+            .write_c2pa(&mut Cursor::new(source.as_slice()), &mut output, &store)
+            .unwrap();
+        assert_eq!(jpeg_io.read_c2pa(&mut output).unwrap(), store);
+
+        let jpeg = Jpeg::from_bytes(output.into_inner().into()).unwrap();
+        let cai_segments = get_cai_segments(&jpeg).unwrap();
+        assert!(cai_segments.len() >= 2);
+        let insertion_point = cai_segments[0];
+        let payload: Vec<u8> = cai_segments
+            .iter()
+            .flat_map(|&index| jpeg.segments()[index].contents().iter().copied())
+            .collect();
+
+        for resegment in [false, true] {
+            let mut damaged = jpeg.clone();
+            delete_cai_segments(&mut damaged).unwrap();
+            let extracted_size = if resegment {
+                // Simulate a metadata rewriter that splits concatenated APP11 payloads
+                // without moving each JPEG XT continuation header to its new segment.
+                for (index, chunk) in payload.chunks(MAX_JPEG_SEGMENT_PAYLOAD).enumerate() {
+                    damaged.segments_mut().insert(
+                        insertion_point + index,
+                        JpegSegment::new_with_contents(
+                            markers::APP11,
+                            Bytes::copy_from_slice(chunk),
+                        ),
+                    );
+                }
+                MAX_JPEG_SEGMENT_PAYLOAD - 8
+            } else {
+                damaged
+                    .segments_mut()
+                    .insert(insertion_point, jpeg.segments()[insertion_point].clone());
+                MAX_JPEG_MARKER_SIZE
+            };
+            let mut stream = Cursor::new(Vec::new());
+            damaged.encoder().write_to(&mut stream).unwrap();
+            let expected = format!(
+                "Incomplete JPEG C2PA manifest: JUMBF box declares {} bytes, \
+                 but APP11 segments provide {extracted_size}; missing or malformed APP11 continuation segments",
+                store.len()
+            );
+            assert!(
+                matches!(jpeg_io.read_c2pa(&mut stream), Err(Error::InvalidAsset(message)) if message == expected)
+            );
+        }
     }
 
     // A foreign segment placed between two CAI APP11 segments breaks contiguity,
