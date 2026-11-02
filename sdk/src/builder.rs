@@ -121,6 +121,12 @@ impl ArchiveKind {
 #[non_exhaustive]
 pub struct ManifestDefinition {
     /// The version of the claim.  Defaults to 2.
+    ///
+    /// C2PA v1 claim signing (`Some(1)`) is deprecated as of 0.92.0 and will be
+    /// removed in 0.93.0, scheduled for mid-January 2027. Omit this field or set
+    /// it to `Some(2)` to sign C2PA v2 claims instead. Reading and validating
+    /// existing C2PA v1 claims is unaffected.
+    /// See the [migration guide](https://github.com/contentauth/c2pa-rs/blob/main/docs/c2pa-v1-signing-migration.md).
     pub claim_version: Option<u8>,
 
     /// Optional prefix added to the generated Manifest Label
@@ -650,6 +656,7 @@ impl Builder {
     /// Returns the claim version for this builder.
     ///
     /// If not set, defaults to 2.
+    /// Signing C2PA v1 claims is deprecated; see [`ManifestDefinition::claim_version`].
     pub fn claim_version(&self) -> u8 {
         self.definition.claim_version.unwrap_or(2)
     }
@@ -1583,6 +1590,11 @@ impl Builder {
 
         // Build the claim_generator string since this is required
         let claim_generator: String = if self.claim_version() == 1 {
+            log::warn!(
+                "C2PA v1 claim signing is deprecated as of 0.92.0 and will be removed in \
+                 0.93.0 (scheduled for mid-January 2027). Omit claim_version or set it to 2 \
+                 to sign C2PA v2 claims instead."
+            );
             claim_generator_info
                 .iter()
                 .map(|s| {
@@ -4701,7 +4713,9 @@ mod tests {
             .unwrap();
 
         dest.rewind().unwrap();
-        let reader = Reader::default().with_stream(format, &mut dest).unwrap();
+        let reader = Reader::from_context(test_context())
+            .with_stream(format, &mut dest)
+            .unwrap();
         assert_ne!(reader.validation_state(), ValidationState::Invalid);
 
         // Exactly one c2pa.actions assertion must exist for the v1 claim.
