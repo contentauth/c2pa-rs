@@ -9,6 +9,37 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.7...c2pa-v0.91.8)
+_02 November 2026_
+
+### Added
+
+* Backport OCSP live-fetch override to stable ([#2787](https://github.com/contentauth/c2pa-rs/pull/2787)) ([#2975](https://github.com/contentauth/c2pa-rs/pull/2975))
+
+### Fixed
+
+* Support legacy MOV files without ftyp boxes (backport #2967) ([#2969](https://github.com/contentauth/c2pa-rs/pull/2969))
+* *(sdk)* Report X.509 identity signature statuses against the identity assertion (backport #2841) ([#2991](https://github.com/contentauth/c2pa-rs/pull/2991))
+* Backport spec-version signature URI validation to stable ([#2971](https://github.com/contentauth/c2pa-rs/pull/2971)) ([#2990](https://github.com/contentauth/c2pa-rs/pull/2990))
+* *(sdk)* Backport signature insideValidity fix to stable ([#2853](https://github.com/contentauth/c2pa-rs/pull/2853)) ([#2985](https://github.com/contentauth/c2pa-rs/pull/2985))
+* *(sdk)* Backport credential rejection validation fix to stable ([#2852](https://github.com/contentauth/c2pa-rs/pull/2852)) ([#2984](https://github.com/contentauth/c2pa-rs/pull/2984))
+* *(sdk)* Backport CA certificate validity reporting to stable ([#2819](https://github.com/contentauth/c2pa-rs/pull/2819)) ([#2983](https://github.com/contentauth/c2pa-rs/pull/2983))
+* *(sdk)* Backport revoked credential trust fix to stable ([#2823](https://github.com/contentauth/c2pa-rs/pull/2823)) ([#2982](https://github.com/contentauth/c2pa-rs/pull/2982))
+* *(sdk)* Backport OCSP good-response expiry fix to stable ([#2822](https://github.com/contentauth/c2pa-rs/pull/2822)) ([#2981](https://github.com/contentauth/c2pa-rs/pull/2981))
+* *(sdk)* Report OCSP skipped for unusable staples (backport #2821) ([#2979](https://github.com/contentauth/c2pa-rs/pull/2979))
+* *(sdk)* Use time-stamp genTime as attested time (backport #2816) ([#2978](https://github.com/contentauth/c2pa-rs/pull/2978))
+* *(sdk)* Verify time-stamp signed attributes as encoded (backport #2815) ([#2977](https://github.com/contentauth/c2pa-rs/pull/2977))
+* *(sdk)* Ignore future OCSP responses (backport #2820) ([#2974](https://github.com/contentauth/c2pa-rs/pull/2974))
+* Bound remote manifest response reads (CAI-13473) (backport #2920) ([#2957](https://github.com/contentauth/c2pa-rs/pull/2957))
+* *(sdk)* Send signer TSA headers with timestamp assertion requests (backport #2762) ([#2953](https://github.com/contentauth/c2pa-rs/pull/2953))
+* *(sdk)* Serialize binary thumbnails with crJSON MIME fields (backport #2917) ([#2952](https://github.com/contentauth/c2pa-rs/pull/2952))
+* Encode soft binding block values as CBOR bstr when supplied as JSON ([#2689](https://github.com/contentauth/c2pa-rs/pull/2689)) (backport #2757) ([#2948](https://github.com/contentauth/c2pa-rs/pull/2948))
+* Don't auto-add a second actions assertion for v1 claims (CAI-13962) ([#2782](https://github.com/contentauth/c2pa-rs/pull/2782)) ([#2934](https://github.com/contentauth/c2pa-rs/pull/2934))
+
+### Other
+
+* Add bidirectional compatibility tests (backport #2833) ([#2955](https://github.com/contentauth/c2pa-rs/pull/2955))
+
 ## [0.91.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.6...c2pa-v0.91.7)
 _26 October 2026_
 
