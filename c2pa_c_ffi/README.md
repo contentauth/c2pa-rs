@@ -61,11 +61,9 @@ also freed. A body allocated before a callback error is freed on the error path.
 
 Pre-requisite: You must have the Rust toolchain (cargo) installed.
 
-For zero-copy development, the `cimpl` dependency currently uses the sibling
-checkout at `../cimpl` relative to the repository root. Check out
-`contentauth/cimpl` there with the allocation-handoff changes. This local path
-must be replaced with a released version containing those changes before
-publishing; the current version requirement alone does not include them.
+The `cimpl` dependency uses the published v0.4.2 release from crates.io, which
+includes the allocation-handoff support described above. A sibling `cimpl`
+checkout is not required to build or publish this crate.
 
 To build and test locally, run:
 
