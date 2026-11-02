@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.8...c2pa-v0.91.9)
+_02 November 2026_
+
+### Fixed
+
+* Port VULN fixes from main to stable branch ([#2993](https://github.com/contentauth/c2pa-rs/pull/2993))
+
 ## [0.91.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.7...c2pa-v0.91.8)
 _02 November 2026_
 
