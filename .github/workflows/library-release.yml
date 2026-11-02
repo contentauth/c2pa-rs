@@ -89,9 +89,8 @@ jobs:
           source ./emsdk_env.sh
           echo "PATH=$PATH" >> $GITHUB_ENV
           emcc --version
-          rustup install nightly
-          rustup component add rust-src --toolchain nightly
-          rustup target add --toolchain nightly wasm32-unknown-emscripten
+          # Keep in sync with EMSCRIPTEN_TOOLCHAIN in c2pa_c_ffi/Makefile.
+          rustup toolchain install nightly-2026-10-30 --profile minimal --component rust-src --target wasm32-unknown-emscripten
 
       - name: Cache emsdk
         if: matrix.target == 'wasm32-unknown-emscripten'

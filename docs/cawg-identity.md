@@ -84,13 +84,16 @@ Example assertion:
       "signature_info": {
         "alg": "Ed25519",
         "issuer": "C2PA Test Signing Cert",
-        "cert_serial_number": "638838410810235485828984295321338730070538954823",
-        "revocation_status": true
+        "cert_serial_number": "638838410810235485828984295321338730070538954823"
       }
     }
   },
   ...
 ]
 ```
+
+The `revocation_status` field is omitted when certificate revocation has not been
+checked. Its absence means the revocation status is unknown, not that the
+certificate is known to be not revoked.
 
 C2PA Tool also displays CAWG identity assertions.
