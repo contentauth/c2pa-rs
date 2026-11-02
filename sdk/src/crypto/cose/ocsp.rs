@@ -2327,14 +2327,11 @@ mod tests {
 
         #[cfg(feature = "openssl")]
         {
-            let (mut ctp, _, fresh) = stale_and_fresh_good_responses();
-            ctp.add_end_entity_credentials(include_bytes!(
-                "../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem"
-            ))
-            .unwrap();
+            let mut ctp = trusted_responder();
+            let good = trusted_fresh_good_response(&mut ctp);
             variants.push(GoodVariant {
                 fresh: true,
-                good: fresh,
+                good,
                 ctp,
             });
         }

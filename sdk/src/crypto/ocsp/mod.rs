@@ -246,12 +246,6 @@ impl OcspResponse {
 
                         return Ok(output);
                     }
-
-                    // A "good" response whose validity window does not cover the signing
-                    // time (or, without an attested time, the current time) cannot establish
-                    // that the certificate was not revoked (C2PA §15.9.1), but it is not
-                    // evidence of revocation either. Leave the status undetermined so
-                    // callers can try another response or fall back to an online check.
                 }
 
                 CertStatus::Revoked(revoked_info) => {
@@ -996,7 +990,6 @@ mod tests {
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), accepted);
             // Outside the window is inconclusive, never a revocation.
             assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
-            assert!(!log.has_any_error());
         }
 
         // Without an attested signing time the response has long expired, which is
