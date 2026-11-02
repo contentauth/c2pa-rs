@@ -17,6 +17,9 @@ endif
 
 TARGET_DIR ?= ../target
 
+# Newer nightlies hit an async-drop query cycle in rasn. Keep the CI pins in sync.
+EMSCRIPTEN_TOOLCHAIN ?= nightly-2026-10-30
+
 CARGO_BUILD_FLAGS_EMSCRIPTEN = --release -p c2pa-c-ffi --no-default-features --features "rust_native_crypto,file_io"
 CARGO_BUILD_FLAGS = --release -p c2pa-c-ffi --no-default-features --features "rust_native_crypto, add_thumbnails, http, file_io"
 
@@ -83,7 +86,7 @@ test: check-format clippy test-local
 fmt:
 	cargo +nightly fmt
 
-# These are for building the c2patool release bin on various platforms
+# These are for building the c2pa-c-ffi release library on various platforms
 release-win-x86_64:
 	rustup update stable-msvc
 	rustup target add x86_64-pc-windows-msvc
@@ -201,10 +204,11 @@ release-android-x86_64:
 	@$(call make_zip,$(TARGET_DIR)/x86_64-linux-android/release,x86_64-linux-android)
 
 release-emscripten:
-	rustup target add --toolchain nightly wasm32-unknown-emscripten
+	rustup toolchain install $(EMSCRIPTEN_TOOLCHAIN) --profile minimal --component rust-src --target wasm32-unknown-emscripten
 	EMCC_CFLAGS="-fwasm-exceptions -pthread" \
 	RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals" \
-		cargo +nightly build -Z build-std=std,panic_abort --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN)
+	C2PA_HEADER_DIR="$(abspath $(TARGET_DIR)/wasm32-unknown-emscripten/release)" \
+		cargo +$(EMSCRIPTEN_TOOLCHAIN) build -Z build-std=std,panic_abort --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN)
 	@$(call make_zip_emscripten,$(TARGET_DIR)/wasm32-unknown-emscripten/release,wasm32-unknown-emscripten)
 
 # make release

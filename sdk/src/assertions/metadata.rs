@@ -147,7 +147,7 @@ impl AssertionBase for Metadata {
 lazy_static! {
     /// The c2pa.metadata assertion shall only contain certain schemas.
     ///
-    /// See [metadata_annex - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#metadata_annex)
+    /// See [metadata_annex - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#metadata_annex)
     static ref ALLOWED_SCHEMAS: HashMap<&'static str, &'static str> = vec![
         ("xmp", "http://ns.adobe.com/xap/1.0/"),
         ("xmpMM", "http://ns.adobe.com/xap/1.0/mm/"),
@@ -176,8 +176,8 @@ lazy_static! {
 
 /// The c2pa.metadata assertion shall only contain certain fields.
 ///
-/// See [metadata_annex - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#metadata_annex)
-static ALLOWED_FIELDS: [&str; 292] = [
+/// See [metadata_annex - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#metadata_annex)
+static ALLOWED_FIELDS: [&str; 294] = [
     // xmp:
     "xmp:CreateDate",
     "xmp:CreatorTool",
@@ -261,10 +261,12 @@ static ALLOWED_FIELDS: [&str; 292] = [
     "pdf:Trapped",
     // dc:
     "dc:coverage",
+    "dc:created",
     "dc:date",
     "dc:format",
     "dc:identifier",
     "dc:language",
+    "dc:modified",
     "dc:relation",
     "dc:type",
     // Iptc4xmpExt:
@@ -544,6 +546,18 @@ pub mod tests {
         }
         "#;
 
+    // dc:created and dc:modified were added to the supported Dublin Core
+    // properties for c2pa.metadata in version 2.4 of the C2PA technical
+    // specification.
+    const DC_TIMESTAMPS: &str = r#" {
+        "@context" : {
+            "dc" : "http://purl.org/dc/elements/1.1/"
+        },
+        "dc:created": "2025-08-13T00:00:00Z",
+        "dc:modified": "2025-08-14T00:00:00Z"
+        }
+        "#;
+
     const CUSTOM_METADATA: &str = r#" {
         "@context" : {
             "bar": "http://foo.com/bar/1.0/"
@@ -655,6 +669,14 @@ pub mod tests {
         assert!(!metadata.is_valid());
         // custom metadata does not have restriction on uris
         metadata.custom_metadata_label = Some("custom.metadata".to_owned());
+        assert!(metadata.is_valid());
+    }
+
+    #[test]
+    fn test_dc_created_modified() {
+        // dc:created and dc:modified are allowed in c2pa.metadata as of version
+        // 2.4 of the C2PA technical specification (CAI-13221).
+        let metadata = Metadata::new(METADATA, DC_TIMESTAMPS).unwrap();
         assert!(metadata.is_valid());
     }
 

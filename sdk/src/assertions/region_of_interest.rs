@@ -128,7 +128,7 @@ pub struct TextSelector {
     pub end: Option<i32>,
 }
 
-/// One or two [`TextSelector`][TextSelector] identifiying the range to select.
+/// One or two [`TextSelector`] identifiying the range to select.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -197,40 +197,6 @@ pub struct Range {
     pub item: Option<Item>,
 }
 
-/// A role describing the region.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[serde(rename_all = "camelCase")]
-pub enum Role {
-    /// Arbitrary area worth identifying.
-    #[serde(rename = "c2pa.areaOfInterest")]
-    AreaOfInterest,
-    /// This area is all that is left after a crop action.
-    #[serde(rename = "c2pa.cropped")]
-    Cropped,
-    /// This area has had edits applied to it.
-    #[serde(rename = "c2pa.edited")]
-    Edited,
-    /// The area where an ingredient was placed/added.
-    #[serde(rename = "c2pa.placed")]
-    Placed,
-    /// Something in this area was redacted.
-    #[serde(rename = "c2pa.redacted")]
-    Redacted,
-    /// Area specific to a subject (human or not).
-    #[serde(rename = "c2pa.subjectArea")]
-    SubjectArea,
-    /// A range of information was removed/deleted.
-    #[serde(rename = "c2pa.deleted")]
-    Deleted,
-    /// Styling was applied to this area.
-    #[serde(rename = "c2pa.styled")]
-    Styled,
-    /// Invisible watermarking was applied to this area for the purpose of soft binding.
-    #[serde(rename = "c2pa.watermarked")]
-    Watermarked,
-}
-
 /// A region of interest within an asset describing the change.
 ///
 /// This struct can be used from [`Action::changes`][crate::assertions::Action::changes],
@@ -252,9 +218,6 @@ pub struct RegionOfInterest {
     /// Note this field serializes/deserializes into the name `type`.
     #[serde(rename = "type")]
     pub region_type: Option<String>,
-    /// A value from our controlled vocabulary or an entity-specific value (e.g., com.litware.coolArea) that represents
-    /// the role of a region among other regions.
-    pub role: Option<Role>,
     /// A free-text string.
     pub description: Option<String>,
     // If we didn't have a box, `Metadata` would recursively use `RegionOfInterest` causing an infinite size error.

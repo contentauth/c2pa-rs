@@ -138,6 +138,9 @@ pub struct LogItem {
 
     /// Ingredient URI (for ingredient-related logs)
     pub ingredient_uri: Option<Cow<'static, str>>,
+
+    /// Trust list URI (for trust list-related logs)
+    pub trust_list_uri: Option<Cow<'static, str>>,
 }
 
 impl Default for LogItem {
@@ -154,6 +157,7 @@ impl Default for LogItem {
             err_val: None,
             validation_status: None,
             ingredient_uri: None,
+            trust_list_uri: None,
         }
     }
 }
@@ -205,6 +209,23 @@ impl LogItem {
     pub fn set_ingredient_uri<S: Into<String>>(self, uri: S) -> Self {
         LogItem {
             ingredient_uri: Some(uri.into().into()),
+            ..self
+        }
+    }
+
+    /// Add an trust list URI.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// # use std::borrow::Cow;
+    /// # use c2pa::{log_item, status_tracker::{LogKind, LogItem}};
+    /// let log = log_item!("test1", "test item 1", "test func")
+    ///     .set_trust_list_uri("http://example.com/trust-list");
+    /// ```
+    pub fn set_trust_list_uri<S: Into<String>>(self, uri: S) -> Self {
+        LogItem {
+            trust_list_uri: Some(uri.into().into()),
             ..self
         }
     }
@@ -357,6 +378,7 @@ mod tests {
                 err_val: None,
                 validation_status: None,
                 ingredient_uri: None,
+                trust_list_uri: None,
             }
         );
     }

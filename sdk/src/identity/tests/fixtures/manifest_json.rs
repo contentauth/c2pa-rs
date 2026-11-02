@@ -44,7 +44,7 @@ pub(crate) fn manifest_json() -> String {
                         {
                             "action": "c2pa.opened",
                             "parameters": {
-                                "org.cai.ingredientIds": ["12345"]
+                                "ingredientIds": ["12345"]
                             }
                         }
                     ]

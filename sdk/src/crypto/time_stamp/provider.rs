@@ -13,18 +13,21 @@
 
 use async_trait::async_trait;
 use bcder::{encode::Values, OctetString};
-use rand::{thread_rng, Rng};
+use c2pa_raw_crypto::oids::SHA256_OID;
+use rand::RngExt;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    crypto::{
-        asn1::rfc3161::TimeStampReq,
-        raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
-        time_stamp::TimeStampError,
-    },
-    http::SyncGenericResolver,
+    context::Context,
+    crypto::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError},
     maybe_send_sync::MaybeSync,
 };
+
+/// Convert a [`c2pa_raw_crypto::Oid`] into a `bcder::Oid` by reusing the OID's
+/// DER content octets directly.
+fn raw_crypto_oid_to_bcder_oid(oid: &c2pa_raw_crypto::Oid) -> bcder::Oid {
+    bcder::Oid(bytes::Bytes::copy_from_slice(oid.as_bytes()))
+}
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
 /// service and generate a corresponding time stamp for a specific piece of
@@ -63,12 +66,9 @@ pub trait TimeStampProvider {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+                let context = Context::new();
                 return Some(super::http_request::default_rfc3161_request(
-                    &url,
-                    headers,
-                    &body,
-                    message,
-                    &SyncGenericResolver::with_redirects().unwrap_or_default(),
+                    &url, headers, &body, message, &context,
                 ));
             }
         }
@@ -119,16 +119,11 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+                let context = Context::new();
                 return Some(
                     super::http_request::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
+                        &url, headers, &body, message, &context,
                     )
                     .await,
                 );
@@ -149,13 +144,10 @@ pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
     let digest = hasher.finalize();
 
     let mut random = [0u8; 8];
-    thread_rng().try_fill(&mut random).map_err(|_| {
-        TimeStampError::InternalError("Unable to generate random number".to_string())
-    })?;
+    rand::rng().fill(&mut random);
 
     // SHA-256 OID: 2.16.840.1.101.3.4.2.1
-    let sha256_oid = ans1_oid_bcder_oid(&SHA256_OID)
-        .ok_or_else(|| TimeStampError::InternalError("Invalid SHA-256 OID".to_string()))?;
+    let sha256_oid = raw_crypto_oid_to_bcder_oid(&SHA256_OID);
 
     let request = TimeStampReq {
         version: bcder::Integer::from(1_u8),
@@ -177,4 +169,95 @@ pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
         .write_encoded(bcder::Mode::Der, &mut body)?;
 
     Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use bcder::decode::Constructed;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    #[test]
+    fn default_request_has_sha256_imprint_nonce_and_certificate_request() {
+        for data in [b"".as_slice(), b"payload"] {
+            let encoded = default_rfc3161_message(data).unwrap();
+            let request = Constructed::decode(
+                encoded.as_slice(),
+                bcder::Mode::Der,
+                TimeStampReq::take_from,
+            )
+            .unwrap();
+            assert_eq!(request.version, bcder::Integer::from(1));
+            assert_eq!(
+                request.message_imprint.hash_algorithm.algorithm.to_string(),
+                "2.16.840.1.101.3.4.2.1"
+            );
+            assert_eq!(
+                request.message_imprint.hashed_message.to_bytes().as_ref(),
+                Sha256::digest(data).as_slice()
+            );
+            assert!(request.nonce.is_some());
+            assert_eq!(request.cert_req, Some(true));
+            assert!(request.req_policy.is_none());
+            assert!(request.extensions.is_none());
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn default_providers_do_not_request_timestamps_without_a_url() {
+        struct DefaultProvider;
+        impl TimeStampProvider for DefaultProvider {}
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncTimeStampProvider for DefaultProvider {}
+
+        assert!(TimeStampProvider::time_stamp_service_url(&DefaultProvider).is_none());
+        assert!(TimeStampProvider::time_stamp_request_headers(&DefaultProvider).is_none());
+        assert!(TimeStampProvider::time_stamp_request_body(&DefaultProvider, b"data").is_ok());
+        assert!(TimeStampProvider::send_time_stamp_request(&DefaultProvider, b"data").is_none());
+        assert!(AsyncTimeStampProvider::time_stamp_service_url(&DefaultProvider).is_none());
+        assert!(AsyncTimeStampProvider::time_stamp_request_headers(&DefaultProvider).is_none());
+        assert!(AsyncTimeStampProvider::time_stamp_request_body(&DefaultProvider, b"data").is_ok());
+        assert!(
+            AsyncTimeStampProvider::send_time_stamp_request(&DefaultProvider, b"data")
+                .await
+                .is_none()
+        );
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn request_body_failure_currently_behaves_like_no_provider() {
+        struct InvalidBody;
+        impl TimeStampProvider for InvalidBody {
+            fn time_stamp_service_url(&self) -> Option<String> {
+                Some("https://unused.invalid/".into())
+            }
+
+            fn time_stamp_request_body(&self, _message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
+                Err(TimeStampError::InternalError("test body failure".into()))
+            }
+        }
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncTimeStampProvider for InvalidBody {
+            fn time_stamp_service_url(&self) -> Option<String> {
+                TimeStampProvider::time_stamp_service_url(self)
+            }
+
+            fn time_stamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
+                TimeStampProvider::time_stamp_request_body(self, message)
+            }
+        }
+
+        assert!(TimeStampProvider::send_time_stamp_request(&InvalidBody, b"data").is_none());
+        assert!(
+            AsyncTimeStampProvider::send_time_stamp_request(&InvalidBody, b"data")
+                .await
+                .is_none()
+        );
+    }
 }

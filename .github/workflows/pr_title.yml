@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # If changing this, please also see `.commitlintrc` and
       # `docs/release-process.md`.
@@ -45,9 +45,11 @@ jobs:
           # these exact names:
           #
           #    * sdk (The primary C2PA Rust SDK)
-          #    * c2patool
+          #    * c2pa_c_ffi
           #    * export_schema
           #    * make_test_images
+          #    * experimental (a change confined to an experimental feature;
+          #      see docs/experimental-features.md)
           #
           # If `scope` is omitted, the parenthesis must also be omitted.
           #

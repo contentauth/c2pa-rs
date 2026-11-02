@@ -12,14 +12,12 @@
 // each license.
 
 use async_trait::async_trait;
+use c2pa_raw_crypto::{RawSigner, RawSignerError, SigningAlg};
 
 use crate::{
-    crypto::{
-        raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
-        time_stamp::{TimeStampError, TimeStampProvider},
-    },
+    context::Context,
+    crypto::cose::cose_reserve_size,
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
-    http::SyncGenericResolver,
     maybe_send_sync::{MaybeSend, MaybeSync},
     Result,
 };
@@ -91,13 +89,12 @@ pub trait Signer {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                // TODO: This is not a recommended practice to create the Context object this way.
+                // Context should always be created using the settings set from the underlying application.
+                let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &SyncGenericResolver::with_redirects().unwrap_or_default(),
+                        &url, headers, &body, message, &context,
                     )
                     .map_err(|e| e.into()),
                 );
@@ -115,6 +112,14 @@ pub trait Signer {
         None
     }
 
+    /// OCSP responses for the signing certificate chain, signing certificate first.
+    ///
+    /// Defaults to the [`ocsp_val`](Signer::ocsp_val) response, if any. Override this
+    /// to also staple responses for intermediate CA certificates.
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        self.ocsp_val().into_iter().collect()
+    }
+
     /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
     ///
     /// This is useful for cases where the signer needs to handle the COSE structure directly.
@@ -126,21 +131,6 @@ pub trait Signer {
     /// Returns a list of dynamic assertions that should be included in the manifest.
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         Vec::new()
-    }
-
-    /// If this struct also implements or wraps [`RawSigner`], it should
-    /// return a reference to that trait implementation.
-    ///
-    /// If this function returns `None` (the default behavior), a temporary
-    /// wrapper will be constructed for it.
-    ///
-    /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
-    /// c2pa-rs to other languages, we can not make [`RawSigner`] a supertrait of
-    /// this trait. This API is a workaround for that limitation.
-    ///
-    /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        None
     }
 }
 
@@ -219,16 +209,13 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                // TODO: This is not a recommended practice to create the Context object this way.
+                // Context should always be created using the settings set from the underlying application.
+                let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
+                        &url, headers, &body, message, &context,
                     )
                     .await
                     .map_err(|e| e.into()),
@@ -247,6 +234,14 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
         None
     }
 
+    /// OCSP responses for the signing certificate chain, signing certificate first.
+    ///
+    /// Defaults to the [`ocsp_val`](AsyncSigner::ocsp_val) response, if any. Override this
+    /// to also staple responses for intermediate CA certificates.
+    async fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        self.ocsp_val().await.into_iter().collect()
+    }
+
     /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
     ///
     /// This is useful for cases where the signer needs to handle the COSE structure directly.
@@ -258,21 +253,6 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     /// Returns a list of dynamic assertions that should be included in the manifest.
     fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         Vec::new()
-    }
-
-    /// If this struct also implements or wraps [`AsyncRawSigner`], it should
-    /// return a reference to that trait implementation.
-    ///
-    /// If this function returns `None` (the default behavior), a temporary
-    /// wrapper will be constructed for it when needed.
-    ///
-    /// NOTE: Due to limitations in some of the FFI tooling that we use to bridge
-    /// c2pa-rs to other languages, we can not make [`AsyncRawSigner`] a supertrait
-    /// of this trait. This API is a workaround for that limitation.
-    ///
-    /// [`AsyncRawSigner`]: crate::crypto::raw_signature::AsyncRawSigner
-    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
-        None
     }
 }
 
@@ -299,6 +279,10 @@ impl<T: ?Sized + Signer> Signer for Box<T> {
         (**self).ocsp_val()
     }
 
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        (**self).ocsp_vals()
+    }
+
     fn direct_cose_handling(&self) -> bool {
         (**self).direct_cose_handling()
     }
@@ -321,58 +305,6 @@ impl<T: ?Sized + Signer> Signer for Box<T> {
 
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         (**self).send_timestamp_request(message)
-    }
-
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        (**self).raw_signer()
-    }
-}
-
-impl RawSigner for Box<dyn Signer> {
-    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
-        Ok(self.as_ref().sign(data)?)
-    }
-
-    fn alg(&self) -> SigningAlg {
-        self.as_ref().alg()
-    }
-
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-        Ok(self.as_ref().certs()?)
-    }
-
-    fn reserve_size(&self) -> usize {
-        self.as_ref().reserve_size()
-    }
-
-    fn ocsp_response(&self) -> Option<Vec<u8>> {
-        self.as_ref().ocsp_val()
-    }
-}
-
-impl TimeStampProvider for Box<dyn Signer> {
-    fn time_stamp_service_url(&self) -> Option<String> {
-        self.as_ref().time_authority_url()
-    }
-
-    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.as_ref().timestamp_request_headers()
-    }
-
-    fn time_stamp_request_body(
-        &self,
-        message: &[u8],
-    ) -> std::result::Result<Vec<u8>, TimeStampError> {
-        Ok(self.as_ref().sign(message)?)
-    }
-
-    fn send_time_stamp_request(
-        &self,
-        message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        self.as_ref()
-            .send_timestamp_request(message)
-            .map(|r| Ok(r?))
     }
 }
 
@@ -417,6 +349,10 @@ impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
         (**self).ocsp_val().await
     }
 
+    async fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        (**self).ocsp_vals().await
+    }
+
     fn direct_cose_handling(&self) -> bool {
         (**self).direct_cose_handling()
     }
@@ -424,65 +360,125 @@ impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
     fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         (**self).dynamic_assertions()
     }
-
-    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
-        (**self).async_raw_signer()
-    }
 }
 
-#[allow(dead_code)] // Not used in all configurations.
-pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner + Send + Sync>);
+/// Wraps a [`Signer`] to staple pre-fetched OCSP responses after its own.
+///
+/// See [`create_signer::with_ocsp_responses`](crate::create_signer::with_ocsp_responses).
+pub(crate) struct OcspStapledSigner {
+    pub(crate) signer: BoxedSigner,
+    pub(crate) ocsp_responses: Vec<Vec<u8>>,
+}
 
-impl Signer for RawSignerWrapper {
+impl Signer for OcspStapledSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.0.sign(data).map_err(|e| e.into())
+        self.signer.sign(data)
     }
 
     fn alg(&self) -> SigningAlg {
-        self.0.alg()
+        self.signer.alg()
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        self.0.cert_chain().map_err(|e| e.into())
+        self.signer.certs()
     }
 
     fn reserve_size(&self) -> usize {
-        self.0.reserve_size()
+        self.signer.reserve_size() + self.ocsp_responses.iter().map(Vec::len).sum::<usize>()
     }
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
-        self.0.ocsp_response()
+        self.ocsp_vals().into_iter().next()
+    }
+
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        let mut ocsp_vals = self.signer.ocsp_vals();
+        ocsp_vals.extend(self.ocsp_responses.iter().cloned());
+        ocsp_vals
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.signer.direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        self.signer.dynamic_assertions()
     }
 
     fn time_authority_url(&self) -> Option<String> {
-        self.0.time_stamp_service_url()
+        self.signer.time_authority_url()
     }
 
     fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.0.time_stamp_request_headers()
+        self.signer.timestamp_request_headers()
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        self.0
-            .time_stamp_request_body(message)
-            .map_err(|e| e.into())
+        self.signer.timestamp_request_body(message)
     }
 
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        self.0
-            .send_time_stamp_request(message)
-            .map(|r| r.map_err(|e| e.into()))
+        self.signer.send_timestamp_request(message)
+    }
+}
+
+/// Wraps a [`RawSigner`] (raw signature only) into a full [`Signer`], layering
+/// on the optional time stamp service URL and the overall COSE reserve-size
+/// calculation that the raw signer does not know about.
+#[allow(dead_code)] // Not used in all configurations.
+pub(crate) struct RawSignerWrapper {
+    raw_signer: Box<dyn RawSigner + Send + Sync>,
+    cert_chain: Vec<Vec<u8>>,
+    time_stamp_service_url: Option<String>,
+}
+
+impl RawSignerWrapper {
+    pub(crate) fn new(
+        raw_signer: Box<dyn RawSigner + Send + Sync>,
+        cert_chain: Vec<Vec<u8>>,
+        time_stamp_service_url: Option<String>,
+    ) -> Self {
+        Self {
+            raw_signer,
+            cert_chain,
+            time_stamp_service_url,
+        }
+    }
+}
+
+impl Signer for RawSignerWrapper {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.raw_signer.sign(data).map_err(|e| e.into())
     }
 
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        Some(Box::new(&*self.0))
+    fn alg(&self) -> SigningAlg {
+        self.raw_signer.alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(self.cert_chain.clone())
+    }
+
+    fn reserve_size(&self) -> usize {
+        cose_reserve_size(
+            self.raw_signer.max_signature_size(),
+            &self.cert_chain,
+            self.time_stamp_service_url.is_some(),
+            None,
+        )
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.time_stamp_service_url.clone()
     }
 }
 
 /// Adapts an owned [`BoxedSigner`] to implement [`RawSigner`].
 ///
 /// This is the reverse of [`RawSignerWrapper`]: it allows a `BoxedSigner` to be
-/// used wherever a `Box<dyn RawSigner + Send + Sync>` is expected.
+/// used wherever a `Box<dyn RawSigner + Send + Sync>` is expected. Time stamp
+/// and OCSP information are not part of the [`RawSigner`] contract and are not
+/// surfaced here.
 #[allow(dead_code)]
 pub(crate) struct OwnedSignerWrapper(pub(crate) BoxedSigner);
 
@@ -494,48 +490,187 @@ unsafe impl Sync for OwnedSignerWrapper {}
 
 impl RawSigner for OwnedSignerWrapper {
     fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
-        Ok(Signer::sign(self.0.as_ref(), data)?)
+        Signer::sign(self.0.as_ref(), data)
+            .map_err(|e| RawSignerError::InternalError(e.to_string()))
     }
 
     fn alg(&self) -> SigningAlg {
         Signer::alg(self.0.as_ref())
     }
 
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-        Ok(self.0.certs()?)
-    }
-
-    fn reserve_size(&self) -> usize {
+    // The wrapped signer only knows its overall COSE reserve size, so we report
+    // that as a (conservative) upper bound for the raw signature size.
+    fn max_signature_size(&self) -> usize {
         Signer::reserve_size(self.0.as_ref())
-    }
-
-    fn ocsp_response(&self) -> Option<Vec<u8>> {
-        self.0.ocsp_val()
     }
 }
 
-impl TimeStampProvider for OwnedSignerWrapper {
-    fn time_stamp_service_url(&self) -> Option<String> {
-        self.0.time_authority_url()
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    struct LegacyOcspSigner(Option<Vec<u8>>);
+
+    impl Signer for LegacyOcspSigner {
+        fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+            Ok(data.to_vec())
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ed25519
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            Ok(vec![vec![1, 2, 3]])
+        }
+
+        fn reserve_size(&self) -> usize {
+            1024
+        }
+
+        fn ocsp_val(&self) -> Option<Vec<u8>> {
+            self.0.clone()
+        }
+
+        fn direct_cose_handling(&self) -> bool {
+            true
+        }
+
+        fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+            vec![Box::new(Self(self.0.clone()))]
+        }
+
+        fn time_authority_url(&self) -> Option<String> {
+            Some("https://timestamp.example.test".into())
+        }
+
+        fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+            Some(vec![("X-Test".into(), "signer-header".into())])
+        }
+
+        fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+            if message.is_empty() {
+                return Err(crate::Error::BadParam("empty timestamp message".into()));
+            }
+            Ok([b"body:".as_slice(), message].concat())
+        }
+
+        fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+            Some(Signer::timestamp_request_body(self, message))
+        }
     }
 
-    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.0.timestamp_request_headers()
+    impl DynamicAssertion for LegacyOcspSigner {
+        fn label(&self) -> String {
+            "test.ocsp-forwarding".into()
+        }
+
+        fn reserve_size(&self) -> Result<usize> {
+            Ok(2)
+        }
+
+        fn content(
+            &self,
+            _label: &str,
+            _size: Option<usize>,
+            _claim: &crate::dynamic_assertion::PartialClaim,
+        ) -> Result<crate::dynamic_assertion::DynamicAssertionContent> {
+            Ok(crate::dynamic_assertion::DynamicAssertionContent::Json(
+                "{}".into(),
+            ))
+        }
     }
 
-    fn time_stamp_request_body(
-        &self,
-        message: &[u8],
-    ) -> std::result::Result<Vec<u8>, TimeStampError> {
-        Ok(self.0.timestamp_request_body(message)?)
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl AsyncSigner for LegacyOcspSigner {
+        async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+            Signer::sign(self, &data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            Signer::alg(self)
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            Signer::certs(self)
+        }
+
+        fn reserve_size(&self) -> usize {
+            Signer::reserve_size(self)
+        }
+
+        async fn ocsp_val(&self) -> Option<Vec<u8>> {
+            self.0.clone()
+        }
     }
 
-    fn send_time_stamp_request(
-        &self,
-        message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        self.0
-            .send_timestamp_request(message)
-            .map(|r| r.map_err(|e| e.into()))
+    #[c2pa_macros::c2pa_test_async]
+    async fn legacy_ocsp_defaults_and_boxed_signers_preserve_responses() {
+        for response in [None, Some(vec![1, 2, 3])] {
+            let expected: Vec<Vec<u8>> = response.clone().into_iter().collect();
+            let signer: BoxedSigner = Box::new(LegacyOcspSigner(response.clone()));
+            assert_eq!(Signer::ocsp_vals(signer.as_ref()), expected);
+            assert_eq!(Signer::ocsp_vals(&signer), expected);
+
+            let signer: BoxedAsyncSigner = Box::new(LegacyOcspSigner(response));
+            assert_eq!(AsyncSigner::ocsp_vals(signer.as_ref()).await, expected);
+            assert_eq!(AsyncSigner::ocsp_vals(&signer).await, expected);
+        }
+    }
+
+    #[test]
+    fn ocsp_stapled_signer_preserves_signer_hooks() {
+        let signer = crate::create_signer::with_ocsp_responses(
+            Box::new(LegacyOcspSigner(Some(vec![1, 2, 3]))),
+            vec![vec![4, 5, 6]],
+        );
+
+        assert_eq!(signer.ocsp_vals(), vec![vec![1, 2, 3], vec![4, 5, 6]]);
+        assert_eq!(signer.ocsp_val(), Some(vec![1, 2, 3]));
+        assert!(signer.direct_cose_handling());
+        let assertions = signer.dynamic_assertions();
+        assert_eq!(assertions.len(), 1);
+        assert_eq!(assertions[0].label(), "test.ocsp-forwarding");
+        assert_eq!(assertions[0].reserve_size().unwrap(), 2);
+        assert!(matches!(
+            assertions[0]
+                .content(
+                    "test.ocsp-forwarding",
+                    Some(2),
+                    &crate::dynamic_assertion::PartialClaim::default(),
+                )
+                .unwrap(),
+            crate::dynamic_assertion::DynamicAssertionContent::Json(content) if content == "{}"
+        ));
+        assert_eq!(
+            signer.time_authority_url().as_deref(),
+            Some("https://timestamp.example.test")
+        );
+        assert_eq!(
+            signer.timestamp_request_headers(),
+            Some(vec![("X-Test".into(), "signer-header".into())])
+        );
+        assert_eq!(
+            signer.timestamp_request_body(b"message").unwrap(),
+            b"body:message"
+        );
+        assert_eq!(
+            signer.send_timestamp_request(b"message").unwrap().unwrap(),
+            b"body:message"
+        );
+        assert!(matches!(
+            signer.timestamp_request_body(b""),
+            Err(crate::Error::BadParam(message)) if message == "empty timestamp message"
+        ));
+        assert!(matches!(
+            signer.send_timestamp_request(b""),
+            Some(Err(crate::Error::BadParam(message))) if message == "empty timestamp message"
+        ));
     }
 }

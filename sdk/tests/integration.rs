@@ -13,6 +13,10 @@
 
 mod common;
 
+#[cfg(feature = "file_io")]
+#[path = "common/embed_manifest.rs"]
+mod embed_manifest;
+
 /// Complete functional integration test with parent and ingredients.
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
@@ -20,14 +24,18 @@ mod integration_1 {
     use std::{io, path::PathBuf};
 
     use c2pa::{
-        assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
-        Builder, Context, Ingredient, Reader, Result, Settings,
+        assertions::{AssetReference, Metadata},
+        validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED,
+        Builder, Context, Reader, Result, Settings, ValidationState,
     };
     use c2pa_macros::c2pa_test_async;
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
 
-    use super::common::test_context;
+    use super::{
+        common::test_context,
+        embed_manifest::{sign_embed_manifest, verify_embed_manifest},
+    };
 
     /// Returns the path to a fixture file.
     fn fixture_path(file_name: &str) -> PathBuf {
@@ -55,81 +63,11 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
         let context = test_context().into_shared();
-
-        // set up parent and destination paths
         let temp_dir = tempdirectory()?;
         let output_path = temp_dir.path().join("test_file.jpg");
-        let parent_path = fixture_path("earth_apollo17.jpg");
-        let ingredient_path = fixture_path("libpng-test.png");
 
-        // let generator = ClaimGeneratorInfo::new("app");
-        // create a new Manifest
-        let mut builder = Builder::from_shared_context(&context);
-
-        // allocate actions so we can add them
-        let mut actions = Actions::new();
-
-        // add a parent ingredient
-        // let mut parent = Ingredient::from_file(&parent_path)?;
-        // parent.set_is_parent();
-        // add an action assertion stating that we imported this file
-        actions = actions.add_action(
-            Action::new(c2pa_action::OPENED)
-                .set_when("2015-06-26T16:43:23+0200")
-                .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
-        );
-
-        let ingredient_json = serde_json::json!({
-            "name": "Earth from Apollo 17",
-            "description": "A photo of Earth taken from Apollo 17",
-            "relationship": "parentOf",
-            "label": "apollo17"
-        });
-        // set the parent ingredient
-        let mut parent_file = std::fs::File::open(&parent_path)?;
-        builder.add_ingredient_from_stream(
-            ingredient_json.to_string(),
-            "image/jpeg",
-            &mut parent_file,
-        )?;
-
-        actions = actions.add_action(
-            Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
-        );
-
-        // add an ingredient
-        #[allow(deprecated)]
-        let ingredient = Ingredient::from_file(&ingredient_path)?;
-
-        // add an action assertion stating that we imported this file
-        actions = actions.add_action(
-            Action::new(c2pa_action::EDITED)
-                .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
-        );
-
-        builder.add_ingredient(ingredient);
-
-        builder.add_assertion(Actions::LABEL, &actions)?;
-
-        // sign and embed into the target file
-        let signer = context.signer()?;
-        builder.sign_file(signer, &parent_path, &output_path)?;
-
-        // read our new file with embedded manifest
-        let mut file = std::fs::File::open(&output_path)?;
-        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
-
-        println!("{reader}");
-
-        assert!(reader.active_manifest().is_some());
-        if let Some(manifest) = reader.active_manifest() {
-            assert!(manifest.title().is_some());
-            assert_eq!(manifest.ingredients().len(), 2);
-        } else {
-            panic!("no manifest in store");
-        }
+        sign_embed_manifest(&context, context.signer()?, &fixture_path(""), &output_path)?;
+        verify_embed_manifest(&context, &output_path)?;
         Ok(())
     }
 
@@ -241,7 +179,7 @@ mod integration_1 {
         if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.assertions().len(), 2); // one for AssetReference and one for Actions
-            let assertion_ref: AssetReference = manifest.assertions()[0].to_assertion()?;
+            let assertion_ref: AssetReference = manifest.find_assertion(AssetReference::LABEL)?;
             assert_eq!(assertion_ref, references);
         } else {
             panic!("no manifest in store");
@@ -348,8 +286,14 @@ mod integration_1 {
                 .last()
                 .unwrap()
                 .code(),
-            "signingCredential.untrusted"
+            CAWG_X509_CREDENTIAL_UNTRUSTED
         );
+
+        // An untrusted CAWG X.509 identity credential is scoped to that
+        // identity assertion and must not by itself invalidate the enclosing
+        // manifest (the same tolerance already given to an untrusted C2PA
+        // claim signature credential).
+        assert_eq!(reader.validation_state(), ValidationState::Valid);
 
         Ok(())
     }

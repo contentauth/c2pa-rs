@@ -13,17 +13,14 @@
 
 #![deny(missing_docs)]
 
-//! The `create_signer` module provides a way to obtain a [`Signer`](crate::Signer)
+//! The `create_signer` module provides a way to obtain a [`Signer`]
 //! instance for each signing format supported by this crate.
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
-use crate::{
-    crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
-    error::Result,
-    signer::RawSignerWrapper,
-    BoxedSigner,
-};
+use c2pa_raw_crypto::{signer_from_private_key, SigningAlg};
+
+use crate::{crypto::cert_chain_pem_to_der, error::Result, signer::RawSignerWrapper, BoxedSigner};
 
 /// Creates a [`Signer`](crate::Signer) instance using signing certificate and private key
 /// as byte slices.
@@ -43,8 +40,10 @@ pub fn from_keys(
     alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> Result<BoxedSigner> {
-    Ok(Box::new(RawSignerWrapper(
-        signer_from_cert_chain_and_private_key(signcert, pkey, alg, tsa_url)?,
+    Ok(Box::new(RawSignerWrapper::new(
+        signer_from_private_key(pkey, alg)?,
+        cert_chain_pem_to_der(signcert)?,
+        tsa_url,
     )))
 }
 
@@ -95,6 +94,65 @@ pub fn from_x509_identity(
     )
 }
 
+/// Creates a combined [`Signer`](crate::Signer) that signs the C2PA claim with
+/// `c2pa_signer` and embeds one CAWG identity assertion whose `signature` is
+/// produced by `credential_holder`.
+///
+/// Use this for credential types other than X.509, such as an identity claims
+/// aggregation credential (`cawg.identity_claims_aggregation`) obtained from an
+/// aggregator at signing time. The holder's [`sign`] receives the finished
+/// `signer_payload` (referenced assertions with their final hashes), which is
+/// only known during signing.
+///
+/// Dynamic assertions already contributed by `c2pa_signer` are kept, so an
+/// X.509 identity signer from [`from_x509_identity`] can be wrapped to emit
+/// both identity assertions.
+///
+/// # Arguments
+///
+/// * `c2pa_signer` - Signs the C2PA claim
+/// * `credential_holder` - Produces the identity assertion's `signature`
+/// * `referenced_assertions` - Assertion labels to include in the identity assertion
+/// * `roles` - Named actor roles to attach to the identity assertion
+///
+/// [`sign`]: crate::identity::builder::CredentialHolder::sign
+pub fn from_credential_holder(
+    c2pa_signer: BoxedSigner,
+    credential_holder: Box<dyn crate::identity::builder::CredentialHolder + Send + Sync>,
+    referenced_assertions: &[&str],
+    roles: &[&str],
+) -> BoxedSigner {
+    Box::new(crate::settings::signer::CawgIdentitySigner::new(
+        c2pa_signer,
+        credential_holder,
+        referenced_assertions,
+        roles,
+    ))
+}
+
+/// Creates a [`Signer`](crate::Signer) that staples pre-fetched OCSP responses into
+/// every signature `signer` produces (the COSE `rVals.ocspVals` header), after any
+/// responses `signer` supplies itself.
+///
+/// Order the responses along the certificate chain, signing certificate first:
+/// validators check the first response against the signing certificate. The caller
+/// fetches the responses and keeps them fresh. Signers that handle COSE directly
+/// ([`direct_cose_handling`](crate::Signer::direct_cose_handling)) do not staple them.
+///
+/// # Arguments
+///
+/// * `signer` - Signs the C2PA claim
+/// * `ocsp_responses` - DER-encoded OCSP responses
+pub fn with_ocsp_responses(signer: BoxedSigner, ocsp_responses: Vec<Vec<u8>>) -> BoxedSigner {
+    if ocsp_responses.is_empty() {
+        return signer;
+    }
+    Box::new(crate::signer::OcspStapledSigner {
+        signer,
+        ocsp_responses,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -106,14 +164,44 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::raw_signature::SigningAlg,
         identity::tests::fixtures::{manifest_json, parent_json},
-        utils::test_signer::test_signer,
-        Builder, Reader,
+        utils::test_signer::{cert_chain_and_private_key_for_alg, test_signer},
+        Builder, Reader, Signer, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
+
+    #[c2pa_test_async]
+    async fn from_keys_ecdsa_signatures_round_trip() {
+        use c2pa_raw_crypto::validator_for_signing_alg;
+        use x509_parser::prelude::{FromDer, X509Certificate};
+
+        let message = b"ECDSA dependency upgrade regression";
+        for (alg, signature_len) in [
+            (SigningAlg::Es256, 64),
+            (SigningAlg::Es384, 96),
+            (SigningAlg::Es512, 132),
+        ] {
+            let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
+            let signer = super::from_keys(cert_chain, private_key, alg, None).unwrap();
+            let signature = signer.sign(message).unwrap();
+            assert_eq!(signature.len(), signature_len, "{alg}");
+
+            let certs = signer.certs().unwrap();
+            let (_, cert) = X509Certificate::from_der(&certs[0]).unwrap();
+            let validator = validator_for_signing_alg(alg).unwrap();
+            validator
+                .validate(&signature, message, cert.public_key().raw)
+                .unwrap();
+            assert!(
+                validator
+                    .validate(&signature, b"tampered message", cert.public_key().raw)
+                    .is_err(),
+                "{alg}"
+            );
+        }
+    }
 
     /// Verify that `from_x509_identity` produces a valid manifest containing
     /// one X.509 identity assertion signed by the identity signer and
@@ -144,7 +232,28 @@ mod tests {
 
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+        // The identity signer must chain to a CAWG trust anchor; the test roots
+        // that the default (test) policy trusts for claim signers do not count.
+        let mut settings = crate::settings::Settings::default();
+        settings
+            .trust
+            .anchors
+            .get_or_insert_with(Vec::new)
+            .push(crate::settings::TrustAnchor {
+                trust_anchors: include_str!(
+                    "../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+                )
+                .to_string(),
+                trust_uri: Some("https://c2pa-rs/test_cawg_roots".to_string()),
+                trust_kind: crate::settings::TrustListKind::CAWG,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
+            });
+        let context = crate::Context::new().with_settings(settings).unwrap();
+        let manifest_store = Reader::from_context(context)
+            .with_stream(format, &mut dest)
+            .unwrap();
         assert_eq!(
             manifest_store.validation_state(),
             crate::ValidationState::Trusted
@@ -155,5 +264,184 @@ mod tests {
             .assertions()
             .iter()
             .any(|a| a.label().contains("cawg.identity")));
+    }
+
+    #[test]
+    fn with_ocsp_responses_empty_preserves_signer() {
+        let signer = test_signer(SigningAlg::Ed25519);
+        let original = signer.as_ref() as *const _;
+        let signer = super::with_ocsp_responses(signer, Vec::new());
+
+        assert!(std::ptr::eq(original, signer.as_ref()));
+        assert_eq!(signer.alg(), SigningAlg::Ed25519);
+        assert!(signer.ocsp_vals().is_empty());
+    }
+
+    /// Verify that `with_ocsp_responses` staples its responses after those of the
+    /// wrapped signer, in order, and reserves room for them.
+    #[c2pa_test_async]
+    async fn with_ocsp_responses_staples_in_order() {
+        use coset::{cbor::value::Value, TaggedCborSerializable};
+
+        let first = include_bytes!("../tests/fixtures/ocsp_good.data").to_vec();
+        let second = include_bytes!("../tests/fixtures/crypto/ocsp/response_good.der").to_vec();
+
+        let c2pa_signer = test_signer(SigningAlg::Ps256);
+        let reserve_size = c2pa_signer.reserve_size();
+        let signer = super::with_ocsp_responses(
+            super::with_ocsp_responses(c2pa_signer, vec![first.clone()]),
+            vec![second.clone()],
+        );
+        assert_eq!(signer.ocsp_vals(), vec![first.clone(), second.clone()]);
+        assert_eq!(
+            signer.reserve_size(),
+            reserve_size + first.len() + second.len()
+        );
+
+        assert_eq!(signer.ocsp_val(), Some(first.clone()));
+        let signed = crate::cose_sign::cose_sign(
+            signer.as_ref(),
+            b"claim",
+            signer.reserve_size(),
+            crate::crypto::cose::TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Settings::default(),
+        )
+        .unwrap();
+        let cose = coset::CoseSign1::from_tagged_slice(&signed).unwrap();
+        assert!(cose.unprotected.rest.contains(&(
+            coset::Label::Text("rVals".into()),
+            Value::Map(vec![(
+                Value::Text("ocspVals".into()),
+                Value::Array(vec![Value::Bytes(first), Value::Bytes(second)]),
+            )]),
+        )));
+    }
+
+    /// A credential holder that records the `signer_payload` it was asked to
+    /// sign and returns its CBOR serialization as the "signature".
+    struct RecordingCredentialHolder {
+        sig_type: &'static str,
+        seen: std::sync::Mutex<Vec<crate::identity::SignerPayload>>,
+    }
+
+    impl crate::identity::builder::CredentialHolder for RecordingCredentialHolder {
+        fn sig_type(&self) -> &'static str {
+            self.sig_type
+        }
+
+        fn reserve_size(&self) -> usize {
+            1000
+        }
+
+        fn sign(
+            &self,
+            signer_payload: &crate::identity::SignerPayload,
+        ) -> std::result::Result<Vec<u8>, crate::identity::builder::IdentityBuilderError> {
+            self.seen.lock().unwrap().push(signer_payload.clone());
+            let mut cbor: Vec<u8> = vec![];
+            c2pa_cbor::to_writer(&mut cbor, signer_payload)?;
+            Ok(cbor)
+        }
+    }
+
+    /// Verify that `from_credential_holder` hands the holder a `signer_payload`
+    /// carrying its `sig_type` and the hard binding, embeds what the holder
+    /// returns, and keeps the X.509 identity assertion of a wrapped signer, so
+    /// the manifest ends up with both identity assertions.
+    #[c2pa_test_async]
+    async fn from_credential_holder_adds_second_identity_assertion() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let settings = crate::settings::Settings::default()
+            .with_value("core.decode_identity_assertions", false)
+            .unwrap();
+        let context = crate::Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(manifest_json())
+            .unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let c2pa_signer = test_signer(SigningAlg::Ps256);
+        let identity_signer = test_signer(SigningAlg::Ed25519);
+        let x509 = super::from_x509_identity(c2pa_signer, identity_signer, &["c2pa.actions"], &[]);
+
+        let holder = std::sync::Arc::new(RecordingCredentialHolder {
+            sig_type: "INVALID.identity.recording_credential",
+            seen: std::sync::Mutex::new(vec![]),
+        });
+        struct Shared(std::sync::Arc<RecordingCredentialHolder>);
+        impl crate::identity::builder::CredentialHolder for Shared {
+            fn sig_type(&self) -> &'static str {
+                self.0.sig_type()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn sign(
+                &self,
+                signer_payload: &crate::identity::SignerPayload,
+            ) -> std::result::Result<Vec<u8>, crate::identity::builder::IdentityBuilderError>
+            {
+                self.0.sign(signer_payload)
+            }
+        }
+
+        let signer = super::from_credential_holder(
+            x509,
+            Box::new(Shared(holder.clone())),
+            &["c2pa.actions.v2"],
+            &["cawg.creator"],
+        );
+
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        // The holder was asked to sign exactly once per pass, and saw the
+        // hard binding plus the referenced c2pa.actions assertion and its role.
+        let seen = holder.seen.lock().unwrap();
+        assert!(!seen.is_empty());
+        let payload = seen.last().unwrap();
+        assert_eq!(payload.sig_type, "INVALID.identity.recording_credential");
+        assert_eq!(payload.roles, vec!["cawg.creator".to_string()]);
+        assert!(payload
+            .referenced_assertions
+            .iter()
+            .any(|a| a.url().contains("c2pa.assertions/c2pa.hash.")));
+        assert!(payload
+            .referenced_assertions
+            .iter()
+            .any(|a| a.url().ends_with("c2pa.assertions/c2pa.actions.v2")));
+        drop(seen);
+
+        dest.rewind().unwrap();
+        let reader = Reader::from_shared_context(&context)
+            .with_stream(format, &mut dest)
+            .unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        let identity_labels: Vec<String> = manifest
+            .assertions()
+            .iter()
+            .filter(|a| a.label().starts_with("cawg.identity"))
+            .map(|a| a.label().to_string())
+            .collect();
+        assert_eq!(
+            identity_labels.len(),
+            2,
+            "expected the X.509 and the credential-holder identity assertions, got {identity_labels:?}"
+        );
     }
 }

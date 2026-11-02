@@ -14,17 +14,36 @@
 //! This version of the validation method tests cover the case where the
 //! [`StatusTracker`] is configured to continue when possible.
 
-use std::io::Cursor;
+use std::{borrow::Cow, io::Cursor};
 
 use c2pa_macros::c2pa_test_async;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    crypto::raw_signature::SigningAlg,
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType, Verifier},
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
     status_tracker::{LogKind, StatusTracker},
+    validation_status::{CAWG_X509_CREDENTIAL_TRUSTED, CAWG_X509_SIGNATURE_VALIDATED},
+    SigningAlg,
 };
+
+fn trusted_x509_verifier() -> X509SignatureVerifier<'static> {
+    let mut policy = CertificateTrustPolicy::default();
+    policy
+        .add_trust_anchors(
+            include_bytes!(
+                "../../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+            ),
+            "https://c2pa-rs/unknown_tl",
+            TrustAnchorType::CAWG,
+            None,
+        )
+        .unwrap();
+    X509SignatureVerifier {
+        cose_verifier: Verifier::VerifyTrustPolicyFor(Cow::Owned(policy), TrustAnchorType::CAWG),
+    }
+}
 
 /// An identity assertion MUST contain a valid CBOR data structure that contains
 /// the required fields as documented in the identity rule in [Section 5.2,
@@ -166,7 +185,7 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -176,7 +195,7 @@ async fn assertion_not_in_claim_v1() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 2);
+    assert_eq!(status_tracker.logged_items().len(), 3);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -203,12 +222,30 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "signingCredential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
+    );
+
+    let log = &status_tracker.logged_items()[2];
+    assert_eq!(log.kind, LogKind::Success);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:4baf4dc3-c464-4c70-902b-d28d832a29e3/c2pa.assertions/cawg.identity"
+    );
+
+    assert_eq!(
+        log.description,
+        "X.509 identity assertion signature validated"
+    );
+
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;
@@ -278,7 +315,7 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -288,7 +325,7 @@ async fn duplicate_assertion_reference() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 2);
+    assert_eq!(status_tracker.logged_items().len(), 3);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -315,11 +352,29 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "signingCredential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
+    );
+
+    let log = &status_tracker.logged_items()[2];
+    assert_eq!(log.kind, LogKind::Success);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:9b9f27bc-394b-419f-a8d5-81777c9fa76c/c2pa.assertions/cawg.identity"
+    );
+
+    assert_eq!(
+        log.description,
+        "X.509 identity assertion signature validated"
+    );
+
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;
@@ -368,7 +423,7 @@ async fn no_hard_binding() {
     assert!(sp.referenced_assertions.is_empty());
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -378,7 +433,7 @@ async fn no_hard_binding() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 2);
+    assert_eq!(status_tracker.logged_items().len(), 3);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -405,12 +460,30 @@ async fn no_hard_binding() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "signingCredential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
+    );
+
+    let log = &status_tracker.logged_items()[2];
+    assert_eq!(log.kind, LogKind::Success);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:6df39abb-e6b4-49af-a826-ba44b7b248b7/c2pa.assertions/cawg.identity"
+    );
+
+    assert_eq!(
+        log.description,
+        "X.509 identity assertion signature validated"
+    );
+
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;
@@ -440,8 +513,10 @@ mod invalid_sig_type {
 
     use super::*;
     use crate::{
+        context::Context,
         identity::{
-            claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
+            claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier,
+            IdentityAssertion, SignatureVerifier,
         },
         status_tracker::{LogKind, StatusTracker},
         Reader,
@@ -458,11 +533,16 @@ mod invalid_sig_type {
 
         let mut test_image = Cursor::new(test_image);
 
-        // Initial read with default `Reader` should pass without issues.
+        // The default (decoding-enabled) `Reader` must surface the unrecognized
+        // sig_type as a failure.
         let reader = Reader::default()
             .with_stream(format, &mut test_image)
             .unwrap();
-        assert_eq!(reader.validation_status(), None);
+        assert!(reader
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == "cawg.identity.sig_type.unknown"));
 
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker = StatusTracker::default();
@@ -520,6 +600,15 @@ mod invalid_sig_type {
             log.validation_status.as_ref().unwrap().as_ref() as &str,
             "cawg.identity.sig_type.unknown"
         );
+
+        // The sync `check_signature` entry point must behave identically to
+        // `check_signature_async`.
+        let mut sync_status_tracker = StatusTracker::default();
+        let sync_err = x509_verifier
+            .check_signature(&ia.signer_payload, &ia.signature, &mut sync_status_tracker)
+            .unwrap_err();
+        assert_eq!(sync_err.to_string(), err.to_string());
+        assert_eq!(sync_status_tracker.logged_items().len(), 1);
     }
 
     #[c2pa_test_async]
@@ -534,11 +623,16 @@ mod invalid_sig_type {
 
         let mut test_image = Cursor::new(test_image);
 
-        // Initial read with default `Reader` should pass without issues.
+        // The default (decoding-enabled) `Reader` must surface the unrecognized
+        // sig_type as a failure.
         let reader = Reader::default()
             .with_stream(format, &mut test_image)
             .unwrap();
-        assert_eq!(reader.validation_status(), None);
+        assert!(reader
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == "cawg.identity.sig_type.unknown"));
 
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker = StatusTracker::default();
@@ -563,7 +657,8 @@ mod invalid_sig_type {
         assert_eq!(sp.sig_type, "INVALID.identity.naive_credential".to_owned());
 
         // Intentionally not using NaiveSignatureVerifier here.
-        let ica_verifier = IcaSignatureVerifier {};
+        let context = Context::new();
+        let ica_verifier = IcaSignatureVerifier::new(&context);
         let err = ia
             .validate(
                 reader.active_manifest().unwrap(),
@@ -637,7 +732,7 @@ async fn pad1_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -647,7 +742,7 @@ async fn pad1_invalid() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 2);
+    assert_eq!(status_tracker.logged_items().len(), 3);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -674,12 +769,30 @@ async fn pad1_invalid() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "signingCredential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
+    );
+
+    let log = &status_tracker.logged_items()[2];
+    assert_eq!(log.kind, LogKind::Success);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:8d938dd8-d194-4d24-a0bf-55aae143b692/c2pa.assertions/cawg.identity"
+    );
+
+    assert_eq!(
+        log.description,
+        "X.509 identity assertion signature validated"
+    );
+
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;
@@ -728,7 +841,7 @@ async fn pad2_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -738,7 +851,7 @@ async fn pad2_invalid() {
         .await
         .unwrap();
 
-    assert_eq!(status_tracker.logged_items().len(), 2);
+    assert_eq!(status_tracker.logged_items().len(), 3);
 
     let log = &status_tracker.logged_items()[0];
     assert_eq!(log.kind, LogKind::Failure);
@@ -765,12 +878,30 @@ async fn pad2_invalid() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "signingCredential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
+    );
+
+    let log = &status_tracker.logged_items()[2];
+    assert_eq!(log.kind, LogKind::Success);
+
+    assert_eq!(
+        log.label,
+        "self#jumbf=/c2pa/test:urn:uuid:d686f86c-63d9-43e9-822c-7789acefe102/c2pa.assertions/cawg.identity"
+    );
+
+    assert_eq!(
+        log.description,
+        "X.509 identity assertion signature validated"
+    );
+
+    assert_eq!(
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;

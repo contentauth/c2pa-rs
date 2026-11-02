@@ -13,4 +13,5 @@
 
 pub mod boxes;
 pub mod boxio;
+pub(crate) mod c2pa_encoding;
 pub mod labels;

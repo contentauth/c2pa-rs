@@ -225,6 +225,9 @@ pub struct IcaCredentialSummary {
     #[serde(rename = "verifiedIdentities")]
     verified_identities: NEVec<VerifiedIdentity>,
 
+    #[serde(rename = "c2paAsset")]
+    c2pa_asset: SignerPayload,
+
     #[serde(flatten)]
     extra_properties: BTreeMap<String, serde_json::Value>,
 }
@@ -241,6 +244,7 @@ impl IcaCredentialSummary {
             valid_from: ica.valid_from,
             valid_until: ica.valid_until,
             verified_identities: subject.verified_identities.clone(),
+            c2pa_asset: subject.c2pa_asset.clone(),
             extra_properties: ica.extra_properties.clone(),
         }
     }

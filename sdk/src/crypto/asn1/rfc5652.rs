@@ -1475,3 +1475,123 @@ impl From<Time> for chrono::DateTime<chrono::Utc> {
 }
 
 pub type AttributeCertificateV2 = AttributeCertificate;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+        let mut result = vec![tag];
+        match body.len() {
+            n if n < 128 => result.push(n as u8),
+            n if n < 256 => result.extend([0x81, n as u8]),
+            n if n < 65_536 => result.extend([0x82, (n >> 8) as u8, n as u8]),
+            n => result.extend([0x83, (n >> 16) as u8, (n >> 8) as u8, n as u8]),
+        }
+        result.extend(body);
+        result
+    }
+
+    #[test]
+    fn cms_time_choices_decode_and_reject_invalid_formats() {
+        for (tag, time, expected) in [
+            (0x17, b"200101000000Z".as_slice(), 1_577_836_800),
+            (0x18, b"20200101000000Z".as_slice(), 1_577_836_800),
+        ] {
+            let der = tlv(tag, time);
+            let decoded = Constructed::decode(der.as_slice(), Mode::Der, Time::take_from).unwrap();
+            let dt: chrono::DateTime<chrono::Utc> = decoded.into();
+            assert_eq!(dt.timestamp(), expected);
+        }
+
+        for (tag, time) in [
+            (0x17, b"200132000000Z".as_slice()),
+            (0x18, b"20200101000000.1Z".as_slice()),
+            (0x04, b"20200101000000Z".as_slice()),
+        ] {
+            let der = tlv(tag, time);
+            assert!(Constructed::decode(der.as_slice(), Mode::Der, Time::take_from).is_err());
+        }
+    }
+
+    #[test]
+    fn cms_versions_roundtrip_and_unknown_versions_are_rejected() {
+        for version in [
+            CmsVersion::V0,
+            CmsVersion::V1,
+            CmsVersion::V2,
+            CmsVersion::V3,
+            CmsVersion::V4,
+            CmsVersion::V5,
+        ] {
+            let mut der = Vec::new();
+            version.encode().write_encoded(Mode::Der, &mut der).unwrap();
+            assert_eq!(
+                Constructed::decode(der.as_slice(), Mode::Der, CmsVersion::take_from).unwrap(),
+                version
+            );
+        }
+
+        for bad in [6, 255] {
+            assert!(
+                Constructed::decode([2, 1, bad].as_slice(), Mode::Der, CmsVersion::take_from)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn cached_signed_attributes_reconstruct_set_lengths_without_touching_content() {
+        let algorithm = [0x30, 0x0b, 6, 9, 0x60, 0x86, 0x48, 1, 0x65, 3, 4, 2, 1];
+        for size in [0, 90, 128, 256, 65_536] {
+            let attribute = tlv(
+                0x30,
+                &[
+                    [6, 3, 0x2a, 3, 4].as_slice(),
+                    &tlv(0x31, &tlv(4, &vec![0xab; size])),
+                ]
+                .concat(),
+            );
+
+            let der = tlv(
+                0x30,
+                &[
+                    [2, 1, 1, 0x30, 5, 0x30, 0, 2, 1, 1].as_slice(),
+                    &algorithm,
+                    &tlv(0xa0, &attribute),
+                    &algorithm,
+                    &[4, 1, 0],
+                    &tlv(0xa1, &attribute),
+                ]
+                .concat(),
+            );
+
+            let signer = Constructed::decode(der.as_slice(), Mode::Der, SignerInfo::take_opt_from)
+                .unwrap()
+                .unwrap();
+            assert_eq!(signer.signed_attributes.as_ref().unwrap().len(), 1);
+            assert_eq!(signer.unsigned_attributes.as_ref().unwrap().len(), 1);
+            assert_eq!(
+                signer.signed_attributes_digested_content().unwrap(),
+                Some(tlv(0x31, &attribute))
+            );
+            assert_eq!(signer.signature.to_bytes().as_ref(), &[0]);
+        }
+    }
+
+    #[test]
+    fn unsupported_legacy_certificate_choices_fail_without_panicking() {
+        // These legacy CMS choices have explicit unimplemented parsers;
+        // the RFC 3161 engine uses rasn_cms instead.
+        for tag in [0xa0, 0xa1, 0xa2, 0xa3] {
+            let der = tlv(tag, &[0x30, 0]);
+            assert!(Constructed::decode(
+                der.as_slice(),
+                Mode::Der,
+                CertificateChoices::take_opt_from
+            )
+            .is_err());
+        }
+    }
+}

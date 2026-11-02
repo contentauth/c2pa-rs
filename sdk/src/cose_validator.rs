@@ -14,24 +14,72 @@
 use std::{borrow::Cow, io::Write};
 
 use async_generic::async_generic;
+use c2pa_raw_crypto::SigningAlg;
 use coset::CoseSign1;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         base64,
         cose::{
             cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
             signing_time_from_sign1, signing_time_from_sign1_async, validate_cose_tst_info,
-            validate_cose_tst_info_async, CertificateInfo, CertificateTrustPolicy, Verifier,
+            validate_cose_tst_info_async, CertificateInfo, CertificateTrustPolicy, OcspFetchPolicy,
+            Verifier,
         },
-        raw_signature::SigningAlg,
+        ocsp::OcspResponse,
     },
     error::{Error, Result},
     settings::Settings,
     status_tracker::StatusTracker,
 };
+
+#[allow(dead_code, clippy::too_many_arguments)]
+#[async_generic]
+pub(crate) fn check_ocsp_status(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    context: &Context,
+) -> Result<OcspResponse> {
+    let fetch_policy = if context.settings().verify.ocsp_fetch
+        || context.settings().verify.ocsp_fetch_should_override
+    {
+        OcspFetchPolicy::FetchAllowed
+    } else {
+        OcspFetchPolicy::DoNotFetch
+    };
+
+    if _sync {
+        Ok(crate::crypto::cose::check_ocsp_status(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            ocsp_responses,
+            tst_info,
+            validation_log,
+            context,
+        )?)
+    } else {
+        Ok(crate::crypto::cose::check_ocsp_status_async(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            ocsp_responses,
+            tst_info,
+            validation_log,
+            context,
+        )
+        .await?)
+    }
+}
 
 fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
     // element 0 is the signing cert
@@ -257,14 +305,12 @@ pub(crate) fn get_signing_info(
 #[cfg(test)]
 pub mod tests {
     use coset::{cbor::value::Value, Label};
-    #[allow(deprecated)]
-    use sha2::digest::generic_array::sequence::Shorten;
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;
     use crate::{
-        crypto::raw_signature::SigningAlg, settings::Settings, status_tracker::StatusTracker,
-        utils::test_signer::test_signer, Signer,
+        settings::Settings, status_tracker::StatusTracker, utils::test_signer::test_signer, Signer,
+        SigningAlg,
     };
 
     #[test]
@@ -299,10 +345,9 @@ pub mod tests {
     }
     #[test]
     fn test_stapled_ocsp() {
-        use crate::crypto::{
-            raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, RawSignerError},
-            time_stamp::{TimeStampError, TimeStampProvider},
-        };
+        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
+
+        use crate::crypto::{cert_chain_pem_to_der, cose::cose_reserve_size};
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
@@ -318,13 +363,13 @@ pub mod tests {
         let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
         let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
 
-        let raw_signer =
-            signer_from_cert_chain_and_private_key(&sign_cert, &pem_key, SigningAlg::Ps256, None)
-                .unwrap();
+        let raw_signer = signer_from_private_key(&pem_key, SigningAlg::Ps256).unwrap();
+        let cert_chain = cert_chain_pem_to_der(&sign_cert).unwrap();
 
         // create a test signer that supports stapling
         struct OcspSigner {
             pub raw_signer: Box<dyn RawSigner>,
+            pub cert_chain: Vec<Vec<u8>>,
             pub ocsp_rsp: Vec<u8>,
         }
 
@@ -338,11 +383,16 @@ pub mod tests {
             }
 
             fn certs(&self) -> Result<Vec<Vec<u8>>> {
-                Ok(self.raw_signer.cert_chain()?)
+                Ok(self.cert_chain.clone())
             }
 
             fn reserve_size(&self) -> usize {
-                self.raw_signer.reserve_size()
+                cose_reserve_size(
+                    self.raw_signer.max_signature_size(),
+                    &self.cert_chain,
+                    false,
+                    Some(&self.ocsp_rsp),
+                )
             }
 
             fn ocsp_val(&self) -> Option<Vec<u8>> {
@@ -352,6 +402,7 @@ pub mod tests {
 
         let ocsp_signer = OcspSigner {
             raw_signer,
+            cert_chain,
             ocsp_rsp: ocsp_rsp_data.to_vec(),
         };
 

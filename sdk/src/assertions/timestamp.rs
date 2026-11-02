@@ -20,9 +20,9 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
+    context::Context,
     crypto::cose::CertificateTrustPolicy,
     error::Result,
-    http::{AsyncHttpResolver, SyncHttpResolver},
     status_tracker::StatusTracker,
     Error,
 };
@@ -57,30 +57,31 @@ impl TimeStamp {
 
     /// Refresh the timestamp token for a given manifest id.
     ///
+    /// `tsa_headers` are sent with the request in addition to the `Content-Type` header, which
+    /// lets a signer authenticate to its TSA (see [`Signer::timestamp_request_headers`]).
+    ///
     /// The signature is expected to be the `signature` field of the `COSE_Sign1_Tagged` structure
     /// found in the C2PA claim signature box of the manifest corresponding to the `manifest_id`.
+    ///
+    /// [`Signer::timestamp_request_headers`]: crate::Signer::timestamp_request_headers
     //
     // The `signature` is normally obtained from [`Store::get_cose_sign1_signature`].
     //
     // [`Store::get_cose_sign1_signature`][crate::store::Store::get_cose_sign1_structure].
-    #[async_generic(async_signature(
-        &mut self,
-        tsa_url: &str,
-        manifest_id: &str,
-        signature: &[u8],
-        http_resolver: &impl AsyncHttpResolver,
-    ))]
+    #[async_generic]
     pub(crate) fn refresh_timestamp(
         &mut self,
         tsa_url: &str,
+        tsa_headers: Option<Vec<(String, String)>>,
         manifest_id: &str,
         signature: &[u8],
-        http_resolver: &impl SyncHttpResolver,
+        context: &Context,
     ) -> Result<()> {
         let timestamp_token = if _sync {
-            TimeStamp::send_timestamp_token_request(tsa_url, signature, http_resolver)?
+            TimeStamp::send_timestamp_token_request(tsa_url, tsa_headers, signature, context)?
         } else {
-            TimeStamp::send_timestamp_token_request_async(tsa_url, signature, http_resolver).await?
+            TimeStamp::send_timestamp_token_request_async(tsa_url, tsa_headers, signature, context)
+                .await?
         };
 
         self.0
@@ -89,39 +90,28 @@ impl TimeStamp {
         Ok(())
     }
 
-    /// Send a timestamp token request to the `tsa_url` with the given `message`.
+    /// Send a timestamp token request to the `tsa_url` with the given `message`,
+    /// attaching `headers` to the HTTP request.
     ///
     /// This function will verify the structure of the returned response but not the trust.
     ///
     /// See [`TimeStamp::refresh_timestamp`] for more information.
-    #[async_generic(async_signature(
-        tsa_url: &str,
-        message: &[u8],
-        http_resolver: &impl AsyncHttpResolver,
-    ))]
+    #[async_generic]
     pub(crate) fn send_timestamp_token_request(
         tsa_url: &str,
+        headers: Option<Vec<(String, String)>>,
         message: &[u8],
-        http_resolver: &impl SyncHttpResolver,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
-        let headers = None;
 
         let bytes = if _sync {
             crate::crypto::time_stamp::default_rfc3161_request(
-                tsa_url,
-                headers,
-                &body,
-                message,
-                http_resolver,
+                tsa_url, headers, &body, message, context,
             )
         } else {
             crate::crypto::time_stamp::default_rfc3161_request_async(
-                tsa_url,
-                headers,
-                &body,
-                message,
-                http_resolver,
+                tsa_url, headers, &body, message, context,
             )
             .await
         }

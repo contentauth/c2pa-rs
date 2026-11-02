@@ -19,7 +19,7 @@ mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{crypto::raw_signature::SigningAlg, Builder, CallbackSigner, Reader};
+    use c2pa::{Builder, CallbackSigner, Reader, SigningAlg};
     use serde_json::json;
 
     use super::common::test_context;
@@ -119,7 +119,7 @@ mod integration_v2 {
             {
                 "label": "c2pa.soft-binding",
                 "data": {
-                    "alg": "phash",
+                    "alg": "com.adobe.trustmark.Q",
                     "pad": [0],
                     "blocks": [
                         {
@@ -178,7 +178,7 @@ mod integration_v2 {
         let mut dest = {
             let ed_signer = |_context: *const _, data: &[u8]| ed_sign(data, PRIVATE_KEY);
             let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
-            let mut builder = Builder::default().with_archive(&mut zipped)?;
+            let mut builder = Builder::from_context(test_context()).with_archive(&mut zipped)?;
             // sign the ManifestStoreBuilder and write it to the output stream
             let mut dest = Cursor::new(Vec::new());
             builder.sign(&signer, format, &mut source, &mut dest)?;
@@ -188,13 +188,10 @@ mod integration_v2 {
             dest
         };
 
-        #[cfg(not(target_os = "wasi"))]
-        {
-            // write dest to file for debugging
-            let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
-            std::fs::write(debug_path, dest.get_ref())?;
-            dest.rewind()?;
-        }
+        // write dest to file for debugging
+        // let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
+        // std::fs::write(debug_path, dest.get_ref())?;
+        // dest.rewind()?;
 
         let reader = Reader::from_context(test_context()).with_stream(format, &mut dest)?;
 
