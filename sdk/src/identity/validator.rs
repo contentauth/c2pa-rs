@@ -302,6 +302,38 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }
 
+    /// CAWG Identity 1.3 §7.2: status codes from X.509 signature validation are
+    /// reported against the identity assertion, not a placeholder such as
+    /// `Cose_Sign1`.
+    #[c2pa_test_async]
+    async fn x509_algorithm_unsupported_reported_against_identity_assertion() {
+        // Identity assertion signature whose protected `alg` header is RS256.
+        const ALGORITHM_UNSUPPORTED: &[u8] =
+            include_bytes!("tests/fixtures/validation_method/x509_algorithm_unsupported.jpg");
+
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", Cursor::new(ALGORITHM_UNSUPPORTED))
+            .await
+            .unwrap();
+
+        let results = reader.validation_results().unwrap();
+        let failure = results
+            .active_manifest()
+            .unwrap()
+            .failure()
+            .iter()
+            .find(|s| s.code() == "cawg.x509.algorithm.unsupported")
+            .unwrap();
+
+        assert!(
+            failure
+                .url()
+                .is_some_and(|u| u.ends_with("/c2pa.assertions/cawg.identity")),
+            "{:?}",
+            failure.url()
+        );
+    }
+
     #[c2pa_test_async]
     async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);

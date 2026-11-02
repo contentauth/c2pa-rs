@@ -19,6 +19,10 @@ use openssl::{
 
 use crate::crypto::cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType};
 
+// OpenSSL X509_V_ERR_CERT_NOT_YET_VALID and X509_V_ERR_CERT_HAS_EXPIRED.
+const CERT_NOT_YET_VALID: i32 = 9;
+const CERT_HAS_EXPIRED: i32 = 10;
+
 pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
@@ -26,6 +30,7 @@ pub(crate) fn check_certificate_trust(
     signing_time_epoch: Option<i64>,
 ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
     let _openssl = OpenSslMutex::acquire()?;
+    let mut ca_outside_validity = false;
 
     if ctp.anchor_sets().count() == 0 {
         return Err(CertificateTrustError::CertificateNotTrusted);
@@ -73,7 +78,17 @@ pub(crate) fn check_certificate_trust(
 
         // try trust anchors
         let mut store_ctx = X509StoreContext::new()?;
-        if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert())? {
+        if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| {
+            let verified = f.verify_cert()?;
+            let error = f.error().as_raw();
+            if !verified
+                && f.error_depth() > 0
+                && (error == CERT_NOT_YET_VALID || error == CERT_HAS_EXPIRED)
+            {
+                ca_outside_validity = true;
+            }
+            Ok(verified)
+        })? {
             return Ok((
                 anchor_set.trust_anchor_type,
                 anchor_set.trust_anchor_uri.clone(),
@@ -81,5 +96,8 @@ pub(crate) fn check_certificate_trust(
         }
     }
 
+    if ca_outside_validity {
+        return Err(CertificateTrustError::CaCertificateOutsideValidity);
+    }
     Err(CertificateTrustError::CertificateNotTrusted)
 }

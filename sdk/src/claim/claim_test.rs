@@ -25,12 +25,12 @@ use crate::{
     context::Context,
     error::{Error, Result},
     hashed_uri::HashedUri,
-    jumbf::labels::to_assertion_uri,
+    jumbf::labels::{to_assertion_uri, to_manifest_uri, to_signature_uri},
     resource_store::UriOrResource,
     settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
-    utils::test::create_test_claim,
+    utils::test::{create_test_claim, create_test_claim_v1},
     validation_status, ClaimGeneratorInfo, DigitalSourceType,
 };
 
@@ -1151,6 +1151,234 @@ fn test_verify_claim_generator_info_missing() {
     );
 }
 
+/// Runs `verify_signature_box_uri` on `claim` with its `signature` field set to `signature`.
+/// Returns whether it logged CLAIM_SIGNATURE_MISSING.
+fn signature_box_uri_missing(mut claim: Claim, signature: String) -> bool {
+    claim.signature = signature;
+    let mut validation_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    let result = Claim::verify_signature_box_uri(&claim, &mut validation_log);
+    let logged = validation_log.logged_items().iter().any(|item| {
+        item.validation_status.as_deref() == Some(validation_status::CLAIM_SIGNATURE_MISSING)
+    });
+    assert_eq!(result.is_err(), logged);
+    logged
+}
+
+#[test]
+fn test_verify_signature_box_uri_absolute_to_own_manifest() {
+    let claim = create_test_claim().expect("create test claim");
+    let uri = to_signature_uri(claim.label());
+    assert!(!signature_box_uri_missing(claim, uri));
+}
+
+#[test]
+fn test_verify_signature_box_uri_absolute_to_other_manifest() {
+    let claim = create_test_claim().expect("create test claim");
+    let uri = to_signature_uri("urn:c2pa:2e52408b-4fbe-4557-8e84-e7e4a21a5107");
+    assert!(signature_box_uri_missing(claim, uri));
+}
+
+#[test]
+fn test_verify_signature_box_uri_absolute_to_other_box() {
+    let claim = create_test_claim().expect("create test claim");
+    let uri = format!("{}/c2pa.assertions", to_manifest_uri(claim.label()));
+    assert!(signature_box_uri_missing(claim, uri));
+}
+
+/// Creates a V2 test claim declaring `spec_version` in `claim_generator_info` (Spec 2.4 style).
+fn create_test_claim_with_cgi_spec_version(spec_version: &str) -> Claim {
+    let mut claim = create_test_claim().expect("create test claim");
+    let cgi = claim
+        .claim_generator_info
+        .as_mut()
+        .expect("test claim has claim_generator_info");
+    cgi[0].set_spec_version(spec_version);
+    claim
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_spec_2_3() {
+    // A relative URI does not name the manifest label, so it cannot bind the label to the
+    // signed claim. Since Spec 2.3, a V2 claim must use an absolute URI.
+    for version in ["2.3", "2.3.0", "2.4.0", "2.10.0", "3"] {
+        let claim = create_test_claim_with_cgi_spec_version(version);
+        assert!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            "relative URI should be rejected for spec {version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_claim_map_spec_2_3() {
+    // Spec 2.3 declared specVersion in the claim map rather than in claim_generator_info.
+    let mut claim = create_test_claim().expect("create test claim");
+    claim.spec_version = Some("2.3.0".to_string());
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_spec_version_precedence() {
+    for (cgi_version, claim_map_version, missing) in [
+        ("2.2.0", "2.3.0", false),
+        ("2.3.0", "2.2.0", true),
+        ("2.4.0", "2.3.0", true),
+        ("next", "2.2.0", true),
+        ("2.2.0", "next", false),
+    ] {
+        let mut claim = create_test_claim_with_cgi_spec_version(cgi_version);
+        claim.spec_version = Some(claim_map_version.to_string());
+
+        assert_eq!(
+            claim.spec_version().map(String::as_str),
+            Some(cgi_version),
+            "claim_generator_info should take precedence over the claim map"
+        );
+        assert_eq!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            missing,
+            "unexpected result for CGI spec {cgi_version}, claim-map spec {claim_map_version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_claim_map_fallback() {
+    for (version, missing) in [("2.2.0", false), ("2.3.0", true), ("next", true)] {
+        let mut claim = create_test_claim().expect("create test claim");
+        claim.spec_version = Some(version.to_string());
+        assert_eq!(claim.spec_version(), None);
+
+        assert_eq!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            missing,
+            "claim-map spec {version} should be used when CGI has no specVersion"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_signed_jpeg() -> Result<()> {
+    use crate::{
+        store::Store,
+        utils::{
+            test::{create_min_test_claim, create_test_streams, test_context},
+            test_signer::test_signer,
+        },
+        Reader, SigningAlg, ValidationState,
+    };
+
+    for version in [None, Some("2.2.0"), Some("2.3.0")] {
+        let mut context = test_context();
+        // Also produce the invalid 2.3 case so the reader, not the signer, checks the URI.
+        context.settings_mut().verify.verify_after_sign = false;
+        context.settings_mut().verify.verify_after_reading = true;
+        context.settings_mut().verify.verify_trust = false;
+
+        let mut claim = create_min_test_claim()?;
+        if let Some(version) = version {
+            claim
+                .claim_generator_info
+                .as_mut()
+                .expect("test claim has claim_generator_info")[0]
+                .set_spec_version(version);
+        }
+        let mut store = Store::from_context(&context);
+        store.commit_claim(claim)?;
+        store
+            .provenance_claim_mut()
+            .expect("store has a provenance claim")
+            .signature = "self#jumbf=c2pa.signature".to_string();
+
+        let (format, mut source, mut asset) = create_test_streams("earth_apollo17.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+        store.save_to_stream(format, &mut source, &mut asset, signer.as_ref(), &context)?;
+
+        let mut report = StatusTracker::default();
+        let restored = Store::from_stream(format, &mut asset, &mut report, &context)?;
+        let claim = restored
+            .provenance_claim()
+            .expect("signed JPEG has a provenance claim");
+        assert_eq!(claim.version(), 2);
+        assert_eq!(claim.spec_version().map(String::as_str), version);
+        assert_eq!(claim.signature, "self#jumbf=c2pa.signature");
+        assert!(!claim.signature_val().is_empty());
+
+        asset.set_position(0);
+        let reader = Reader::from_context(context).with_stream(format, &mut asset)?;
+        if version == Some("2.3.0") {
+            assert_eq!(reader.validation_state(), ValidationState::Invalid);
+            assert!(reader
+                .validation_status()
+                .expect("invalid JPEG has validation errors")
+                .iter()
+                .any(|status| status.code() == validation_status::CLAIM_SIGNATURE_MISSING));
+        } else {
+            assert_eq!(
+                reader.validation_state(),
+                ValidationState::Valid,
+                "signed pre-2.3 JPEG should validate for spec {version:?}"
+            );
+            assert!(
+                !report.has_any_error(),
+                "pre-2.3 JPEG has validation errors: {report:?}"
+            );
+            assert_eq!(reader.validation_status(), None);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_unparseable_spec_version() {
+    let claim = create_test_claim_with_cgi_spec_version("next");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_before_spec_2_3() {
+    // Spec 2.2 allows a relative URI to this manifest's signature box (its own claim example
+    // uses one), so V2 claims that do not declare Spec 2.3 or later remain valid.
+    let undeclared = create_test_claim().expect("create test claim");
+    assert!(!signature_box_uri_missing(
+        undeclared,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+
+    for version in ["2.2", "2.2.0", "2"] {
+        let claim = create_test_claim_with_cgi_spec_version(version);
+        assert!(
+            !signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            "relative URI should be accepted for spec {version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_to_other_box() {
+    // The relaxation only covers a relative URI to the signature box itself.
+    let claim = create_test_claim().expect("create test claim");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.assertions".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v1() {
+    let claim = create_test_claim_v1().expect("create test claim");
+    assert!(!signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
 #[test]
 fn test_verify_claim_generator_info_empty_name() {
     let mut validation_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
@@ -1683,6 +1911,69 @@ fn test_update_manifest_with_claim_thumbnail_rejected() {
 }
 
 #[test]
+fn test_claim_signature_not_validated_after_credential_rejected() {
+    use crate::{crypto::cose::CertificateInfo, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let signature_uri = to_signature_uri(claim.label());
+    let verify = |validation_log: &mut StatusTracker| {
+        let _ = Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Ok(CertificateInfo {
+                validated: true,
+                ..Default::default()
+            }),
+            validation_log,
+            &Context::new(),
+        );
+    };
+
+    for rejection in [
+        validation_status::SIGNING_CREDENTIAL_INVALID,
+        validation_status::SIGNING_CREDENTIAL_REVOKED,
+        validation_status::SIGNING_CREDENTIAL_EXPIRED,
+        validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+        validation_status::ALGORITHM_UNSUPPORTED,
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(signature_uri.clone(), "signing credential rejected", "test")
+            .validation_status(rejection)
+            .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            !validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED),
+            "{rejection} should suppress claimSignature.validated"
+        );
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            "self#jumbf=/c2pa/other/c2pa.signature",
+            "signing credential rejected",
+            "test"
+        )
+        .validation_status(rejection)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED),
+            "{rejection} for another claim should not suppress claimSignature.validated"
+        );
+    }
+
+    // An untrusted signing credential does not stop the claim being Valid.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    log_item!(signature_uri, "signing certificate untrusted", "test")
+        .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+}
+
+#[test]
 fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
     let mut validation_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut claim = create_test_claim().expect("create test claim");
@@ -1698,4 +1989,66 @@ fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
         validation_log.has_any_error(),
         "actions in cloud-data of a non-update manifest should fail"
     );
+}
+
+#[test]
+fn test_inside_validity_not_reported_with_outside_validity() {
+    use crate::{crypto::cose::CertificateInfo, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let verify = |validation_log: &mut StatusTracker| {
+        let _ = Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Ok(CertificateInfo {
+                validated: true,
+                ..Default::default()
+            }),
+            validation_log,
+            &Context::new(),
+        );
+    };
+
+    // A CA certificate in the claim's chain was outside its validity period, or the
+    // signer itself expired (reported as signingCredential.expired by the profile check).
+    for code in [
+        validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+        validation_status::SIGNING_CREDENTIAL_EXPIRED,
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            to_signature_uri(claim.label()),
+            "certificate outside validity period",
+            "test"
+        )
+        .validation_status(code)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            !validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY),
+            "{code}"
+        );
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            "self#jumbf=/c2pa/other/c2pa.signature",
+            "certificate outside validity period",
+            "test"
+        )
+        .validation_status(code)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY),
+            "{code} for another claim should not suppress claimSignature.insideValidity"
+        );
+    }
+
+    // Without it, insideValidity is reported as before.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY));
 }
