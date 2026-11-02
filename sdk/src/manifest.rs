@@ -606,6 +606,12 @@ impl Manifest {
                 | labels::COLLECTION_HASH => {
                     // do not include data hash when reading manifests
                 }
+                // A redacted claim thumbnail keeps its label but holds a
+                // C2PA Redaction uuid box, which does not decode as
+                // `EmbeddedData`. Skip it: a redacted thumbnail is no
+                // thumbnail. Without this the decode fails and the whole
+                // read reports `assertion.required.missing`.
+                label if label.starts_with(labels::CLAIM_THUMBNAIL) && assertion.is_redacted() => {}
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = EmbeddedData::from_assertion(assertion)?;
                     let id = to_assertion_uri(claim.label(), label);

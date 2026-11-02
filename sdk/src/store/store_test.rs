@@ -3176,7 +3176,9 @@ fn test_ingredient_conflicting_redactions_to_same_manifest() {
 #[test]
 fn test_forged_content_in_redacted_slot_is_rejected() {
     use crate::{
-        assertions::C2paReason, claim::ClaimAssertionType, Builder, BuilderIntent, Reader,
+        assertions::{Action, C2paReason},
+        claim::ClaimAssertionType,
+        Builder, BuilderIntent, Reader,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
@@ -3369,6 +3371,97 @@ fn test_redacted_slot_content_through_reader() {
             count_status(&validation_log, validation_status::ASSERTION_NOT_REDACTED),
             1,
             "forged non-zero content at a redacted URI must be rejected exactly once"
+        );
+    }
+
+    // A zeroed box in the redacted slot of a CLAIM THUMBNAIL must read like any
+    // other redaction. `Manifest::from_store` dispatches on the assertion's
+    // LABEL, so it used to hand the Redaction uuid box to
+    // `EmbeddedData::from_assertion`, which cannot decode it; the error
+    // surfaced as `assertion.required.missing` and the read failed outright.
+    //
+    // The redaction here names the parent's THUMBNAIL, so the builder removes
+    // that box; planting the zeroed form back in the empty slot is what a
+    // zero-in-place redaction leaves behind.
+    {
+        let mut input = Cursor::new(TEST_IMAGE);
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("read parent");
+        let parent_manifest_label = parent.active_label().unwrap().to_owned();
+        let thumb_label = parent
+            .active_manifest()
+            .expect("active manifest")
+            .thumbnail_ref()
+            .and_then(|t| t.identifier.rsplit('/').next().map(str::to_owned))
+            .expect("the parent carries a claim thumbnail");
+
+        let redacted_uri = to_assertion_uri(&parent_manifest_label, &thumb_label);
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        builder
+            .add_action(
+                Action::new("c2pa.redacted")
+                    .set_reason(C2paReason::PiiPresent)
+                    .set_parameter("redacted".to_owned(), redacted_uri)
+                    .unwrap(),
+            )
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
+            .expect("builder sign");
+        output.set_position(0);
+
+        let mut load_report = StatusTracker::default();
+        let mut store =
+            Store::from_stream("image/jpeg", &mut output, &mut load_report, &Context::new())
+                .expect("load store");
+
+        // The thumbnail's slot is empty now: put the zeroed Redaction box in it.
+        let alg = store
+            .get_claim(&parent_manifest_label)
+            .expect("parent claim present")
+            .alg()
+            .to_owned();
+        let zeroed = Assertion::from_data_uuid(&thumb_label, C2PA_REDACTION_UUID, &[0u8; 4]);
+        let hash = Claim::calc_assertion_box_hash(&thumb_label, &zeroed, None, &alg).unwrap();
+        store
+            .get_claim_mut(&parent_manifest_label)
+            .expect("parent claim present")
+            .put_assertion_store(ClaimAssertion::new(
+                zeroed,
+                0,
+                &hash,
+                &alg,
+                None,
+                ClaimAssertionType::Created,
+            ));
+
+        let mut validation_log = StatusTracker::default();
+        let _ = Store::verify_store(&store, None, &mut validation_log, &Context::new());
+        let mut reader = Reader::default();
+        reader
+            .with_store(store, &mut validation_log)
+            .expect("a redacted claim thumbnail must not fail the read");
+
+        assert_eq!(
+            count_status(
+                &validation_log,
+                validation_status::ASSERTION_REQUIRED_MISSING
+            ),
+            0,
+            "a redacted claim thumbnail must not raise assertion.required.missing"
+        );
+        assert!(
+            reader
+                .get_manifest(&parent_manifest_label)
+                .expect("the redacted manifest")
+                .thumbnail_ref()
+                .is_none(),
+            "a redacted claim thumbnail must be reported as no thumbnail"
         );
     }
 }

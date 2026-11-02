@@ -318,6 +318,21 @@ impl Assertion {
     }
 
     /// Return a reference to the data as a byte array
+    /// Is this assertion a redaction rather than its labelled content?
+    ///
+    /// A redacted assertion keeps its label but its content is a single
+    /// `uuid` box carrying the C2PA Redaction UUID with zeroed data (C2PA
+    /// 2.x, "Redaction of assertions"). Callers that decode an assertion by
+    /// its LABEL must skip it: the label still says what was there, the
+    /// content no longer decodes as it.
+    pub(crate) fn is_redacted(&self) -> bool {
+        matches!(
+            self.decode_data(),
+            AssertionData::Uuid(uuid, _)
+                if uuid.eq_ignore_ascii_case(crate::jumbf::boxes::C2PA_REDACTION_UUID)
+        )
+    }
+
     pub(crate) fn data(&self) -> &[u8] {
         // return bytes of the assertion data
         match self.decode_data() {
