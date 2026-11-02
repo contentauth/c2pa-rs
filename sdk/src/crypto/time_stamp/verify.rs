@@ -27,7 +27,7 @@ use sha2::{Sha256, Sha384, Sha512};
 use crate::{
     crypto::{
         asn1::rfc3161::{Accuracy, TstInfo},
-        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
+        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy, TrustAnchorType},
         time_stamp::{
             response::{
                 signed_data_and_bytes_from_time_stamp_response,
@@ -636,7 +636,16 @@ pub fn verify_time_stamp(
                 continue;
             }
 
-            match ctp.check_certificate_trust(
+            // Per C2PA §14.4.3, the private credential store applies only to
+            // manifest signers, never to time-stamps; drop it before checking
+            // timestamp trust so a private entry cannot act as a TSA. C2PA also
+            // keeps TSA anchors separate from signer anchors, so restrict the
+            // check to TSA anchors - a signer anchor must not vouch for a token.
+            let mut ts_ctp = ctp.clone();
+            ts_ctp.clear_end_entity_credentials();
+            ts_ctp.retain_trust_anchors(TrustAnchorType::TSA);
+
+            match ts_ctp.check_certificate_trust(
                 &ordered_cert_ders[0..],
                 &ordered_cert_ders[0],
                 Some(signing_time),
@@ -1127,12 +1136,40 @@ pub(crate) mod message_imprint_regression {
         build_token_with_times(imprint_oid, imprint_md, data, b"20200101000000Z", None)
     }
 
+    /// Like [`build_token`], but the TSA certificate carries the keyUsage, SKI
+    /// and AKI extensions a trusted time-stamping authority needs.
+    fn build_token_with_profile_extensions(
+        imprint_oid: &[u8],
+        imprint_md: MessageDigest,
+        data: &[u8],
+    ) -> Vec<u8> {
+        build_token_inner(
+            imprint_oid,
+            imprint_md,
+            data,
+            b"20200101000000Z",
+            None,
+            true,
+        )
+    }
+
     fn build_token_with_times(
         imprint_oid: &[u8],
         imprint_md: MessageDigest,
         data: &[u8],
         gen_time: &[u8],
         signing_time: Option<(u8, &[u8])>,
+    ) -> Vec<u8> {
+        build_token_inner(imprint_oid, imprint_md, data, gen_time, signing_time, false)
+    }
+
+    fn build_token_inner(
+        imprint_oid: &[u8],
+        imprint_md: MessageDigest,
+        data: &[u8],
+        gen_time: &[u8],
+        signing_time: Option<(u8, &[u8])>,
+        profile_extensions: bool,
     ) -> Vec<u8> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
@@ -1155,6 +1192,28 @@ pub(crate) mod message_imprint_regression {
             .unwrap();
         cb.append_extension(ExtendedKeyUsage::new().time_stamping().build().unwrap())
             .unwrap();
+        if profile_extensions {
+            use openssl::x509::extension::{
+                AuthorityKeyIdentifier, KeyUsage, SubjectKeyIdentifier,
+            };
+            cb.append_extension(
+                KeyUsage::new()
+                    .critical()
+                    .digital_signature()
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+            let ski = SubjectKeyIdentifier::new()
+                .build(&cb.x509v3_context(None, None))
+                .unwrap();
+            cb.append_extension(ski).unwrap();
+            let aki = AuthorityKeyIdentifier::new()
+                .keyid(true)
+                .build(&cb.x509v3_context(None, None))
+                .unwrap();
+            cb.append_extension(aki).unwrap();
+        }
         cb.sign(&key, MessageDigest::sha256()).unwrap();
         let cert = cb.build();
 
@@ -1328,6 +1387,98 @@ pub(crate) mod message_imprint_regression {
         );
 
         assert!(matches!(result, Err(TimeStampError::InvalidData)));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+    }
+
+    /// Regression for the private-credential-store timestamp-authority bypass.
+    ///
+    /// Per C2PA §14.4.3 the private credential store "shall not apply to
+    /// validating time-stamps". A verifier that privately trusts a signer's
+    /// own certificate must not thereby accept that certificate as a trusted
+    /// time-stamping authority, whose attested time could otherwise suppress
+    /// the signer certificate's expiry.
+    #[test]
+    fn private_credential_store_is_not_a_timestamp_authority() {
+        use openssl::x509::X509;
+
+        use super::tsa_signer_cert_der_from_token;
+        use crate::crypto::cose::TrustAnchorType;
+
+        let token = build_token_with_profile_extensions(OID_SHA256, MessageDigest::sha256(), DATA);
+        let signer_der = tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .expect("token carries its signer certificate");
+        let signer_pem = X509::from_der(&signer_der).unwrap().to_pem().unwrap();
+
+        // The TSA signer certificate is present only in the private credential
+        // store, with no trust anchors. It must NOT be accepted for time-stamps.
+        let mut ctp = CertificateTrustPolicy::default();
+        ctp.add_end_entity_credentials(&signer_pem).unwrap();
+
+        let mut log = StatusTracker::default();
+        let result = verify_time_stamp(&token, DATA, &ctp, &mut log, true);
+        assert!(
+            matches!(result, Err(TimeStampError::Untrusted)),
+            "private-store signer must not be a trusted TSA: {result:?}"
+        );
+        assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+
+        // Positive control: the same certificate on the TSA trust list is
+        // legitimately accepted, so the fix does not over-block real TSAs.
+        let mut trusted_ctp = CertificateTrustPolicy::default();
+        trusted_ctp
+            .add_trust_anchors(
+                &signer_pem,
+                "http://tsa_trust_list",
+                TrustAnchorType::TSA,
+                None,
+            )
+            .unwrap();
+
+        let mut trusted_log = StatusTracker::default();
+        let trusted = verify_time_stamp(&token, DATA, &trusted_ctp, &mut trusted_log, true);
+        assert!(
+            trusted.is_ok(),
+            "a TSA on the trust list must verify: {trusted:?}"
+        );
+        assert!(trusted_log.has_status(TIMESTAMP_TRUSTED));
+    }
+
+    /// A time-stamp must validate against the TSA trust list, not signer
+    /// anchors: C2PA keeps those lists separate, so a token chaining only to a
+    /// manifest (signer) trust anchor must not be reported trusted.
+    #[test]
+    fn manifest_trust_anchor_is_not_a_timestamp_authority() {
+        use openssl::x509::X509;
+
+        use super::tsa_signer_cert_der_from_token;
+        use crate::crypto::cose::TrustAnchorType;
+
+        let token = build_token_with_profile_extensions(OID_SHA256, MessageDigest::sha256(), DATA);
+        let signer_der = tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .expect("token carries its signer certificate");
+        let signer_pem = X509::from_der(&signer_der).unwrap().to_pem().unwrap();
+
+        // The TSA signer certificate is trusted only as a manifest-signer
+        // anchor; it must not thereby be accepted for time-stamps.
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            &signer_pem,
+            "http://manifest_trust_list",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        let result = verify_time_stamp(&token, DATA, &ctp, &mut log, true);
+        assert!(
+            matches!(result, Err(TimeStampError::Untrusted)),
+            "a signer anchor must not vouch for a time-stamp: {result:?}"
+        );
+        assert!(log.has_status(TIMESTAMP_UNTRUSTED));
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
     }
 
