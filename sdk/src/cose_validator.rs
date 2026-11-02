@@ -47,7 +47,9 @@ pub(crate) fn check_ocsp_status(
     validation_log: &mut StatusTracker,
     context: &Context,
 ) -> Result<OcspResponse> {
-    let fetch_policy = if context.settings().verify.ocsp_fetch {
+    let fetch_policy = if context.settings().verify.ocsp_fetch
+        || context.settings().verify.ocsp_fetch_should_override
+    {
         OcspFetchPolicy::FetchAllowed
     } else {
         OcspFetchPolicy::DoNotFetch

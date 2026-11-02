@@ -48,6 +48,9 @@ const MERGE_MAX_DEPTH: usize = 64;
 /// all enforcement points use the same value.
 pub(crate) const MAX_ASSERTIONS: usize = 100_000;
 
+/// Default maximum remote manifest response size in bytes (10 MiB).
+pub(crate) const DEFAULT_MAX_MANIFEST_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
+
 thread_local!(
     static SETTINGS: RefCell<Value> = RefCell::new(
         serde_json::to_value(Settings::default()).unwrap_or(Value::Object(Map::new())),
@@ -589,12 +592,33 @@ pub struct Verify {
     /// Whether to fetch the certificates OCSP status during validation.
     ///
     /// Revocation status is checked in the following order:
-    /// 1. The OCSP staple stored in the COSE claim of the manifest
-    /// 2. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
-    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks `CertificateStatus` assertions
+    /// 1. If [`Verify::ocsp_fetch_should_override`] is enabled, it fetches a new OCSP status. If the
+    ///    live fetch does not produce a definitive status (`notRevoked` or `revoked`), validation
+    ///    falls back to the remaining steps below.
+    /// 2. If `builder.certificate_status_should_override` is enabled, it checks [`CertificateStatus`]
+    ///    assertions.
+    /// 3. Otherwise, it checks the OCSP staple stored in the COSE claim (`rVals.ocspVals`) of the
+    ///    manifest.
+    /// 4. Otherwise, if `ocsp_fetch` is enabled, it fetches a new OCSP status.
+    /// 5. Otherwise, it checks [`CertificateStatus`] assertions.
     ///
     /// The default value is false.
+    ///
+    /// [`CertificateStatus`]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion
     pub ocsp_fetch: bool,
+    /// Whether to always fetch a live OCSP response first during validation, before checking any
+    /// [`CertificateStatus`] assertions or stapled OCSP response in the COSE claim.
+    ///
+    /// Enabling this setting implies [`Verify::ocsp_fetch`] (you do not need to set both). It also
+    /// takes precedence over `builder.certificate_status_should_override`. If the live fetch fails
+    /// or does not produce a definitive revocation status (`notRevoked` or `revoked`), validation
+    /// falls back to the embedded [`CertificateStatus`] assertions and COSE OCSP staple before
+    /// reporting the OCSP responder as inaccessible.
+    ///
+    /// The default value is false.
+    ///
+    /// [`CertificateStatus`]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion
+    pub ocsp_fetch_should_override: bool,
     /// Whether to fetch remote manifests in the following scenarios:
     /// - Constructing a [`Reader`]
     /// - Adding an [`Ingredient`] to the [`Builder`]
@@ -609,6 +633,16 @@ pub struct Verify {
     /// [`Ingredient`]: crate::Ingredient
     /// [`Builder`]: crate::Builder
     pub remote_manifest_fetch: bool,
+    /// Maximum remote manifest response size in bytes. Responses with a larger
+    /// `Content-Length` or body return [`Error::RemoteManifestFetch`].
+    ///
+    /// The default is 10 MiB (10,485,760 bytes). The value must be positive and
+    /// must not exceed the platform's maximum vector capacity (`isize::MAX`).
+    /// Applies only when the `fetch_remote_manifests` feature is enabled.
+    ///
+    /// This limit is enforced after the HTTP resolver returns. It does not bound
+    /// buffering inside a resolver, including the built-in reqwest adapters.
+    pub max_manifest_response_size: u64,
     /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
     /// manifest identifier. This settings is only applicable for C2PA v2 validation.
     ///
@@ -632,14 +666,28 @@ impl Default for Verify {
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
+            ocsp_fetch_should_override: false,
             remote_manifest_fetch: true,
+            max_manifest_response_size: DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
         }
     }
 }
 
-impl SettingsValidate for Verify {}
+impl SettingsValidate for Verify {
+    fn validate(&self) -> Result<()> {
+        if self.max_manifest_response_size == 0
+            || self.max_manifest_response_size > isize::MAX as u64
+        {
+            return Err(Error::BadParam(format!(
+                "max_manifest_response_size must be between 1 and {} bytes",
+                isize::MAX
+            )));
+        }
+        Ok(())
+    }
+}
 
 #[cfg_attr(
     feature = "json_schema",
@@ -1185,6 +1233,7 @@ impl SettingsValidate for Settings {
         }
         self.trust.validate()?;
         self.core.validate()?;
+        self.verify.validate()?;
         self.builder.validate()
     }
 }
@@ -1362,6 +1411,79 @@ pub mod tests {
         let result =
             Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_max_manifest_response_size_configuration() {
+        assert_eq!(
+            Settings::default().verify.max_manifest_response_size,
+            DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+        );
+        for settings in [
+            Settings::new()
+                .with_json(r#"{"verify":{"remote_manifest_fetch":true}}"#)
+                .unwrap(),
+            Settings::new()
+                .with_toml("[verify]\nremote_manifest_fetch = true")
+                .unwrap(),
+        ] {
+            assert_eq!(
+                settings.verify.max_manifest_response_size,
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+            );
+        }
+
+        for context in [
+            crate::Context::new()
+                .with_settings(r#"{"verify":{"max_manifest_response_size":20971520}}"#)
+                .unwrap(),
+            crate::Context::new()
+                .with_settings("[verify]\nmax_manifest_response_size = 20971520")
+                .unwrap(),
+            crate::Context::new()
+                .with_settings_value("verify.max_manifest_response_size", 20971520u64)
+                .unwrap(),
+        ] {
+            assert_eq!(
+                context.settings().verify.max_manifest_response_size,
+                20971520
+            );
+            let json = serde_json::to_string(context.settings()).unwrap();
+            assert_eq!(
+                Settings::new()
+                    .with_json(&json)
+                    .unwrap()
+                    .verify
+                    .max_manifest_response_size,
+                20971520
+            );
+        }
+    }
+
+    #[test]
+    fn test_max_manifest_response_size_validation() {
+        for value in [0, isize::MAX as u64 + 1, u64::MAX] {
+            let result = Settings::new().with_value("verify.max_manifest_response_size", value);
+            assert!(
+                matches!(result, Err(Error::BadParam(ref msg)) if msg.contains("max_manifest_response_size")),
+                "expected invalid response limit error, got {result:?}"
+            );
+        }
+        for value in [1, isize::MAX as u64] {
+            assert_eq!(
+                Settings::new()
+                    .with_value("verify.max_manifest_response_size", value)
+                    .unwrap()
+                    .verify
+                    .max_manifest_response_size,
+                value
+            );
+        }
+        for value in [serde_json::json!(-1), serde_json::json!("unlimited")] {
+            assert!(Settings::new()
+                .with_value("verify.max_manifest_response_size", value)
+                .is_err());
+        }
     }
 
     #[test]

@@ -60,8 +60,6 @@ use crate::{
 };
 
 pub(super) const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
-#[cfg(feature = "fetch_remote_manifests")]
-pub(super) const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 /// Maximum depth of nested ingredient references allowed during validation.
 ///

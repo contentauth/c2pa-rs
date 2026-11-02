@@ -121,6 +121,12 @@ impl ArchiveKind {
 #[non_exhaustive]
 pub struct ManifestDefinition {
     /// The version of the claim.  Defaults to 2.
+    ///
+    /// C2PA v1 claim signing (`Some(1)`) is deprecated as of 0.92.0 and will be
+    /// removed in 0.93.0, scheduled for mid-January 2027. Omit this field or set
+    /// it to `Some(2)` to sign C2PA v2 claims instead. Reading and validating
+    /// existing C2PA v1 claims is unaffected.
+    /// See the [migration guide](https://github.com/contentauth/c2pa-rs/blob/main/docs/c2pa-v1-signing-migration.md).
     pub claim_version: Option<u8>,
 
     /// Optional prefix added to the generated Manifest Label
@@ -236,6 +242,14 @@ impl TryFrom<serde_json::Value> for ManifestDefinition {
     }
 }
 
+/// Fixes up CBOR assertion data that was converted generically from JSON, where the
+/// spec requires byte strings that JSON cannot express (see #2689).
+fn normalize_cbor_assertion(label: &str, value: &mut c2pa_cbor::Value) {
+    if labels::base(label) == labels::SOFT_BINDING {
+        crate::assertions::soft_binding_bytes_to_bstr(value);
+    }
+}
+
 fn default_vec<T>() -> Vec<T> {
     Vec::new()
 }
@@ -289,8 +303,9 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
         let data = match helper.kind {
             Some(ManifestAssertionKind::Json) => AssertionData::Json(helper.data),
             Some(ManifestAssertionKind::Cbor) | None => {
-                let cbor_val =
+                let mut cbor_val =
                     c2pa_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
+                normalize_cbor_assertion(&helper.label, &mut cbor_val);
                 AssertionData::Cbor(cbor_val)
             }
             _ => {
@@ -641,6 +656,7 @@ impl Builder {
     /// Returns the claim version for this builder.
     ///
     /// If not set, defaults to 2.
+    /// Signing C2PA v1 claims is deprecated; see [`ManifestDefinition::claim_version`].
     pub fn claim_version(&self) -> u8 {
         self.definition.claim_version.unwrap_or(2)
     }
@@ -817,12 +833,17 @@ impl Builder {
         T: Serialize,
     {
         self.check_assertion_limit()?;
+        let label: String = label.into();
         let assertion_data = match kind {
             Some(ManifestAssertionKind::Json) => AssertionData::Json(serde_json::to_value(data)?),
-            _ => AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
+            _ => {
+                let mut value = c2pa_cbor::value::to_value(data)?;
+                normalize_cbor_assertion(&label, &mut value);
+                AssertionData::Cbor(value)
+            }
         };
         self.definition.assertions.push(AssertionDefinition {
-            label: label.into(),
+            label,
             data: assertion_data,
             kind,
             created,
@@ -1206,7 +1227,8 @@ impl Builder {
     ///
     /// This only records the label on the builder. During signing, any matching manifest(s) will
     /// have a [`TimeStamp`] assertion generated using the configured timestamping authority
-    /// ([`Signer::time_authority_url`]) if a timestamp for that manifest does not already exist.
+    /// ([`Signer::time_authority_url`], with any [`Signer::timestamp_request_headers`]) if a
+    /// timestamp for that manifest does not already exist.
     ///
     /// If [`TimeStampSettings::enabled`] is specified, the manifest labels specified here and the
     /// manifest labels obtained from the setting's scope will be merged and fetched.
@@ -1216,6 +1238,7 @@ impl Builder {
     /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
     ///
     /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// [`Signer::timestamp_request_headers`]: crate::Signer::timestamp_request_headers
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     /// [`TimeStampSettings::enabled`]: crate::settings::builder::TimeStampSettings::enabled
     pub fn add_timestamp(&mut self, manifest_label: impl Into<String>) -> &mut Self {
@@ -1567,6 +1590,11 @@ impl Builder {
 
         // Build the claim_generator string since this is required
         let claim_generator: String = if self.claim_version() == 1 {
+            log::warn!(
+                "C2PA v1 claim signing is deprecated as of 0.92.0 and will be removed in \
+                 0.93.0 (scheduled for mid-January 2027). Omit claim_version or set it to 2 \
+                 to sign C2PA v2 claims instead."
+            );
             claim_generator_info
                 .iter()
                 .map(|s| {
@@ -2413,9 +2441,15 @@ impl Builder {
     #[async_generic(async_signature(
         &self,
         tsa_url: &str,
+        tsa_headers: Option<Vec<(String, String)>>,
         provenance_claim: &mut Claim,
     ))]
-    fn maybe_add_timestamp(&self, tsa_url: &str, provenance_claim: &mut Claim) -> Result<()> {
+    fn maybe_add_timestamp(
+        &self,
+        tsa_url: &str,
+        tsa_headers: Option<Vec<(String, String)>>,
+        provenance_claim: &mut Claim,
+    ) -> Result<()> {
         let settings = self.context().settings();
 
         if !settings.builder.auto_timestamp_assertion.enabled
@@ -2495,13 +2529,20 @@ impl Builder {
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
                         tsa_url,
+                        tsa_headers.clone(),
                         &manifest_label,
                         &signature,
                         context,
                     )?;
                 } else {
                     timestamp_assertion
-                        .refresh_timestamp_async(tsa_url, &manifest_label, &signature, context)
+                        .refresh_timestamp_async(
+                            tsa_url,
+                            tsa_headers.clone(),
+                            &manifest_label,
+                            &signature,
+                            context,
+                        )
                         .await?;
                 }
             }
@@ -3226,10 +3267,14 @@ impl Builder {
         self.verify_redactions_applied(&claim)?;
 
         if let Some(tsa_url) = signer.time_authority_url() {
+            // Ingredient time stamps go to the same TSA as the claim signature, so
+            // they need the same (possibly authenticating) headers.
+            let tsa_headers = signer.timestamp_request_headers();
             if _sync {
-                self.maybe_add_timestamp(&tsa_url, &mut claim)?;
+                self.maybe_add_timestamp(&tsa_url, tsa_headers, &mut claim)?;
             } else {
-                self.maybe_add_timestamp_async(&tsa_url, &mut claim).await?
+                self.maybe_add_timestamp_async(&tsa_url, tsa_headers, &mut claim)
+                    .await?
             }
         }
 
@@ -4177,6 +4222,178 @@ mod tests {
         assert_eq!(cgi[0].version.as_deref(), Some("9.9.9"));
     }
 
+    /// A 32-byte soft binding value, supplied the only way JSON can: as an array of byte values.
+    fn soft_binding_json() -> serde_json::Value {
+        json!({
+            "alg": "com.example.watermark.1",
+            "blocks": [{ "scope": {}, "value": (0u8..32).collect::<Vec<u8>>() }]
+        })
+    }
+
+    fn soft_binding_block_value(data: &AssertionData) -> &c2pa_cbor::Value {
+        let text = |k: &str| c2pa_cbor::Value::Text(k.to_owned());
+        let map = match data {
+            AssertionData::Cbor(c2pa_cbor::Value::Map(map)) => Some(map),
+            _ => None,
+        }
+        .expect("CBOR map assertion data");
+        let block = match map.get(&text("blocks")) {
+            Some(c2pa_cbor::Value::Array(blocks)) => blocks.first(),
+            _ => None,
+        }
+        .expect("a blocks array with one block");
+        match block {
+            c2pa_cbor::Value::Map(block) => block.get(&text("value")),
+            _ => None,
+        }
+        .expect("block value")
+    }
+
+    // #2689: a soft binding block value must be a CBOR bstr, even when supplied as JSON.
+    #[test]
+    fn test_soft_binding_value_is_bstr_from_definition_json() {
+        let def: AssertionDefinition = serde_json::from_value(json!({
+            "label": "c2pa.soft-binding",
+            "data": soft_binding_json(),
+        }))
+        .unwrap();
+        assert_eq!(
+            soft_binding_block_value(&def.data),
+            &c2pa_cbor::Value::Bytes((0u8..32).collect())
+        );
+    }
+
+    #[test]
+    fn test_soft_binding_value_is_bstr_from_crjson_b64_text() {
+        let payload: Vec<u8> = (0u8..32).collect();
+        let def: AssertionDefinition = serde_json::from_value(json!({
+            "label": "c2pa.soft-binding",
+            "data": {
+                "alg": "com.example.watermark.1",
+                "blocks": [{
+                    "scope": {},
+                    "value": crate::crypto::base64::encode_b64_wrapped(&payload)
+                }]
+            },
+        }))
+        .unwrap();
+        assert_eq!(
+            soft_binding_block_value(&def.data),
+            &c2pa_cbor::Value::Bytes(payload)
+        );
+    }
+
+    #[test]
+    fn test_soft_binding_value_is_bstr_from_add_assertion_json_value() {
+        let mut builder = Builder::default();
+        builder
+            .add_assertion("c2pa.soft-binding", &soft_binding_json())
+            .unwrap();
+        builder
+            .add_assertion("c2pa.soft-binding__1", &soft_binding_json())
+            .unwrap();
+        for def in &builder.definition.assertions {
+            assert_eq!(
+                soft_binding_block_value(&def.data),
+                &c2pa_cbor::Value::Bytes((0u8..32).collect()),
+                "label {}",
+                def.label
+            );
+        }
+    }
+
+    #[test]
+    fn test_soft_binding_typed_struct_unchanged() {
+        let typed: crate::assertions::SoftBinding =
+            serde_json::from_value(soft_binding_json()).unwrap();
+        let mut builder = Builder::default();
+        builder.add_assertion("c2pa.soft-binding", &typed).unwrap();
+        assert_eq!(
+            soft_binding_block_value(&builder.definition.assertions[0].data),
+            &c2pa_cbor::Value::Bytes((0u8..32).collect())
+        );
+    }
+
+    #[test]
+    fn test_byte_like_arrays_untouched_outside_soft_binding() {
+        let mut builder = Builder::default();
+        builder
+            .add_assertion("org.example.custom", &soft_binding_json())
+            .unwrap();
+        assert!(matches!(
+            soft_binding_block_value(&builder.definition.assertions[0].data),
+            c2pa_cbor::Value::Array(_)
+        ));
+    }
+
+    #[test]
+    fn test_soft_binding_non_byte_arrays_untouched() {
+        let mut builder = Builder::default();
+        builder
+            .add_assertion(
+                "c2pa.soft-binding",
+                &json!({"alg": "com.example.watermark.1", "blocks": [{"scope": {}, "value": [1, 256, -1]}]}),
+            )
+            .unwrap();
+        assert!(matches!(
+            soft_binding_block_value(&builder.definition.assertions[0].data),
+            c2pa_cbor::Value::Array(_)
+        ));
+    }
+
+    /// Signs a JPEG with a JSON-supplied soft binding, through a builder archive round trip
+    /// (which carries byte strings as crJSON `b64'...'` text), and checks the raw manifest
+    /// bytes: the 32-byte value is encoded as a bstr (0x58 0x20).
+    #[test]
+    fn test_soft_binding_value_is_bstr_in_signed_manifest() {
+        let format = "image/jpeg";
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(
+                parent_json().to_string(),
+                format,
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        builder
+            .resources
+            .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+        builder
+            .add_assertion("c2pa.soft-binding", &soft_binding_json())
+            .unwrap();
+
+        let mut zipped = Cursor::new(Vec::new());
+        builder.to_archive(&mut zipped).unwrap();
+        zipped.rewind().unwrap();
+        let mut builder = Builder::default().with_archive(&mut zipped).unwrap();
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        let out = dest.into_inner();
+        let payload: Vec<u8> = (0u8..32).collect();
+        let mut bstr = vec![0x65, b'v', b'a', b'l', b'u', b'e', 0x58, 0x20];
+        bstr.extend_from_slice(&payload);
+        let contains = |needle: &[u8]| out.windows(needle.len()).any(|w| w == needle);
+        assert!(contains(&bstr), "soft binding value is not a CBOR bstr");
+
+        // And it still reads back as the typed assertion.
+        let reader = Reader::default()
+            .with_stream(format, Cursor::new(out))
+            .unwrap();
+        let sb: crate::assertions::SoftBinding = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion("c2pa.soft-binding")
+            .unwrap();
+        assert_eq!(sb.blocks[0].value, payload);
+    }
+
     #[test]
     fn test_builder_sign() {
         #[derive(Serialize, Deserialize)]
@@ -4496,7 +4713,9 @@ mod tests {
             .unwrap();
 
         dest.rewind().unwrap();
-        let reader = Reader::from_stream(format, &mut dest).unwrap();
+        let reader = Reader::from_context(test_context())
+            .with_stream(format, &mut dest)
+            .unwrap();
         assert_ne!(reader.validation_state(), ValidationState::Invalid);
 
         // Exactly one c2pa.actions assertion must exist for the v1 claim.
@@ -5879,6 +6098,49 @@ mod tests {
         assert!(
             builder2.find_assertion::<BoxHash>(BoxHash::LABEL).is_err(),
             "BoxHash must NOT be auto-created by placeholder() — caller creates it via update_hash_from_stream()"
+        );
+
+        Ok(())
+    }
+
+    /// Regression (PR#2949): signing a JPEG that has bytes after its EOI marker
+    /// must produce a hard binding that lists and hashes those bytes as the
+    /// `c2pa.after` box (C2PA 2.5 §16.3.3.2), so the signed asset validates
+    /// rather than being rejected by its own box hash. Box-hash generation and
+    /// verification must agree on the trailer.
+    #[test]
+    fn test_box_hash_sign_verify_with_trailing_bytes() -> Result<()> {
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
+
+        // A clean JPEG with arbitrary data appended after the EOI marker.
+        const TRAILER: &[u8] = b"trailing bytes not part of the JPEG image";
+        let mut asset = TEST_IMAGE_CLEAN.to_vec();
+        asset.extend_from_slice(TRAILER);
+
+        let mut builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        let signer = test_signer(SigningAlg::Ed25519);
+        let mut source = Cursor::new(asset);
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        // The signer must have preserved the trailer (otherwise the scenario is
+        // not exercised), and it must be hashed by a `c2pa.after` box.
+        let signed = dest.get_ref().clone();
+        assert!(
+            signed.ends_with(TRAILER),
+            "signing must preserve bytes after EOI"
+        );
+
+        dest.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "a box-hash-signed JPEG with trailing bytes must validate: {:?}",
+            reader.validation_status()
         );
 
         Ok(())
@@ -12468,5 +12730,103 @@ mod tests {
                 .any(|i| i.label() == Some("INGREDIENT_2")));
             assert_no_action_failures(sign_and_read(opened));
         }
+    }
+
+    /// A signing credential that a stapled OCSP response reports as revoked is
+    /// not trusted, even though its certificate chain reaches a trust anchor.
+    #[test]
+    fn revoked_signing_credential_is_not_trusted() {
+        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
+
+        use crate::{
+            crypto::{cert_chain_pem_to_der, cose::cose_reserve_size},
+            validation_status::{
+                ValidationStatus, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_REVOKED,
+                SIGNING_CREDENTIAL_TRUSTED,
+            },
+        };
+
+        struct OcspSigner {
+            raw_signer: Box<dyn RawSigner>,
+            cert_chain: Vec<Vec<u8>>,
+            ocsp_rsp: Vec<u8>,
+        }
+
+        impl Signer for OcspSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                Ok(self.raw_signer.sign(data)?)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Es256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(self.cert_chain.clone())
+            }
+
+            fn reserve_size(&self) -> usize {
+                cose_reserve_size(
+                    self.raw_signer.max_signature_size(),
+                    &self.cert_chain,
+                    false,
+                    Some(&self.ocsp_rsp),
+                )
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                Some(self.ocsp_rsp.clone())
+            }
+        }
+
+        // A response from a test responder saying the es256 test signer was
+        // revoked on 2025-01-01.
+        let signer = OcspSigner {
+            raw_signer: signer_from_private_key(
+                include_bytes!("../tests/fixtures/certs/es256.pem"),
+                SigningAlg::Es256,
+            )
+            .unwrap(),
+            cert_chain: cert_chain_pem_to_der(include_bytes!("../tests/fixtures/certs/es256.pub"))
+                .unwrap(),
+            ocsp_rsp: include_bytes!("../tests/fixtures/crypto/ocsp/es256_revoked_response.der")
+                .to_vec(),
+        };
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let sign_context = Context::new()
+            .with_settings(json!({"verify": {"verify_after_sign": false}}))
+            .unwrap();
+        Builder::from_context(sign_context)
+            .sign(&signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        // Trust the test certificates, and the test OCSP responder directly.
+        let read_context = Context::new()
+            .with_settings(json!({
+                "trust": {"anchors": [{
+                    "trust_anchors": include_str!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
+                    "trust_kind": "manifest",
+                    "allowed_list": include_str!("../tests/fixtures/crypto/ocsp/es256_revoked_responder.pem"),
+                }]},
+                "verify": {"ocsp_fetch": false},
+            }))
+            .unwrap();
+        dest.rewind().unwrap();
+        let reader = Reader::from_context(read_context)
+            .with_stream(format, &mut dest)
+            .unwrap();
+
+        let results = reader
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap();
+        let has = |codes: &[ValidationStatus], code: &str| codes.iter().any(|s| s.code() == code);
+        assert!(has(results.failure(), SIGNING_CREDENTIAL_REVOKED));
+        assert!(!has(results.success(), SIGNING_CREDENTIAL_TRUSTED));
+        assert!(!has(results.success(), CLAIM_SIGNATURE_VALIDATED));
     }
 }
