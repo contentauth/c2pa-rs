@@ -1,0 +1,22 @@
+name: Main CI Slack alerts
+
+on:
+  workflow_run:
+    workflows: ['*']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+jobs:
+  notify:
+    uses: contentauth/ci-workflows/.github/workflows/ci-slack.yml@3b0da24fcbea0e507dba39ad96ad78625f6855c8
+    with:
+      branch: main
+      workflow-names: '["*"]'
+      caller-workflow-path: .github/workflows/main-ci-slack.yml
+      test-delivery: ${{ github.event_name == 'workflow_dispatch' }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
