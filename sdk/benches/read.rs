@@ -1,6 +1,6 @@
 use std::{fs, io::Cursor, path::Path};
 
-use c2pa::Reader;
+use c2pa::{Builder, Reader};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
 const SIZES: &[&str] = &["small", "medium", "large"];
@@ -148,7 +148,46 @@ fn read_wav(c: &mut Criterion) {
     group.finish();
 }
 
+fn json_reports(c: &mut Criterion) {
+    let reader = Reader::default()
+        .with_stream(
+            "image/jpeg",
+            Cursor::new(include_bytes!("../tests/fixtures/CA.jpg").as_slice()),
+        )
+        .expect("read signed report fixture");
+    let entries: Vec<_> = (0..1000)
+        .map(|index| serde_json::json!({"index": index, "description": "metadata ".repeat(32)}))
+        .collect();
+    let mut builder = Builder::default();
+    builder
+        .add_assertion(
+            "org.example.large",
+            &serde_json::json!({"entries": entries}),
+        )
+        .expect("add report benchmark assertion");
+    let mut group = c.benchmark_group("json reports");
+    group.bench_function("reader", |b| {
+        b.iter(|| std::hint::black_box(reader.json_checked().expect("format report")))
+    });
+    group.bench_function("detailed reader", |b| {
+        b.iter(|| std::hint::black_box(reader.detailed_json_checked().expect("format report")))
+    });
+    group.bench_function("builder 1000 entries", |b| {
+        b.iter(|| std::hint::black_box(builder.to_string()))
+    });
+    group.finish();
+}
+
 criterion_group!(
-    benches, read_jpeg, read_png, read_gif, read_tiff, read_svg, read_mp3, read_mp4, read_wav
+    benches,
+    read_jpeg,
+    read_png,
+    read_gif,
+    read_tiff,
+    read_svg,
+    read_mp3,
+    read_mp4,
+    read_wav,
+    json_reports
 );
 criterion_main!(benches);
