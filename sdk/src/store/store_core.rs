@@ -126,6 +126,9 @@ impl Store {
 
         // use the incoming trust settings
         store.ctp.clear();
+        if settings.trust.use_default_ekus {
+            store.ctp.add_default_valid_ekus();
+        }
 
         // Add all of the trust anchors
         if let Some(anchors) = &settings.trust.anchors {
