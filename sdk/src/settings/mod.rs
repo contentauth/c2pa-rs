@@ -111,7 +111,7 @@ pub struct TrustAnchor {
     /// certificates must have. This will overlay the default top level trust_config.
     /// If the trust_kind is CAWG it will override the top level trust config
     ///
-    ///  When validating CAWG identity certificates.
+    /// When validating CAWG identity certificates.
     ///
     /// The CAWG interim trust model (CAWG identity assertion spec §8.2.4.1)
     /// requires the `id-kp-emailProtection` EKU (1.3.6.1.5.5.7.3.4) together with
@@ -230,9 +230,20 @@ pub struct Trust {
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
     ///
-    /// The EKUs defined by the C2PA specification are always accepted. Any OIDs
-    /// listed here are added to that set rather than replacing it.
+    /// When [`Trust::use_default_ekus`] is true (the default), the EKUs defined by
+    /// the C2PA specification are always accepted and any OIDs listed here are
+    /// added to that set rather than replacing it.
     pub trust_config: Option<String>,
+
+    /// Whether to accept the built-in set of extended key usage (EKU) OIDs defined
+    /// by the C2PA specification in addition to those listed in [`Trust::trust_config`].
+    ///
+    /// When false, only the EKUs listed in [`Trust::trust_config`] (and any
+    /// [`TrustAnchor::trust_config`]) are accepted. Note that `id-kp-emailProtection`,
+    /// `id-kp-timeStamping`, and `id-kp-OCSPSigning` are always accepted.
+    ///
+    /// The default value is true.
+    pub use_default_ekus: bool,
 
     #[deprecated(
         since = "0.91.0",
@@ -337,6 +348,7 @@ impl Default for Trust {
             let mut trust = Self {
                 anchors: None,
                 trust_config: None,
+                use_default_ekus: true,
                 user_anchors: None,
                 trust_anchors: None,
             };
@@ -357,6 +369,7 @@ impl Default for Trust {
             Self {
                 anchors: None,
                 trust_config: None,
+                use_default_ekus: true,
                 user_anchors: None,
                 trust_anchors: None,
             }

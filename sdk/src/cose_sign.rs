@@ -146,6 +146,9 @@ fn signing_cert_valid(signing_cert: &[u8], settings: &Settings) -> Result<()> {
     // make sure signer certs are valid
     let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut passthrough_cap = CertificateTrustPolicy::default();
+    if !settings.trust.use_default_ekus {
+        passthrough_cap.clear_ekus();
+    }
 
     // Allow user EKUs through this check if configured.
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1313):

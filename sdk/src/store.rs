@@ -164,7 +164,9 @@ impl Store {
 
         // use the incoming trust settings
         store.ctp.clear();
-        store.ctp.add_default_valid_ekus();
+        if settings.trust.use_default_ekus {
+            store.ctp.add_default_valid_ekus();
+        }
 
         // Add all of the trust anchors
         if let Some(anchors) = &settings.trust.anchors {
@@ -10690,6 +10692,40 @@ pub mod tests {
         for (_, oid) in cases {
             assert!(store.ctp.has_allowed_eku(&eku(oid)).is_some());
         }
+    }
+
+    #[test]
+    fn test_from_context_without_default_ekus() {
+        fn eku(oid: asn1_rs::Oid<'static>) -> ExtendedKeyUsage<'static> {
+            ExtendedKeyUsage {
+                any: false,
+                server_auth: false,
+                client_auth: false,
+                code_signing: false,
+                email_protection: false,
+                time_stamping: false,
+                ocsp_signing: false,
+                other: vec![oid],
+            }
+        }
+
+        let document_signing = asn1_rs::oid!(1.3.6 .1 .5 .5 .7 .3 .36);
+        let c2pa_claim_signing = asn1_rs::oid!(1.3.6 .1 .4 .1 .62558 .2 .1);
+
+        // disabling the built-in EKUs only accepts those configured in `trust_config`
+        let mut settings = Settings::default();
+        settings.trust.trust_config = Some(document_signing.to_string());
+        settings.trust.anchors = None;
+        settings.trust.use_default_ekus = false;
+
+        let context = Context::new().with_settings(settings).unwrap();
+        let store = Store::from_context(&context);
+
+        assert!(store.ctp.has_allowed_eku(&eku(document_signing)).is_some());
+        assert!(store
+            .ctp
+            .has_allowed_eku(&eku(c2pa_claim_signing))
+            .is_none());
     }
 
     #[test]
