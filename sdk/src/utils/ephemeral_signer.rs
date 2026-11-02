@@ -222,6 +222,8 @@ mod tests {
 
         let info = result.expect("verify_cose on same bytes");
         assert!(info.validated, "signature must be validated");
+        // verify_cose runs no revocation check, so it must not report "not revoked".
+        assert_eq!(info.revocation_status, None);
     }
 
     /// Signs a minimal claim with [`EphemeralSigner`] and verifies the COSE

@@ -43,20 +43,29 @@ pub(crate) const ICA_FIXTURE_WEB_ISSUER: &str =
 /// empty) allow-list, such as `Context::new()`.
 pub(crate) fn ica_test_context() -> crate::Context {
     let mut settings = crate::settings::Settings::default();
-    if let Some(anchors) = &mut settings.trust.anchors {
-        // make sure there is a CAWG trust anchor with the ICA fixture issuers.
-        let mut cawg_anchor = anchors[0].clone();
-        cawg_anchor.trust_kind = crate::settings::TrustListKind::CAWG;
-        cawg_anchor.trusted_ica_issuers = Some(vec![
-            ICA_FIXTURE_JWK_ISSUER.to_string(),
-            ICA_FIXTURE_WEB_ISSUER.to_string(),
-        ]);
-        cawg_anchor.trust_uri = Some("cawg_trust".to_string());
-
-        anchors.push(cawg_anchor);
-    }
+    add_cawg_ica_issuers(&mut settings, &ICA_FIXTURE_ISSUERS);
 
     crate::Context::new().with_settings(settings).unwrap()
+}
+
+/// Both issuers used by the bundled CAWG ICA test fixtures.
+pub(crate) const ICA_FIXTURE_ISSUERS: [&str; 2] = [ICA_FIXTURE_JWK_ISSUER, ICA_FIXTURE_WEB_ISSUER];
+
+/// Adds a CAWG-kind trust anchor that trusts `issuers` as ICA issuers.
+///
+/// CAWG anchors are kept separate from manifest signer anchors, so ICA issuer
+/// trust is configured here rather than on the manifest anchors.
+pub(crate) fn add_cawg_ica_issuers(settings: &mut crate::settings::Settings, issuers: &[&str]) {
+    settings
+        .trust
+        .anchors
+        .get_or_insert_default()
+        .push(crate::settings::TrustAnchor {
+            trust_kind: crate::settings::TrustListKind::CAWG,
+            trusted_ica_issuers: Some(issuers.iter().map(|i| i.to_string()).collect()),
+            trust_uri: Some("cawg_trust".to_string()),
+            ..Default::default()
+        });
 }
 
 /// Read a manifest store with identity assertion decoding disabled so the raw

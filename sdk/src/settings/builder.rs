@@ -379,7 +379,6 @@ impl TryFrom<ActionSettings> for Action {
             related: value.related,
             reason: value.reason,
             description: value.description,
-            ..Default::default()
         })
     }
 }

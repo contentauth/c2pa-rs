@@ -20,7 +20,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::{labels, region_of_interest::RegionOfInterest, Actor, AssertionMetadata},
+    assertions::{labels, region_of_interest::RegionOfInterest, AssertionMetadata},
     error::{Error, Result},
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
@@ -81,16 +81,6 @@ pub enum DigitalSourceType {
         rename = "http://cv.iptc.org/newscodes/digitalsourcetype/print"
     )]
     Print,
-    /// Minor augmentation or correction by a human, such as a digitally-retouched photo used in a magazine.
-    #[deprecated(
-        since = "0.67.1",
-        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[serde(
-        alias = "minorHumanEdits",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
-    )]
-    MinorHumanEdits,
     /// Augmentation, correction or enhancement by one or more humans using non-generative tools.
     #[serde(
         alias = "humanEdits",
@@ -111,26 +101,6 @@ pub enum DigitalSourceType {
         rename = "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced"
     )]
     AlgorithmicallyEnhanced,
-    /// The digital image was created by computer software.
-    #[deprecated(
-        since = "0.67.1",
-        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[serde(
-        alias = "softwareImage",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/softwareImage"
-    )]
-    SoftwareImage,
-    /// Media created by a human using digital tools.
-    #[deprecated(
-        since = "0.67.1",
-        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[serde(
-        alias = "digitalArt",
-        rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalArt"
-    )]
-    DigitalArt,
     /// Media created by a human using non-generative tools.
     #[serde(
         alias = "digitalCreation",
@@ -200,13 +170,6 @@ impl fmt::Display for DigitalSourceType {
 
 /// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
-    /// Changes to tone, saturation, etc.
-    #[deprecated(
-        since = "0.91.0",
-        note = "This action is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
-
     /// The format of the asset was changed.
     pub const CONVERTED: &str = "c2pa.converted";
 
@@ -265,13 +228,6 @@ pub mod c2pa_action {
     /// BCP-47 (RFC 5646) language codes.
     pub const TRANSLATED: &str = "c2pa.translated";
 
-    /// Watermarking was applied to this area for the purpose of soft binding.  2.3 and earlier.
-    #[deprecated(
-        since = "0.91.0",
-        note = "This action is deprecated from C2PA spec version 2.2. Use `WATERMARKED_BOUND` or `WATERMARKED_UNBOUND` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub const WATERMARKED: &str = "c2pa.watermarked";
-
     /// Watermarking was applied to this area for the purpose of soft binding. 2.4 or later.
     pub const WATERMARKED_BOUND: &str = "c2pa.watermarked.bound";
 
@@ -280,43 +236,6 @@ pub mod c2pa_action {
 
     /// Something happened, but the claim_generator cannot specify what.
     pub const UNKNOWN: &str = "c2pa.unknown";
-}
-
-/// Deprecated string constants for C2PA action reasons.
-///
-/// Use [`C2paReason`] enum variants instead.
-#[deprecated(
-    since = "0.80.3",
-    note = "Use `C2paReason` enum variants instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub mod c2pa_reason {
-    /// Personally identifiable information is present.
-    #[deprecated(
-        since = "0.80.3",
-        note = "Use `C2paReason::PiiPresent` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub const PII_PRESENT: &str = "c2pa.PII.present";
-
-    /// The data is invalid.
-    #[deprecated(
-        since = "0.80.3",
-        note = "Use `C2paReason::InvalidData` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub const INVALID_DATA: &str = "c2pa.invalid.data";
-
-    /// Trade secret information is present.
-    #[deprecated(
-        since = "0.80.3",
-        note = "Use `C2paReason::TradeSecretPresent` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub const TRADE_SECRET_PRESENT: &str = "c2pa.trade-secret.present";
-
-    /// Government classified or confidential information is present.
-    #[deprecated(
-        since = "0.80.3",
-        note = "Use `C2paReason::GovernmentConfidential` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub const GOVERNMENT_CONFIDENTIAL: &str = "c2pa.government.confidential";
 }
 
 /// Predefined reason values for the `reason` field on [`Action`].
@@ -499,10 +418,6 @@ pub struct Action {
     #[serde(rename = "softwareAgentIndex", skip_serializing_if = "Option::is_none")]
     pub software_agent_index: Option<usize>,
 
-    /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) changed: Option<String>,
-
     /// A list of the regions of interest of the resource that were changed.
     ///
     /// If not present, presumed to be undefined.
@@ -511,23 +426,9 @@ pub struct Action {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) changes: Option<Vec<RegionOfInterest>>,
 
-    /// This is NOT the instanceID in the spec
-    /// It is now deprecated but was previously used to map the action to an ingredient
-    #[deprecated(
-        since = "0.37.0",
-        note = "Use `parameters.ingredientIds[]` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[serde(skip_serializing)]
-    #[serde(alias = "instanceId", alias = "instanceID")]
-    pub(crate) instance_id: Option<String>,
-
     /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) parameters: Option<ActionParameters>,
-
-    /// An array of the creators that undertook this action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) actors: Option<Vec<Actor>>,
 
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
@@ -583,17 +484,6 @@ impl Action {
         self.software_agent.as_mut()
     }
 
-    /// Returns the value of the `xmpMM:InstanceID` property for the modified
-    /// (output) resource.
-    #[deprecated(
-        since = "0.37.0",
-        note = "Use `ingredient_ids()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn instance_id(&self) -> Option<&str> {
-        #[allow(deprecated)]
-        self.instance_id.as_deref()
-    }
-
     /// Returns the regions of interest that changed].
     pub fn changes(&self) -> Option<&[RegionOfInterest]> {
         self.changes.as_deref()
@@ -640,15 +530,6 @@ impl Action {
         }
     }
 
-    /// An array of the [`Actor`]s that undertook this action.
-    #[deprecated(
-        since = "0.91.0",
-        note = "The `actors` field is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn actors(&self) -> Option<&[Actor]> {
-        self.actors.as_deref()
-    }
-
     /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
     // QUESTION: Keep in docs?
     pub fn source_type(&self) -> Option<&DigitalSourceType> {
@@ -690,28 +571,6 @@ impl Action {
     pub fn set_software_agent<S: Into<SoftwareAgent>>(mut self, software_agent: S) -> Self {
         self.software_agent = Some(software_agent.into());
         self
-    }
-
-    /// Sets the list of the parts of the resource that were changed
-    /// since the previous event history.
-    #[deprecated(
-        since = "0.91.0",
-        note = "The `changed` field is deprecated from C2PA spec version 2.1. Use `changes` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn set_changed(mut self, changed: Option<&Vec<&str>>) -> Self {
-        self.changed = changed.map(|v| v.join(";"));
-        self
-    }
-
-    /// Sets the value of the `xmpMM:InstanceID` property for the
-    /// modified (output) resource.
-    #[deprecated(
-        since = "0.37.0",
-        note = "Use `add_ingredient_id()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn set_instance_id<S: Into<String>>(self, id: S) -> Self {
-        #[allow(clippy::unwrap_used)]
-        self.add_ingredient_id(&id.into()).unwrap() // Supporting deprecated feature.
     }
 
     /// Sets the additional parameters for this action.
@@ -776,16 +635,6 @@ impl Action {
         Ok(self)
     }
 
-    /// Sets the array of [`Actor`]s that undertook this action.
-    #[deprecated(
-        since = "0.91.0",
-        note = "The `actors` field is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn set_actors(mut self, actors: Option<&Vec<Actor>>) -> Self {
-        self.actors = actors.cloned();
-        self
-    }
-
     /// Sets the description of the action.
     ///
     /// This is only present in the v2 actions assertion.
@@ -848,10 +697,9 @@ impl Action {
 
     /// Reads the ingredient IDs an action references, without mutating the action.
     ///
-    /// There are many deprecated ways to specify ingredient IDs; this checks every linking
-    /// mechanism in priority order: `parameters.ingredientIds`, `parameters.org.cai.ingredientIds`,
-    /// `parameters.instanceId`, then the deprecated `instanceId` field (only when none of the
-    /// parameters are present). Used to map actions to their associated ingredients.
+    /// Checks each supported linking mechanism in priority order:
+    /// `parameters.ingredientIds`, `parameters.org.cai.ingredientIds`, then
+    /// `parameters.instanceId`.
     ///
     /// This is the read-only counterpart of [`Self::extract_ingredient_ids`], which additionally
     /// removes the parameters it reads. Use this when the action must stay intact (e.g. computing
@@ -875,31 +723,20 @@ impl Action {
         ids.extend(convert(self.get_parameter(INGREDIENT_IDS)));
         ids.extend(convert(self.get_parameter("org.cai.ingredientIds")));
         ids.extend(convert(self.get_parameter("instanceId")));
-        if ids.is_empty() {
-            #[allow(deprecated)]
-            if let Some(id) = self.instance_id.as_deref() {
-                ids.push(id.to_owned());
-            }
-        }
         ids
     }
 
     /// Extracts ingredient IDs from the action, removing the parameters it reads.
     ///
     /// Reads the same links as [`Self::ingredient_ids`], then removes the temporary
-    /// `ingredientIds` / `org.cai.ingredientIds` / `instanceId` parameters and the deprecated
-    /// `instanceId` field, because we don't want any of them in the final CBOR.
+    /// `ingredientIds` / `org.cai.ingredientIds` / `instanceId` parameters, because we don't
+    /// want any of them in the final CBOR.
     pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
         let ids = self.ingredient_ids();
 
         self.remove_parameter(INGREDIENT_IDS);
         self.remove_parameter("org.cai.ingredientIds");
         self.remove_parameter("instanceId");
-        #[allow(deprecated)]
-        {
-            self.instance_id = None;
-        }
-
         if ids.is_empty() {
             None
         } else {
@@ -1182,15 +1019,6 @@ pub mod tests {
             .unwrap()
             .set_parameter("ingredient".to_owned(), make_hashed_uri1())
             .unwrap()
-            .set_changed(Some(&["this", "that"].to_vec()))
-            //  .add_ingredient_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b").unwrap()
-            .set_actors(Some(
-                &[Actor::new(
-                    Some("Somebody"),
-                    Some(&[make_hashed_uri1()].to_vec()),
-                )]
-                .to_vec(),
-            ))
     }
 
     #[test]
@@ -1550,24 +1378,14 @@ pub mod tests {
         );
         assert!(action3.get_parameter::<String>("instanceId").is_none());
 
-        // Test extracting from deprecated instance_id field
-        let mut action4 = Action::new("c2pa.opened");
-
-        action4.instance_id = Some("action_instanceId".to_string());
-        assert_eq!(
-            action4.extract_ingredient_ids(),
-            Some(vec!["action_instanceId".to_string()])
-        );
-        assert!(action4.instance_id.is_none());
-
         // Test no ingredient IDs present
-        let mut action5 = Action::new("c2pa.opened");
-        assert_eq!(action5.extract_ingredient_ids(), None);
+        let mut action4 = Action::new("c2pa.opened");
+        assert_eq!(action4.extract_ingredient_ids(), None);
 
         // Test empty arrays
-        let mut action6 = Action::new("c2pa.opened")
+        let mut action5 = Action::new("c2pa.opened")
             .set_parameter("ingredientIds", Vec::<String>::new())
             .unwrap();
-        assert_eq!(action6.extract_ingredient_ids(), None);
+        assert_eq!(action5.extract_ingredient_ids(), None);
     }
 }

@@ -11,14 +11,7 @@ The embeddable signing API provides direct control over how a C2PA manifest is e
 4. Sign the claim.
 5. Patch the manifest in place.
 
-This new, more generic API replaces the following `Builder` methods that will soon be deprecated:
-
-- [`data_hashed_placeholder()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.data_hashed_placeholder)
-- [`sign_data_hashed_embeddable()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_data_hashed_embeddable) and [`sign_data_hashed_embeddable_async()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_data_hashed_embeddable_async)
-
-<!--
-- [`sign_box_hashed_embeddable()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_box_hashed_embeddable) and [`sign_box_hashed_embeddable_async()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_box_hashed_embeddable_async)
--->
+This API replaced the legacy `Builder` DataHash placeholder and split-signing methods, which were removed in version 0.92.0.
 
 ## Why use the embeddable API
 

@@ -339,7 +339,11 @@ where
 {
     let mut reader = ZipArchive::new(&mut *stream)
         .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
-    let file_names: Vec<String> = reader.file_names().map(|name| name.to_owned()).collect();
+    let file_names = reader
+        .file_names()
+        .map(|name| name.map(|name| name.into_owned()))
+        .collect::<ZipResult<Vec<_>>>()
+        .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
 
     let mut entries = Vec::new();
     for file_name in file_names {
@@ -367,7 +371,7 @@ where
             path,
             header_start,
             data_end: data_start + file.compressed_size(),
-            using_data_descriptor: metadata.using_data_descriptor,
+            using_data_descriptor: metadata.is_using_data_descriptor(),
             large_file: metadata.large_file,
         });
     }

@@ -10,7 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{Ingredient, Reader, Relationship};
+use c2pa::{Context, Ingredient, Reader, Relationship};
 
 use crate::{Error, Result, SignerInfo};
 
@@ -18,10 +18,10 @@ use crate::{Error, Result, SignerInfo};
 ///
 /// If data_dir is provided, any thumbnail or c2pa data will be written to that folder.
 /// Any Validation errors will be reported in the validation_status field.
-#[allow(deprecated)]
 pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
-    // Legacy JSON API: inherits thread-local settings set by c2pa_load_settings.
-    let reader = Reader::from_file(path).map_err(Error::from_c2pa_error)?;
+    let reader = Reader::from_context(Context::default())
+        .with_file(path)
+        .map_err(Error::from_c2pa_error)?;
 
     Ok(if let Some(dir) = data_dir {
         let json = reader.json();
@@ -38,7 +38,6 @@ pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
 /// Signer information must also be supplied
 ///
 /// Any file paths in the manifest will be read relative to the source file
-#[allow(deprecated)]
 pub fn sign_file(
     source: &str,
     dest: &str,
@@ -46,8 +45,9 @@ pub fn sign_file(
     signer_info: &SignerInfo,
     data_dir: Option<String>,
 ) -> Result<Vec<u8>> {
-    // Legacy JSON API: inherits thread-local settings set by c2pa_load_settings.
-    let mut builder = c2pa::Builder::from_json(manifest_json).map_err(Error::from_c2pa_error)?;
+    let mut builder = c2pa::Builder::from_context(Context::default())
+        .with_definition(manifest_json)
+        .map_err(Error::from_c2pa_error)?;
 
     // if data_dir is provided, set the base path for the manifest
     if let Some(path) = data_dir {
@@ -73,14 +73,10 @@ pub fn sign_file(
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use std::{ffi::CString, fs::remove_dir_all, path::PathBuf};
 
-    use c2pa::settings::Settings;
-
     use super::*;
-    use crate::c_api::c2pa_load_settings;
 
     /// returns a path to a file in the fixtures folder
     pub fn test_path(path: &str) -> String {
@@ -90,8 +86,6 @@ mod tests {
 
     #[test]
     fn test_verify_from_file_no_base() {
-        let _ = Settings::from_toml(include_str!("../../sdk/tests/fixtures/test_settings.toml"));
-
         let path = test_path("tests/fixtures/C.jpg");
         let result = read_file(&path, None);
         assert!(result.is_ok());
@@ -103,8 +97,6 @@ mod tests {
 
     #[test]
     fn test_read_from_file_with_base() {
-        let _ = Settings::from_toml(include_str!("../../sdk/tests/fixtures/test_settings.toml"));
-
         let path = test_path("tests/fixtures/C.jpg");
         let data_dir = "../target/data_dir";
         if PathBuf::from(data_dir).exists() {
@@ -121,14 +113,6 @@ mod tests {
 
     #[test]
     fn test_verify_from_file_cawg_identity() {
-        let settings = CString::new(include_bytes!(
-            "../tests/fixtures/trust/cawg_test_settings.toml"
-        ))
-        .unwrap();
-        let format = CString::new("toml").unwrap();
-        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
-        assert_eq!(result, 0);
-
         let path = test_path("tests/fixtures/C_with_CAWG_data.jpg");
         let result = read_file(&path, None);
         dbg!(&result);

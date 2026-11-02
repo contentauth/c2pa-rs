@@ -14,8 +14,6 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
-#[allow(deprecated)]
-pub use actions::c2pa_reason;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
 pub use actions::{
     c2pa_action, Action, ActionParameters, ActionTemplate, Actions, C2paReason, DigitalSourceType,
@@ -97,6 +95,7 @@ pub use embedded_data::EmbeddedData;
 pub mod region_of_interest;
 
 mod soft_binding;
+pub(crate) use soft_binding::soft_binding_bytes_to_bstr;
 pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingMetadata, SoftBindingScope};
 
 mod cloud_data;

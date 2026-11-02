@@ -293,7 +293,7 @@ impl Manifest {
     /// # fn main() -> Result<()> {
     /// #[cfg(feature = "file_io")]
     /// {
-    ///     let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+    ///     let reader = Reader::default().with_file("tests/fixtures/CA.jpg")?;
     ///     let manifest = reader.active_manifest().unwrap();
     ///     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
     ///     for action in actions.actions {

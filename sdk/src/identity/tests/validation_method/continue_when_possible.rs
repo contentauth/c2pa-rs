@@ -14,18 +14,36 @@
 //! This version of the validation method tests cover the case where the
 //! [`StatusTracker`] is configured to continue when possible.
 
-use std::io::Cursor;
+use std::{borrow::Cow, io::Cursor};
 
 use c2pa_macros::c2pa_test_async;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType, Verifier},
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
     status_tracker::{LogKind, StatusTracker},
     validation_status::{CAWG_X509_CREDENTIAL_TRUSTED, CAWG_X509_SIGNATURE_VALIDATED},
     SigningAlg,
 };
+
+fn trusted_x509_verifier() -> X509SignatureVerifier<'static> {
+    let mut policy = CertificateTrustPolicy::default();
+    policy
+        .add_trust_anchors(
+            include_bytes!(
+                "../../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+            ),
+            "https://c2pa-rs/unknown_tl",
+            TrustAnchorType::CAWG,
+            None,
+        )
+        .unwrap();
+    X509SignatureVerifier {
+        cose_verifier: Verifier::VerifyTrustPolicyFor(Cow::Owned(policy), TrustAnchorType::CAWG),
+    }
+}
 
 /// An identity assertion MUST contain a valid CBOR data structure that contains
 /// the required fields as documented in the identity rule in [Section 5.2,
@@ -167,7 +185,7 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -297,7 +315,7 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -405,7 +423,7 @@ async fn no_hard_binding() {
     assert!(sp.referenced_assertions.is_empty());
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -714,7 +732,7 @@ async fn pad1_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -823,7 +841,7 @@ async fn pad2_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),

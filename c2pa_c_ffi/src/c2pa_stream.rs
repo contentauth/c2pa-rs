@@ -16,13 +16,11 @@ use std::{
     slice,
 };
 
+use cimpl::{box_tracked, cimpl_free, deref_mut_or_return_int, untrack_owned, Error as CimplError};
 #[cfg(test)]
-use crate::deref_mut_option;
-use crate::{
-    box_tracked, cimpl::untrack_owned, cimpl_free, deref_mut_or_return_int, error::C2paError,
-    ok_or_return_int, CimplError,
-};
+use cimpl::{deref_mut_option, TypedExclusive};
 
+use crate::{error::C2paError, macros::ok_or_return_int};
 #[repr(C)]
 #[derive(Debug)]
 /// An opaque struct to hold a context value for the stream callbacks.
@@ -267,7 +265,7 @@ impl TestStream {
 
     /// Borrow the C2paStream, with the guard keeping it alive as long as needed.
     /// Used through `Deref`/`DerefMut`.
-    pub fn stream_mut(&mut self) -> crate::TypedExclusive<C2paStream> {
+    pub fn stream_mut(&mut self) -> TypedExclusive<C2paStream> {
         deref_mut_option!(self.0, C2paStream).expect("TestStream always wraps a tracked C2paStream")
     }
 

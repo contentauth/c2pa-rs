@@ -26,9 +26,9 @@
                 "actions": [
                     {
                         "action": "c2pa.opened",
-                        "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                         "parameters": {
-                            "description": "import"
+                            "description": "import",
+                            "ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"]
                         },
                         "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                         "softwareAgent": {
