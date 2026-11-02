@@ -36,15 +36,17 @@ The [wrapper](../.github/workflows/main-ci-slack.yml) uses
 [contentauth/ci-workflows](https://github.com/contentauth/ci-workflows), pinned to
 a reviewed commit.
 
-* **Scope:** Tier 1A, Tier 1B, and Tier 2 on `main`; push, schedule, and manual
-  runs only. PRs and experimental features are excluded.
-* **Alerts:** Each tier's first failure alerts; repeats stay silent. Success
+* **Scope:** All workflows on `main`, including future additions; push, schedule,
+  and manual runs only. PRs and the notifier itself are excluded.
+* **Alerts:** Each workflow's first failure alerts; repeats stay silent. Success
   silently re-arms alerts. Timeouts and startup failures count as failures;
   cancelled and skipped runs preserve state.
+  Detection uses overall workflow results; failed `continue-on-error` jobs may
+  leave workflows successful and will not alert.
 * **Reruns:** Track attempts; ignore older run numbers after processing a newer run.
-* **State:** Per-tier artifacts in this repository; 90-day retention, refreshed
+* **State:** Per-workflow artifacts in this repository; 90-day retention, refreshed
   per processed result. Deleting or expiring state resets deduplication.
-  Notifications are serialized per tier, with up to 100 pending jobs.
+  Notifications are serialized per workflow, with up to 100 pending jobs.
 * **Retries:** Slack errors fail without advancing state. Fix delivery, then rerun
   the notifier. Delivery and state upload are not atomic; failed uploads after
   accepted delivery can cause duplicates on retry.

@@ -2,7 +2,7 @@ name: Main CI Slack alerts
 
 on:
   workflow_run:
-    workflows: [Tier 1A, Tier 1B, Tier 2]
+    workflows: ['*']
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -12,10 +12,10 @@ permissions:
 
 jobs:
   notify:
-    uses: contentauth/ci-workflows/.github/workflows/ci-slack.yml@9c763b2a182d39429c9df9998b6118c457b7026b
+    uses: contentauth/ci-workflows/.github/workflows/ci-slack.yml@3b0da24fcbea0e507dba39ad96ad78625f6855c8
     with:
       branch: main
-      workflow-names: '["Tier 1A", "Tier 1B", "Tier 2"]'
+      workflow-names: '["*"]'
       caller-workflow-path: .github/workflows/main-ci-slack.yml
       test-delivery: ${{ github.event_name == 'workflow_dispatch' }}
     secrets:
