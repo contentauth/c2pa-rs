@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::time::Duration;
+
 use async_generic::async_generic;
 use bcder::{decode::Constructed, encode::Values};
 use http::header;
@@ -26,7 +28,7 @@ use crate::{
             TimeStampError,
         },
     },
-    http::HttpResolverError,
+    http::{HttpResolverError, RequestTimeout},
     status_tracker::StatusTracker,
 };
 
@@ -54,7 +56,7 @@ pub fn default_rfc3161_request(
     })?;
 
     let ts = if _sync {
-        time_stamp_request_http(url, headers, &request, context)?
+        time_stamp_request_http_with_retries(url, headers, &request, context)?
     } else {
         time_stamp_request_http_async(url, headers, &request, context).await?
     };
@@ -70,6 +72,51 @@ pub fn default_rfc3161_request(
     }
 
     Ok(ts)
+}
+
+/// Sends a blocking time-stamp request, and sends it again after a transient failure.
+///
+/// The number of attempts and the pause between them come from the context's settings
+/// ([`Core::time_stamp_request_attempts`], [`Core::time_stamp_retry_delay_in_ms`]). Only the
+/// blocking path retries: the async one has no runtime-independent way to pause.
+///
+/// [`Core::time_stamp_request_attempts`]: crate::settings::Core::time_stamp_request_attempts
+/// [`Core::time_stamp_retry_delay_in_ms`]: crate::settings::Core::time_stamp_retry_delay_in_ms
+fn time_stamp_request_http_with_retries(
+    url: &str,
+    headers: Option<Vec<(String, String)>>,
+    timestamp_request: &TimeStampReq,
+    context: &Context,
+) -> Result<Vec<u8>, TimeStampError> {
+    let core = &context.settings().core;
+    let attempts = core.time_stamp_request_attempts.max(1);
+    let mut delay = Duration::from_millis(core.time_stamp_retry_delay_in_ms);
+    let mut attempt = 1;
+    loop {
+        match time_stamp_request_http(url, headers.clone(), timestamp_request, context) {
+            Err(err) if attempt < attempts && is_transient(&err) => {
+                std::thread::sleep(delay);
+                delay = delay.saturating_mul(2);
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Whether another attempt of a time-stamp request may succeed: no answer, a timeout, or an
+/// HTTP status that asks to try again later.
+fn is_transient(err: &TimeStampError) -> bool {
+    match err {
+        TimeStampError::HttpErrorResponse(status, _) => {
+            matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
+        }
+        TimeStampError::HttpConnectionError(_) | TimeStampError::IoError(_) => true,
+        TimeStampError::HttpResolverError(
+            HttpResolverError::Io(_) | HttpResolverError::Other(_),
+        ) => true,
+        _ => false,
+    }
 }
 
 #[async_generic]
@@ -99,7 +146,11 @@ fn time_stamp_request_http(
         }
     }
 
-    let request = request.header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST);
+    let request = request
+        .header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST)
+        .extension(RequestTimeout(Duration::from_millis(
+            context.settings().core.time_stamp_request_timeout_in_ms,
+        )));
 
     let response = if _sync {
         context
@@ -159,7 +210,11 @@ fn time_stamp_request_http(
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::io::{self, Cursor, Read};
+    use std::{
+        collections::VecDeque,
+        io::{self, Cursor, Read},
+        sync::{Arc, Mutex},
+    };
 
     use async_trait::async_trait;
     use http::{Request, Response};
@@ -346,6 +401,130 @@ mod tests {
             .await,
             Err(TimeStampError::InternalError(_))
         ));
+    }
+
+    /// One scripted answer of [`SequenceResolver`].
+    enum Outcome {
+        Status(u16),
+        Unreachable,
+        Disallowed,
+    }
+
+    /// Answers each request with the next scripted outcome, then with a well-formed response,
+    /// and records the timeout each request carried.
+    #[derive(Clone)]
+    struct SequenceResolver {
+        outcomes: Arc<Mutex<VecDeque<Outcome>>>,
+        timeouts: Arc<Mutex<Vec<Option<RequestTimeout>>>>,
+    }
+
+    impl SequenceResolver {
+        fn new(outcomes: Vec<Outcome>) -> Self {
+            Self {
+                outcomes: Arc::new(Mutex::new(outcomes.into())),
+                timeouts: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.timeouts.lock().unwrap().len()
+        }
+    }
+
+    impl SyncHttpResolver for SequenceResolver {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            self.timeouts
+                .lock()
+                .unwrap()
+                .push(request.extensions().get::<RequestTimeout>().copied());
+            let (status, body) = match self.outcomes.lock().unwrap().pop_front() {
+                Some(Outcome::Unreachable) => {
+                    return Err(HttpResolverError::Io(io::Error::from(
+                        io::ErrorKind::ConnectionRefused,
+                    )))
+                }
+                Some(Outcome::Disallowed) => {
+                    return Err(HttpResolverError::UriDisallowed {
+                        uri: request.uri().to_string(),
+                    })
+                }
+                Some(Outcome::Status(status)) => (status, Vec::new()),
+                None => (200, response_der(2, None)),
+            };
+            let body: Box<dyn Read> = Box::new(Cursor::new(body));
+            Ok(Response::builder()
+                .status(status)
+                .header(header::CONTENT_TYPE, "application/timestamp-reply")
+                .body(body)
+                .unwrap())
+        }
+    }
+
+    /// Sends a request through `resolver` with the given attempts, a 2 s timeout and no pause.
+    fn request_with_retries(
+        resolver: &SequenceResolver,
+        attempts: u32,
+    ) -> Result<Vec<u8>, TimeStampError> {
+        let context = Context::new()
+            .with_settings_value("core.time_stamp_request_attempts", attempts)
+            .unwrap()
+            .with_settings_value("core.time_stamp_request_timeout_in_ms", 2000u64)
+            .unwrap()
+            .with_settings_value("core.time_stamp_retry_delay_in_ms", 0u64)
+            .unwrap()
+            .with_resolver(resolver.clone());
+        time_stamp_request_http_with_retries("https://tsa.example/", None, &request(), &context)
+    }
+
+    #[test]
+    fn transient_failures_are_retried_with_a_timeout_on_each_attempt() {
+        let resolver = SequenceResolver::new(vec![Outcome::Unreachable, Outcome::Status(503)]);
+        assert_eq!(
+            request_with_retries(&resolver, 3).unwrap(),
+            response_der(2, None)
+        );
+        assert_eq!(resolver.calls(), 3);
+        assert!(resolver
+            .timeouts
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|timeout| *timeout == Some(RequestTimeout(Duration::from_millis(2000)))));
+    }
+
+    #[test]
+    fn retries_stop_after_the_last_attempt() {
+        for attempts in [1, 2, 5] {
+            let resolver =
+                SequenceResolver::new((0..attempts + 1).map(|_| Outcome::Status(429)).collect());
+            assert!(matches!(
+                request_with_retries(&resolver, attempts),
+                Err(TimeStampError::HttpErrorResponse(429, _))
+            ));
+            assert_eq!(resolver.calls(), attempts as usize);
+        }
+    }
+
+    #[test]
+    fn permanent_failures_are_not_retried() {
+        let resolver = SequenceResolver::new(vec![Outcome::Status(400)]);
+        assert!(matches!(
+            request_with_retries(&resolver, 3),
+            Err(TimeStampError::HttpErrorResponse(400, _))
+        ));
+        assert_eq!(resolver.calls(), 1);
+
+        let resolver = SequenceResolver::new(vec![Outcome::Disallowed]);
+        assert!(matches!(
+            request_with_retries(&resolver, 3),
+            Err(TimeStampError::HttpResolverError(
+                HttpResolverError::UriDisallowed { .. }
+            ))
+        ));
+        assert_eq!(resolver.calls(), 1);
     }
 
     #[c2pa_macros::c2pa_test_async]

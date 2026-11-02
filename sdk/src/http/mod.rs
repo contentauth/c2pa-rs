@@ -103,6 +103,7 @@
 use std::{
     io::{self, Cursor, Read},
     sync::Arc,
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -121,6 +122,14 @@ pub mod restricted;
 
 // Since we expose `http::Request` and `http::Response` in the public API, we also expose the `http` crate.
 pub use http;
+
+/// A total time limit for one request, set as a request extension.
+///
+/// The SDK sets it on requests that must not wait for the client's default timeout, such as
+/// time-stamp requests. The built-in `reqwest` resolvers apply it; a custom resolver may read it
+/// with `request.extensions().get::<RequestTimeout>()`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RequestTimeout(pub Duration);
 
 /// A resolver for sync (blocking) HTTP requests.
 //
