@@ -154,6 +154,8 @@ Equivalent JSON configuration:
 ```
 
 Async time-stamp requests are sent once, with the same per-attempt time limit.
+Blocking requests on browser WASM are also sent once because that target cannot
+sleep between attempts. Native and WASI blocking requests honor the retry settings.
 
 Signing passes the caller's `Context` through to the timestamp provider, including custom
 HTTP resolvers and network policy. Redirects share one attempt's timeout budget rather

@@ -535,7 +535,7 @@ pub struct Core {
     /// timeout, or an HTTP 408, 429, 500, 502, 503 or 504 response. `1` disables retries.
     ///
     /// The default is 3. The value must be at least 1. Async time-stamp requests are sent
-    /// once.
+    /// once, as are blocking requests on browser WASM (which cannot sleep between attempts).
     pub time_stamp_request_attempts: u32,
     /// Time limit of each time-stamp request attempt, in milliseconds, applied by the
     /// SDK's built-in HTTP resolvers. A time-stamp service answers in well under a second;

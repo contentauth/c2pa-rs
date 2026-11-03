@@ -417,6 +417,10 @@ mod tests {
         for (attempts, timeout) in [(2, 37), (4, 83)] {
             let resolver = TimestampResolver::default();
             let context = timestamp_context(resolver.clone(), attempts, timeout);
+            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            let context = context
+                .with_settings_value("core.time_stamp_retry_delay_in_ms", 500u64)
+                .unwrap();
             assert!(super::cose_sign(
                 &signer,
                 b"claim",
@@ -427,7 +431,14 @@ mod tests {
             .is_err());
             assert_eq!(
                 *resolver.0.lock().unwrap(),
-                vec![Duration::from_millis(timeout); attempts as usize]
+                vec![
+                    Duration::from_millis(timeout);
+                    if cfg!(all(target_arch = "wasm32", not(target_os = "wasi"))) {
+                        1
+                    } else {
+                        attempts as usize
+                    }
+                ]
             );
             resolver.0.lock().unwrap().clear();
             assert!(super::cose_sign_async(

@@ -78,7 +78,8 @@ pub fn default_rfc3161_request(
 ///
 /// The number of attempts and the pause between them come from the context's settings
 /// ([`Core::time_stamp_request_attempts`], [`Core::time_stamp_retry_delay_in_ms`]). Only the
-/// blocking path retries: the async one has no runtime-independent way to pause.
+/// blocking path retries on native and WASI targets: the async path and browser WASM
+/// have no runtime-independent way to pause.
 ///
 /// [`Core::time_stamp_request_attempts`]: crate::settings::Core::time_stamp_request_attempts
 /// [`Core::time_stamp_retry_delay_in_ms`]: crate::settings::Core::time_stamp_retry_delay_in_ms
@@ -88,15 +89,25 @@ fn time_stamp_request_http_with_retries(
     timestamp_request: &TimeStampReq,
     context: &Context,
 ) -> Result<Vec<u8>, TimeStampError> {
+    #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
     let core = &context.settings().core;
+    #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
     let attempts = core.time_stamp_request_attempts.max(1);
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    let attempts = 1;
+    #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
     let mut delay = Duration::from_millis(core.time_stamp_retry_delay_in_ms);
     let mut attempt = 1;
     loop {
         match time_stamp_request_http(url, headers.clone(), timestamp_request, context) {
             Err(err) if attempt < attempts && is_transient(&err) => {
-                std::thread::sleep(delay);
-                delay = delay.saturating_mul(2);
+                #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
+                {
+                    if !delay.is_zero() {
+                        std::thread::sleep(delay);
+                    }
+                    delay = delay.saturating_mul(2);
+                }
                 attempt += 1;
             }
             result => return result,
