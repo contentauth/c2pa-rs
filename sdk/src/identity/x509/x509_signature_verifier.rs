@@ -690,12 +690,22 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(info.cert_info.alg, Some(SigningAlg::Ed25519));
+            assert_eq!(info.cert_info.revocation_status, None);
+            let report = super::X509SignatureReport::from_x509_signature_info(&info);
+            assert_eq!(report.signature_info.revocation_status, None);
+            let json = serde_json::to_value(&report).unwrap();
+            assert!(json["signature_info"].get("revocation_status").is_none());
 
             let mut sync_log = StatusTracker::default();
             let info = verifier
                 .check_signature(&identity.signer_payload, &identity.signature, &mut sync_log)
                 .unwrap();
             assert_eq!(info.cert_info.alg, Some(SigningAlg::Ed25519));
+            assert_eq!(info.cert_info.revocation_status, None);
+            let report = super::X509SignatureReport::from_x509_signature_info(&info);
+            assert_eq!(report.signature_info.revocation_status, None);
+            let json = serde_json::to_value(&report).unwrap();
+            assert!(json["signature_info"].get("revocation_status").is_none());
 
             for log in [&async_log, &sync_log] {
                 let trusted = kind == TrustAnchorType::CAWG;
