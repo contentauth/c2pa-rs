@@ -904,6 +904,22 @@ mod tests {
         wasm_bindgen_test
     )]
     fn ocsp_signing_allows_nonrepudiation_without_digital_signature() {
+        fn oid(components: &[u32]) -> rasn::types::ObjectIdentifier {
+            rasn::types::ObjectIdentifier::new(components.to_vec()).unwrap()
+        }
+
+        fn extension(cert: &mut Certificate, components: &[u32], value: Vec<u8>) {
+            let id = oid(components);
+            cert.tbs_certificate
+                .extensions
+                .as_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|extension| extension.extn_id == id)
+                .unwrap()
+                .extn_value = value.into();
+        }
+
         let chain = generate_ephemeral_chain("ocsp-key-usage.local").unwrap();
         let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
         // KeyUsage BIT STRING with only nonRepudiation asserted.
