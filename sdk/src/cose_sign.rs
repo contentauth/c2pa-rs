@@ -31,7 +31,7 @@ use crate::{
     },
     settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
-    AsyncSigner, Error, Result, Signer,
+    AsyncSigner, Context, Error, Result, Signer,
 };
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
@@ -39,6 +39,7 @@ use crate::{
 ///
 /// Should only be used when the underlying signature mechanism is detached
 /// from the generation of the C2PA manifest (and thus the claim embedded in it).
+/// `context` supplies signing settings and the HTTP resolver/network policy for timestamps.
 ///
 /// ## Actions taken
 ///
@@ -55,14 +56,15 @@ use crate::{
     claim_bytes: &[u8],
     signer: &dyn AsyncSigner,
     box_size: usize,
-    settings: &Settings,
+    context: &Context,
 ))]
 pub fn sign_claim(
     claim_bytes: &[u8],
     signer: &dyn Signer,
     box_size: usize,
-    settings: &Settings,
+    context: &Context,
 ) -> Result<Vec<u8>> {
+    let settings = context.settings();
     // Must be a valid claim.
     let label = "dummy_label";
     let claim = Claim::from_data(label, claim_bytes)?;
@@ -74,9 +76,9 @@ pub fn sign_claim(
     };
 
     let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size, tss, settings)
+        cose_sign(signer, claim_bytes, box_size, tss, context)
     } else {
-        cose_sign_async(signer, claim_bytes, box_size, tss, settings).await
+        cose_sign_async(signer, claim_bytes, box_size, tss, context).await
     };
 
     match signed_bytes {
@@ -116,15 +118,16 @@ pub fn sign_claim(
     data: &[u8],
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
-    settings: &Settings,
+    context: &Context,
 ))]
 pub(crate) fn cose_sign(
     signer: &dyn Signer,
     data: &[u8],
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
-    settings: &Settings,
+    context: &Context,
 ) -> Result<Vec<u8>> {
+    let settings = context.settings();
     // Make sure the signing cert is valid.
     let certs = signer.certs()?;
     if let Some(signing_cert) = certs.first() {
@@ -135,10 +138,16 @@ pub(crate) fn cose_sign(
 
     if _sync {
         let wrapper = SignerWrapper(signer);
-        Ok(sign(&wrapper, data, Some(box_size), time_stamp_storage)?)
+        Ok(sign(
+            &wrapper,
+            data,
+            Some(box_size),
+            time_stamp_storage,
+            context,
+        )?)
     } else {
         let wrapper = AsyncSignerWrapper(signer);
-        Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage).await?)
+        Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage, context).await?)
     }
 }
 
@@ -211,9 +220,10 @@ impl TimeStampProvider for SignerWrapper<'_> {
     fn send_time_stamp_request(
         &self,
         message: &[u8],
+        context: &Context,
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.0
-            .send_timestamp_request(message)
+            .send_timestamp_request(message, context)
             .map(|r| r.map_err(|e| e.into()))
     }
 }
@@ -266,9 +276,10 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
     async fn send_time_stamp_request(
         &self,
         message: &[u8],
+        context: &Context,
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.0
-            .send_timestamp_request(message)
+            .send_timestamp_request(message, context)
             .await
             .map(|r| r.map_err(|e| e.into()))
     }
@@ -277,7 +288,291 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use std::{
+        io::{Cursor, Read},
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
+    use async_trait::async_trait;
+    use http::{Request, Response};
+
+    use crate::{
+        http::{AsyncHttpResolver, HttpResolverError, RequestTimeout, SyncHttpResolver},
+        Context,
+    };
+
+    #[derive(Clone, Default)]
+    struct TimestampResolver(Arc<Mutex<Vec<Duration>>>);
+
+    impl SyncHttpResolver for TimestampResolver {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> std::result::Result<Response<Box<dyn Read>>, HttpResolverError> {
+            assert_eq!(request.headers()["x-timestamp-hook"], "preserved");
+            assert!(!request.body().is_empty());
+            self.0
+                .lock()
+                .unwrap()
+                .push(request.extensions().get::<RequestTimeout>().unwrap().0);
+            Ok(Response::builder()
+                .status(503)
+                .body(Box::new(Cursor::new(Vec::<u8>::new())) as Box<dyn Read>)
+                .unwrap())
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl AsyncHttpResolver for TimestampResolver {
+        async fn http_resolve_async(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> std::result::Result<Response<Box<dyn Read>>, HttpResolverError> {
+            self.http_resolve(request)
+        }
+    }
+
+    struct ContextSigner(crate::signer::BoxedSigner, Arc<Mutex<usize>>);
+
+    impl Signer for ContextSigner {
+        fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+            self.0.sign(data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            self.0.alg()
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            self.0.certs()
+        }
+
+        fn reserve_size(&self) -> usize {
+            self.0.reserve_size()
+        }
+
+        fn time_authority_url(&self) -> Option<String> {
+            Some("https://tsa.example/".into())
+        }
+
+        fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+            Some(vec![("x-timestamp-hook".into(), "preserved".into())])
+        }
+
+        fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+            *self.1.lock().unwrap() += 1;
+            crate::crypto::time_stamp::default_rfc3161_message(message).map_err(Into::into)
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl crate::AsyncSigner for ContextSigner {
+        async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+            self.0.sign(&data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            self.0.alg()
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            self.0.certs()
+        }
+
+        fn reserve_size(&self) -> usize {
+            self.0.reserve_size()
+        }
+
+        fn time_authority_url(&self) -> Option<String> {
+            Signer::time_authority_url(self)
+        }
+
+        fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+            Signer::timestamp_request_headers(self)
+        }
+
+        fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+            Signer::timestamp_request_body(self, message)
+        }
+    }
+
+    fn timestamp_context(resolver: TimestampResolver, attempts: u32, timeout: u64) -> Context {
+        Context::new()
+            .with_settings_value("core.time_stamp_request_attempts", attempts)
+            .unwrap()
+            .with_settings_value("core.time_stamp_request_timeout_in_ms", timeout)
+            .unwrap()
+            .with_settings_value("core.time_stamp_retry_delay_in_ms", 0u64)
+            .unwrap()
+            .with_resolver(resolver.clone())
+            .with_resolver_async(resolver)
+    }
+
+    #[c2pa_test_async]
+    async fn signing_wrapper_uses_instance_timestamp_context() {
+        let signer = ContextSigner(test_signer(SigningAlg::Ps256), Arc::new(Mutex::new(0)));
+        for (attempts, timeout) in [(2, 37), (4, 83)] {
+            let resolver = TimestampResolver::default();
+            let context = timestamp_context(resolver.clone(), attempts, timeout);
+            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            let context = context
+                .with_settings_value("core.time_stamp_retry_delay_in_ms", 500u64)
+                .unwrap();
+            assert!(super::cose_sign(
+                &signer,
+                b"claim",
+                Signer::reserve_size(&signer),
+                crate::crypto::cose::TimeStampStorage::V1_sigTst,
+                &context
+            )
+            .is_err());
+            assert_eq!(
+                *resolver.0.lock().unwrap(),
+                vec![
+                    Duration::from_millis(timeout);
+                    if cfg!(all(target_arch = "wasm32", not(target_os = "wasi"))) {
+                        1
+                    } else {
+                        attempts as usize
+                    }
+                ]
+            );
+            resolver.0.lock().unwrap().clear();
+            assert!(super::cose_sign_async(
+                &signer,
+                b"claim",
+                Signer::reserve_size(&signer),
+                crate::crypto::cose::TimeStampStorage::V2_sigTst2_CTT,
+                &context
+            )
+            .await
+            .is_err());
+            assert_eq!(
+                *resolver.0.lock().unwrap(),
+                vec![Duration::from_millis(timeout)]
+            );
+        }
+        assert_eq!(*signer.1.lock().unwrap(), 4);
+        let context = Context::new()
+            .with_settings_value("core.allowed_network_hosts", vec!["other.example"])
+            .unwrap();
+        let error = super::cose_sign(
+            &signer,
+            b"claim",
+            Signer::reserve_size(&signer),
+            crate::crypto::cose::TimeStampStorage::V1_sigTst,
+            &context,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("not permitted by the allowed list"),
+            "{error:?}"
+        );
+        let error = super::cose_sign_async(
+            &signer,
+            b"claim",
+            Signer::reserve_size(&signer),
+            crate::crypto::cose::TimeStampStorage::V2_sigTst2_CTT,
+            &context,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("not permitted by the allowed list"),
+            "{error:?}"
+        );
+    }
+
+    struct OverrideSigner;
+
+    impl Signer for OverrideSigner {
+        fn sign(&self, _: &[u8]) -> Result<Vec<u8>> {
+            unreachable!()
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ps256
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            unreachable!()
+        }
+
+        fn reserve_size(&self) -> usize {
+            0
+        }
+
+        fn time_authority_url(&self) -> Option<String> {
+            Some("https://must-not-be-called.example/".into())
+        }
+
+        fn send_timestamp_request(
+            &self,
+            message: &[u8],
+            context: &Context,
+        ) -> Option<Result<Vec<u8>>> {
+            assert_eq!(context.settings().core.time_stamp_request_timeout_in_ms, 37);
+            Some(Ok(message.to_vec()))
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl crate::AsyncSigner for OverrideSigner {
+        async fn sign(&self, _: Vec<u8>) -> Result<Vec<u8>> {
+            unreachable!()
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ps256
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            unreachable!()
+        }
+
+        fn reserve_size(&self) -> usize {
+            0
+        }
+
+        fn time_authority_url(&self) -> Option<String> {
+            Signer::time_authority_url(self)
+        }
+
+        async fn send_timestamp_request(
+            &self,
+            message: &[u8],
+            context: &Context,
+        ) -> Option<Result<Vec<u8>>> {
+            Signer::send_timestamp_request(self, message, context)
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn timestamp_overrides_keep_dispatch_and_context() {
+        use crate::crypto::time_stamp::{AsyncTimeStampProvider, TimeStampProvider};
+        let resolver = TimestampResolver::default();
+        let context = timestamp_context(resolver.clone(), 2, 37);
+        assert_eq!(
+            super::SignerWrapper(&OverrideSigner)
+                .send_time_stamp_request(b"custom", &context)
+                .unwrap()
+                .unwrap(),
+            b"custom"
+        );
+        assert_eq!(
+            super::AsyncSignerWrapper(&OverrideSigner)
+                .send_time_stamp_request(b"custom", &context)
+                .await
+                .unwrap()
+                .unwrap(),
+            b"custom"
+        );
+        assert!(resolver.0.lock().unwrap().is_empty());
+    }
     use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -308,7 +603,8 @@ mod tests {
         let signer = test_signer(SigningAlg::Ps256);
         let box_size = Signer::reserve_size(signer.as_ref());
 
-        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings).unwrap();
+        let context = Context::new().with_settings(settings).unwrap();
+        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size, &context).unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }
@@ -333,7 +629,8 @@ mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
-        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size, &settings)
+        let context = Context::new().with_settings(settings).unwrap();
+        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size, &context)
             .await
             .unwrap();
 
@@ -368,7 +665,11 @@ mod tests {
             1024
         }
 
-        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+        fn send_timestamp_request(
+            &self,
+            _message: &[u8],
+            _context: &Context,
+        ) -> Option<crate::error::Result<Vec<u8>>> {
             Some(Ok(Vec::new()))
         }
     }
@@ -386,7 +687,8 @@ mod tests {
 
         let signer = BogusSigner::new();
 
-        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size, &settings);
+        let context = Context::new().with_settings(settings).unwrap();
+        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size, &context);
 
         assert!(_cose_sign1.is_err());
     }
