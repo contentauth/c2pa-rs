@@ -601,13 +601,27 @@ pub mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn slow_server(delay_body: bool) -> (String, std::thread::JoinHandle<()>) {
-        use std::{io::Write, net::TcpListener};
+        use std::{
+            io::{BufRead, BufReader, Write},
+            net::TcpListener,
+        };
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let task = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut buffer = [0; 4096];
-            stream.read(&mut buffer).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            {
+                let mut reader = BufReader::new(&mut stream);
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+            }
             if delay_body {
                 stream
                     .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")

@@ -444,6 +444,8 @@ fn apply_remaining_timeout(
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod timeout_tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::http::RequestTimeout;
     use std::{
