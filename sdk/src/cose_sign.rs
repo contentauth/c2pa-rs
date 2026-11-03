@@ -288,14 +288,18 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use crate::http::{AsyncHttpResolver, HttpResolverError, RequestTimeout, SyncHttpResolver};
-    use crate::Context;
-    use async_trait::async_trait;
-    use http::{Request, Response};
     use std::{
         io::{Cursor, Read},
         sync::{Arc, Mutex},
         time::Duration,
+    };
+
+    use async_trait::async_trait;
+    use http::{Request, Response};
+
+    use crate::{
+        http::{AsyncHttpResolver, HttpResolverError, RequestTimeout, SyncHttpResolver},
+        Context,
     };
 
     #[derive(Clone, Default)]
@@ -336,21 +340,27 @@ mod tests {
         fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
             self.0.sign(data)
         }
+
         fn alg(&self) -> SigningAlg {
             self.0.alg()
         }
+
         fn certs(&self) -> Result<Vec<Vec<u8>>> {
             self.0.certs()
         }
+
         fn reserve_size(&self) -> usize {
             self.0.reserve_size()
         }
+
         fn time_authority_url(&self) -> Option<String> {
             Some("https://tsa.example/".into())
         }
+
         fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
             Some(vec![("x-timestamp-hook".into(), "preserved".into())])
         }
+
         fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
             *self.1.lock().unwrap() += 1;
             crate::crypto::time_stamp::default_rfc3161_message(message).map_err(Into::into)
@@ -363,21 +373,27 @@ mod tests {
         async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
             self.0.sign(&data)
         }
+
         fn alg(&self) -> SigningAlg {
             self.0.alg()
         }
+
         fn certs(&self) -> Result<Vec<Vec<u8>>> {
             self.0.certs()
         }
+
         fn reserve_size(&self) -> usize {
             self.0.reserve_size()
         }
+
         fn time_authority_url(&self) -> Option<String> {
             Signer::time_authority_url(self)
         }
+
         fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
             Signer::timestamp_request_headers(self)
         }
+
         fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
             Signer::timestamp_request_body(self, message)
         }
@@ -465,18 +481,23 @@ mod tests {
         fn sign(&self, _: &[u8]) -> Result<Vec<u8>> {
             unreachable!()
         }
+
         fn alg(&self) -> SigningAlg {
             SigningAlg::Ps256
         }
+
         fn certs(&self) -> Result<Vec<Vec<u8>>> {
             unreachable!()
         }
+
         fn reserve_size(&self) -> usize {
             0
         }
+
         fn time_authority_url(&self) -> Option<String> {
             Some("https://must-not-be-called.example/".into())
         }
+
         fn send_timestamp_request(
             &self,
             message: &[u8],
@@ -493,18 +514,23 @@ mod tests {
         async fn sign(&self, _: Vec<u8>) -> Result<Vec<u8>> {
             unreachable!()
         }
+
         fn alg(&self) -> SigningAlg {
             SigningAlg::Ps256
         }
+
         fn certs(&self) -> Result<Vec<Vec<u8>>> {
             unreachable!()
         }
+
         fn reserve_size(&self) -> usize {
             0
         }
+
         fn time_authority_url(&self) -> Option<String> {
             Signer::time_authority_url(self)
         }
+
         async fn send_timestamp_request(
             &self,
             message: &[u8],

@@ -446,13 +446,14 @@ fn apply_remaining_timeout(
 mod timeout_tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-    use crate::http::RequestTimeout;
     use std::{
         io::Cursor,
         sync::{Arc, Mutex},
         time::Duration,
     };
+
+    use super::*;
+    use crate::http::RequestTimeout;
 
     #[derive(Clone, Default)]
     struct Redirecting(Arc<Mutex<Vec<Duration>>>);
