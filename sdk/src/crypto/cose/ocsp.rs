@@ -203,9 +203,43 @@ pub fn check_ocsp_status(
             }
         }
 
-        // The stapled response could not be used. If online fetching is disabled,
-        // the validator has chosen not to perform an online OCSP check.
+        // The stapled response could not be used. With online fetching disabled,
+        // use any OCSP responses from certificate status assertions (C2PA §15.9);
+        // if none establishes a status, the validator has chosen not to perform an
+        // online OCSP check.
         if fetch_policy == OcspFetchPolicy::DoNotFetch {
+            if let Some(ocsp_response_ders) = ocsp_responses.filter(|ders| !ders.is_empty()) {
+                let mut cert_status_log = StatusTracker::default();
+                let result = if _sync {
+                    process_ocsp_responses(
+                        sign1,
+                        data,
+                        ctp,
+                        ocsp_response_ders,
+                        tst_info,
+                        &mut cert_status_log,
+                        context.settings(),
+                    )
+                } else {
+                    process_ocsp_responses_async(
+                        sign1,
+                        data,
+                        ctp,
+                        ocsp_response_ders,
+                        tst_info,
+                        &mut cert_status_log,
+                        context.settings(),
+                    )
+                    .await
+                };
+                if result.is_err()
+                    || cert_status_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                {
+                    validation_log.append(&cert_status_log);
+                    return result;
+                }
+            }
+
             log_item!("", "OCSP fetching skipped", "check_ocsp_status")
                 .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
                 .informational(validation_log);
@@ -582,6 +616,7 @@ fn ocsp_signing_chain(certs: &[Vec<u8>], ctp: &CertificateTrustPolicy) -> Vec<Ve
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
+/// A revoked signing credential returns a certificate trust error.
 #[async_generic(async_signature(
     sign1: &CoseSign1,
     data: &[u8],
@@ -662,13 +697,19 @@ pub(crate) fn fetch_and_check_ocsp_response(
         return Ok(OcspResponse::default());
     };
 
-    Ok(validate_fetched_ocsp(
+    let response = validate_fetched_ocsp(
         &ocsp_response_der,
         &certs,
         ctp,
         signing_time,
         validation_log,
-    ))
+    );
+    if response.revoked_at.is_some() {
+        return Err(CoseError::CertificateTrustError(
+            CertificateTrustError::CertificateNotTrusted,
+        ));
+    }
+    Ok(response)
 }
 
 /// Validate a fetched OCSP response for the certificate identified by
@@ -795,6 +836,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use chrono::{TimeZone, Utc};
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
     use crate::crypto::cert_chain_pem_to_der;
@@ -1115,6 +1158,120 @@ mod tests {
         ));
         assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
         assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn fetched_leaf_revocation_returns_trust_error() {
+        use std::{
+            io::{Cursor, Read},
+            sync::{
+                atomic::{AtomicUsize, Ordering},
+                Arc,
+            },
+        };
+
+        use http::{Request, Response};
+        use rasn_pkix::Certificate;
+
+        use crate::http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver};
+
+        struct RevokedResolver(Arc<AtomicUsize>);
+
+        impl SyncHttpResolver for RevokedResolver {
+            fn http_resolve(
+                &self,
+                _: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                let der = include_bytes!(
+                    "../../../tests/fixtures/crypto/ocsp/es256_revoked_response.der"
+                )
+                .to_vec();
+                Ok(Response::builder()
+                    .status(200)
+                    .body(Box::new(Cursor::new(der)) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncHttpResolver for RevokedResolver {
+            async fn http_resolve_async(
+                &self,
+                request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                self.http_resolve(request)
+            }
+        }
+
+        let mut chain = leaf_and_intermediate();
+        let mut leaf: Certificate = rasn::der::decode(&chain[0]).unwrap();
+        let online_leaf: Certificate = rasn::der::decode(&ca_chain()[0]).unwrap();
+        // Add a fixture AIA without changing the certificate ID matched by OCSP.
+        // This isolates the fetch path; COSE certificate-chain verification is separate.
+        let aia = online_leaf
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|extension| extension.extn_id.to_string() == "1.3.6.1.5.5.7.1.1")
+            .cloned()
+            .unwrap();
+        leaf.tbs_certificate.extensions.as_mut().unwrap().push(aia);
+        chain[0] = rasn::der::encode(&leaf).unwrap();
+        let sign1 = sign1_with_x5chain(&chain);
+        let mut ctp = CertificateTrustPolicy::default();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/es256_revoked_responder.pem"
+        ))
+        .unwrap();
+
+        for use_async in [false, true] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let context = Context::new()
+                .with_resolver(RevokedResolver(calls.clone()))
+                .with_resolver_async(RevokedResolver(calls.clone()))
+                .with_settings(serde_json::json!({
+                    "verify": {"ocsp_fetch": true, "ocsp_fetch_should_override": false}
+                }))
+                .unwrap();
+            let mut log = StatusTracker::default();
+            let result = if use_async {
+                check_ocsp_status_async(
+                    &sign1,
+                    b"payload",
+                    OcspFetchPolicy::FetchAllowed,
+                    &ctp,
+                    None,
+                    None,
+                    &mut log,
+                    &context,
+                )
+                .await
+            } else {
+                check_ocsp_status(
+                    &sign1,
+                    b"payload",
+                    OcspFetchPolicy::FetchAllowed,
+                    &ctp,
+                    None,
+                    None,
+                    &mut log,
+                    &context,
+                )
+            };
+            assert!(calls.load(Ordering::SeqCst) > 0);
+            assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
+            assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+            assert!(matches!(
+                result,
+                Err(CoseError::CertificateTrustError(
+                    CertificateTrustError::CertificateNotTrusted
+                ))
+            ));
+        }
     }
 
     // Drives the full online path: each cert (leaf and issuing CA) is queried
@@ -1555,35 +1712,41 @@ mod tests {
         assert!(log1.has_status(SIGNING_CREDENTIAL_REVOKED));
         assert_eq!(counter1.load(Ordering::SeqCst), 0);
 
-        // Case 2 (Live OCSP response supersedes static stapled responses when override is enabled)
-        let counter2 = Arc::new(AtomicUsize::new(0));
-        let resolver2 = CountingSyncResolver {
-            counter: counter2.clone(),
-            status: 200,
-            body: good.clone(),
-        };
-        let settings2 = Settings::new()
-            .with_json(r#"{"verify": {"ocsp_fetch_should_override": true}}"#)
-            .unwrap();
-        let context2 = Context::new()
-            .with_settings(settings2)
-            .unwrap()
-            .with_resolver(resolver2);
-        let mut log2 = StatusTracker::default();
-        let result2 = check_ocsp_status(
-            &sign1_revoked,
-            b"data",
-            OcspFetchPolicy::FetchAllowed,
-            &anchored,
-            None,
-            None,
-            &mut log2,
-            &context2,
-        );
-        assert!(result2.is_ok());
-        assert!(counter2.load(Ordering::SeqCst) > 0);
-        assert!(log2.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
-        assert!(!log2.has_status(SIGNING_CREDENTIAL_REVOKED));
+        // Case 2 (Live OCSP response supersedes static stapled responses when override is enabled).
+        // The live response must be current: the stale fixture cannot establish "not revoked".
+        #[cfg(feature = "openssl")]
+        {
+            let mut anchored = anchored.clone();
+            let live_good = trusted_fresh_good_response(&mut anchored);
+            let counter2 = Arc::new(AtomicUsize::new(0));
+            let resolver2 = CountingSyncResolver {
+                counter: counter2.clone(),
+                status: 200,
+                body: live_good,
+            };
+            let settings2 = Settings::new()
+                .with_json(r#"{"verify": {"ocsp_fetch_should_override": true}}"#)
+                .unwrap();
+            let context2 = Context::new()
+                .with_settings(settings2)
+                .unwrap()
+                .with_resolver(resolver2);
+            let mut log2 = StatusTracker::default();
+            let result2 = check_ocsp_status(
+                &sign1_revoked,
+                b"data",
+                OcspFetchPolicy::FetchAllowed,
+                &anchored,
+                None,
+                None,
+                &mut log2,
+                &context2,
+            );
+            assert!(result2.is_ok());
+            assert!(counter2.load(Ordering::SeqCst) > 0);
+            assert!(log2.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+            assert!(!log2.has_status(SIGNING_CREDENTIAL_REVOKED));
+        }
 
         // Case 2b: when override is enabled and live fetch fails with 404, fallback to assertion_responses preserves revocation
         let assertion_responses = vec![good.clone(), revoked.clone()];
@@ -1731,17 +1894,13 @@ mod tests {
             http::{AsyncHttpResolver, HttpResolverError},
             settings::Settings,
             status_tracker::StatusTracker,
-            validation_status::{
-                SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
-                SIGNING_CREDENTIAL_REVOKED,
-            },
+            validation_status::{SIGNING_CREDENTIAL_OCSP_INACCESSIBLE, SIGNING_CREDENTIAL_REVOKED},
         };
 
         let full_chain = cert_chain_pem_to_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
         ))
         .unwrap();
-        let good = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der").to_vec();
         let revoked =
             include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der").to_vec();
 
@@ -1807,36 +1966,42 @@ mod tests {
             }
         }
 
-        // 1. Live OCSP response supersedes static stapled responses when override is enabled
-        let counter1 = Arc::new(AtomicUsize::new(0));
-        let resolver1 = CountingAsyncResolver {
-            counter: counter1.clone(),
-            status: 200,
-            body: good.clone(),
-        };
-        let settings1 = Settings::new()
-            .with_json(r#"{"verify": {"ocsp_fetch_should_override": true}}"#)
-            .unwrap();
-        let context1 = Context::new()
-            .with_settings(settings1)
-            .unwrap()
-            .with_resolver_async(resolver1);
-        let mut log1 = StatusTracker::default();
-        let result1 = check_ocsp_status_async(
-            &sign1_revoked,
-            b"data",
-            OcspFetchPolicy::FetchAllowed,
-            &anchored,
-            None,
-            None,
-            &mut log1,
-            &context1,
-        )
-        .await;
-        assert!(result1.is_ok());
-        assert!(counter1.load(Ordering::SeqCst) > 0);
-        assert!(log1.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
-        assert!(!log1.has_status(SIGNING_CREDENTIAL_REVOKED));
+        // 1. Live OCSP response supersedes static stapled responses when override is enabled.
+        // The live response must be current: the stale fixture cannot establish "not revoked".
+        #[cfg(feature = "openssl")]
+        {
+            let mut anchored = anchored.clone();
+            let live_good = trusted_fresh_good_response(&mut anchored);
+            let counter1 = Arc::new(AtomicUsize::new(0));
+            let resolver1 = CountingAsyncResolver {
+                counter: counter1.clone(),
+                status: 200,
+                body: live_good,
+            };
+            let settings1 = Settings::new()
+                .with_json(r#"{"verify": {"ocsp_fetch_should_override": true}}"#)
+                .unwrap();
+            let context1 = Context::new()
+                .with_settings(settings1)
+                .unwrap()
+                .with_resolver_async(resolver1);
+            let mut log1 = StatusTracker::default();
+            let result1 = check_ocsp_status_async(
+                &sign1_revoked,
+                b"data",
+                OcspFetchPolicy::FetchAllowed,
+                &anchored,
+                None,
+                None,
+                &mut log1,
+                &context1,
+            )
+            .await;
+            assert!(result1.is_ok());
+            assert!(counter1.load(Ordering::SeqCst) > 0);
+            assert!(log1.has_status(crate::validation_status::SIGNING_CREDENTIAL_NOT_REVOKED));
+            assert!(!log1.has_status(SIGNING_CREDENTIAL_REVOKED));
+        }
 
         // 2. When the AsyncHttpResolver returns 404, check_ocsp_status_async falls back to the stapled response_revoked.der
         let counter2 = Arc::new(AtomicUsize::new(0));
@@ -2126,6 +2291,8 @@ mod tests {
         Empty,
         InvalidStaple,
         GoodStaple,
+        StaleGoodStapleFetches,
+        StaleStapleUsesSupplied,
         RevokedStaple,
         SuppliedGood,
         SuppliedRevoked,
@@ -2135,14 +2302,52 @@ mod tests {
         OverrideEmpty,
         OverrideMissing,
         StapleWins,
-        InvalidStapleIgnoresSupplied,
+        InvalidStapleUsesSupplied,
         FetchIgnoresSupplied,
         InvalidStapleFetches,
         UntrustedStapleFetches,
     }
 
-    fn status_case(case: StatusCase) -> (CoseSign1, Vec<Vec<u8>>, bool, OcspFetchPolicy, bool) {
-        let good = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der").to_vec();
+    /// The "good" OCSP response used by a matrix run. The bundled fixture is stale,
+    /// so without a trusted timestamp it is unusable evidence; on the OpenSSL backend
+    /// the matrix also runs with a freshly signed response to cover the "good" paths.
+    struct GoodVariant {
+        fresh: bool,
+        good: Vec<u8>,
+        ctp: CertificateTrustPolicy,
+    }
+
+    fn good_variants() -> Vec<GoodVariant> {
+        #[allow(unused_mut)]
+        let mut variants = vec![GoodVariant {
+            fresh: false,
+            good: STALE_GOOD.to_vec(),
+            ctp: trusted_responder(),
+        }];
+
+        #[cfg(feature = "openssl")]
+        {
+            let mut ctp = trusted_responder();
+            let good = trusted_fresh_good_response(&mut ctp);
+            variants.push(GoodVariant {
+                fresh: true,
+                good,
+                ctp,
+            });
+        }
+
+        variants
+    }
+
+    const STALE_GOOD: &[u8] =
+        include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
+
+    fn status_case(
+        case: StatusCase,
+        good: &[u8],
+    ) -> (CoseSign1, Vec<Vec<u8>>, bool, OcspFetchPolicy, bool) {
+        let good = good.to_vec();
+        let stale = STALE_GOOD.to_vec();
         let revoked =
             include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der").to_vec();
         let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain());
@@ -2154,6 +2359,14 @@ mod tests {
             StatusCase::Missing | StatusCase::Empty => {}
             StatusCase::InvalidStaple => staple(&mut sign1, rvals(vec![Value::Bytes(vec![0])])),
             StatusCase::GoodStaple => staple(&mut sign1, rvals(vec![Value::Bytes(good)])),
+            StatusCase::StaleGoodStapleFetches => {
+                fetch = OcspFetchPolicy::FetchAllowed;
+                staple(&mut sign1, rvals(vec![Value::Bytes(stale)]));
+            }
+            StatusCase::StaleStapleUsesSupplied => {
+                staple(&mut sign1, rvals(vec![Value::Bytes(stale)]));
+                supplied = vec![good];
+            }
             StatusCase::RevokedStaple => staple(&mut sign1, rvals(vec![Value::Bytes(revoked)])),
             StatusCase::SuppliedGood => supplied = vec![vec![0], good],
             StatusCase::SuppliedRevoked => supplied = vec![vec![0], revoked],
@@ -2173,7 +2386,7 @@ mod tests {
                 staple(&mut sign1, rvals(vec![Value::Bytes(good)]));
                 supplied = vec![revoked];
             }
-            StatusCase::InvalidStapleIgnoresSupplied => {
+            StatusCase::InvalidStapleUsesSupplied => {
                 staple(&mut sign1, rvals(vec![Value::Bytes(vec![0])]));
                 supplied = vec![good];
             }
@@ -2196,68 +2409,82 @@ mod tests {
 
     fn assert_status_case(
         case: StatusCase,
+        fresh: bool,
         result: Result<OcspResponse, CoseError>,
         log: &StatusTracker,
         calls: usize,
     ) {
+        // A stale "good" response is unusable evidence: it neither asserts "not
+        // revoked" nor fails validation, so an unusable staple defers to any supplied
+        // responses (e.g. a stale staple no longer "wins" over a supplied revocation).
         let revoked = matches!(
             case,
             StatusCase::RevokedStaple | StatusCase::SuppliedRevoked | StatusCase::OverrideRevoked
-        );
-        let good = matches!(
-            case,
-            StatusCase::GoodStaple
-                | StatusCase::SuppliedGood
-                | StatusCase::OverrideGood
-                | StatusCase::StapleWins
-        );
+        ) || (!fresh && matches!(case, StatusCase::StapleWins));
+        let good = fresh
+            && matches!(
+                case,
+                StatusCase::GoodStaple
+                    | StatusCase::StaleStapleUsesSupplied
+                    | StatusCase::SuppliedGood
+                    | StatusCase::OverrideGood
+                    | StatusCase::StapleWins
+                    | StatusCase::InvalidStapleUsesSupplied
+            );
+        // With online fetching disabled, an unusable staple whose supplied responses
+        // (if any) establish no status means the online check was skipped.
         let skipped = matches!(
             case,
             StatusCase::Missing
                 | StatusCase::Empty
                 | StatusCase::InvalidStaple
-                | StatusCase::InvalidStapleIgnoresSupplied
                 | StatusCase::OverrideEmpty
                 | StatusCase::OverrideMissing
-        );
+        ) || (!fresh
+            && matches!(
+                case,
+                StatusCase::GoodStaple
+                    | StatusCase::StaleStapleUsesSupplied
+                    | StatusCase::InvalidStapleUsesSupplied
+            ));
         let fetched = matches!(
             case,
             StatusCase::FetchIgnoresSupplied
                 | StatusCase::InvalidStapleFetches
                 | StatusCase::UntrustedStapleFetches
+                | StatusCase::StaleGoodStapleFetches
         );
-        assert_eq!(result.is_err(), revoked, "{case:?}");
-        assert_eq!(
-            log.has_status(SIGNING_CREDENTIAL_REVOKED),
-            revoked,
-            "{case:?}"
-        );
+        let ctx = format!("{case:?} (fresh: {fresh})");
+        assert_eq!(result.is_err(), revoked, "{ctx}");
+        assert_eq!(log.has_status(SIGNING_CREDENTIAL_REVOKED), revoked, "{ctx}");
         assert_eq!(
             log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED),
             good,
-            "{case:?}"
+            "{ctx}"
         );
         assert_eq!(
             log.has_status(SIGNING_CREDENTIAL_OCSP_SKIPPED),
             skipped,
-            "{case:?}"
+            "{ctx}"
         );
         assert_eq!(
             log.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE),
             fetched,
-            "{case:?}"
+            "{ctx}"
         );
-        assert_eq!(calls > 0, fetched, "{case:?}");
+        assert_eq!(calls > 0, fetched, "{ctx}");
         if let Ok(response) = result {
-            assert_eq!(!response.ocsp_der.is_empty(), good);
+            assert_eq!(!response.ocsp_der.is_empty(), good, "{ctx}");
         }
     }
 
-    const STATUS_CASES: [StatusCase; 17] = [
+    const STATUS_CASES: [StatusCase; 19] = [
         StatusCase::Missing,
         StatusCase::Empty,
         StatusCase::InvalidStaple,
         StatusCase::GoodStaple,
+        StatusCase::StaleGoodStapleFetches,
+        StatusCase::StaleStapleUsesSupplied,
         StatusCase::RevokedStaple,
         StatusCase::SuppliedGood,
         StatusCase::SuppliedRevoked,
@@ -2267,7 +2494,7 @@ mod tests {
         StatusCase::OverrideEmpty,
         StatusCase::OverrideMissing,
         StatusCase::StapleWins,
-        StatusCase::InvalidStapleIgnoresSupplied,
+        StatusCase::InvalidStapleUsesSupplied,
         StatusCase::FetchIgnoresSupplied,
         StatusCase::InvalidStapleFetches,
         StatusCase::UntrustedStapleFetches,
@@ -2275,92 +2502,275 @@ mod tests {
 
     #[test]
     fn check_status_policy_matrix() {
-        for case in STATUS_CASES {
-            let (sign1, supplied, override_status, fetch, trusted) = status_case(case);
-            let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let context = Context::new()
-                .with_resolver(RecordingResolver {
-                    calls: calls.clone(),
-                })
-                .with_settings_value(
-                    "builder.certificate_status_should_override",
-                    override_status,
-                )
-                .unwrap();
-            let ctp = if trusted {
-                trusted_responder()
-            } else {
-                CertificateTrustPolicy::new()
-            };
+        for variant in good_variants() {
+            for case in STATUS_CASES {
+                let (sign1, supplied, override_status, fetch, trusted) =
+                    status_case(case, &variant.good);
+                let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let context = Context::new()
+                    .with_resolver(RecordingResolver {
+                        calls: calls.clone(),
+                    })
+                    .with_settings_value(
+                        "builder.certificate_status_should_override",
+                        override_status,
+                    )
+                    .unwrap();
+                let untrusted = CertificateTrustPolicy::new();
+                let ctp = if trusted { &variant.ctp } else { &untrusted };
 
-            let mut log = StatusTracker::default();
-            let result = check_ocsp_status(
-                &sign1,
-                b"payload",
-                fetch,
-                &ctp,
-                if matches!(case, StatusCase::Missing | StatusCase::OverrideMissing) {
-                    None
-                } else {
-                    Some(&supplied)
-                },
-                None,
-                &mut log,
-                &context,
-            );
-            assert_status_case(
-                case,
-                result,
-                &log,
-                calls.load(std::sync::atomic::Ordering::SeqCst),
-            );
+                let mut log = StatusTracker::default();
+                let result = check_ocsp_status(
+                    &sign1,
+                    b"payload",
+                    fetch,
+                    ctp,
+                    if matches!(case, StatusCase::Missing | StatusCase::OverrideMissing) {
+                        None
+                    } else {
+                        Some(&supplied)
+                    },
+                    None,
+                    &mut log,
+                    &context,
+                );
+                assert_status_case(
+                    case,
+                    variant.fresh,
+                    result,
+                    &log,
+                    calls.load(std::sync::atomic::Ordering::SeqCst),
+                );
+            }
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn check_status_policy_matrix_async() {
-        for case in STATUS_CASES {
-            let (sign1, supplied, override_status, fetch, trusted) = status_case(case);
-            let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let context = Context::new()
-                .with_resolver_async(RecordingResolver {
-                    calls: calls.clone(),
-                })
-                .with_settings_value(
-                    "builder.certificate_status_should_override",
-                    override_status,
+        for variant in good_variants() {
+            for case in STATUS_CASES {
+                let (sign1, supplied, override_status, fetch, trusted) =
+                    status_case(case, &variant.good);
+                let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let context = Context::new()
+                    .with_resolver_async(RecordingResolver {
+                        calls: calls.clone(),
+                    })
+                    .with_settings_value(
+                        "builder.certificate_status_should_override",
+                        override_status,
+                    )
+                    .unwrap();
+                let untrusted = CertificateTrustPolicy::new();
+                let ctp = if trusted { &variant.ctp } else { &untrusted };
+
+                let mut log = StatusTracker::default();
+                let result = check_ocsp_status_async(
+                    &sign1,
+                    b"payload",
+                    fetch,
+                    ctp,
+                    if matches!(case, StatusCase::Missing | StatusCase::OverrideMissing) {
+                        None
+                    } else {
+                        Some(&supplied)
+                    },
+                    None,
+                    &mut log,
+                    &context,
+                )
+                .await;
+                assert_status_case(
+                    case,
+                    variant.fresh,
+                    result,
+                    &log,
+                    calls.load(std::sync::atomic::Ordering::SeqCst),
+                );
+            }
+        }
+    }
+
+    /// The fixture's "good" response data, re-dated to be valid at the current time.
+    #[cfg(feature = "openssl")]
+    fn fresh_basic_response() -> rasn_ocsp::BasicOcspResponse {
+        use crate::crypto::ocsp::test_responder::good_basic_response;
+
+        let now = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
+        let mut basic = good_basic_response();
+        basic.tbs_response_data.produced_at = (now - chrono::Duration::hours(1)).fixed_offset();
+        let single = &mut basic.tbs_response_data.responses[0];
+        single.this_update = (now - chrono::Duration::hours(1)).fixed_offset();
+        single.next_update = Some((now + chrono::Duration::hours(24)).fixed_offset());
+        basic
+    }
+
+    /// Trusts a new ephemeral test responder in `ctp` and returns a currently valid
+    /// "good" response signed by it. The bundled fixture is long expired and so
+    /// cannot establish "not revoked" without a trusted time-stamp.
+    #[cfg(feature = "openssl")]
+    fn trusted_fresh_good_response(ctp: &mut CertificateTrustPolicy) -> Vec<u8> {
+        use crate::crypto::ocsp::test_responder::TestResponder;
+
+        let responder = TestResponder::new();
+        ctp.add_end_entity_credentials(&responder.cert_pem())
+            .unwrap();
+        responder.sign(fresh_basic_response())
+    }
+
+    /// A trust policy that trusts the ephemeral test responder, plus a stale
+    /// "Good" response (the fixture's data) and a freshly signed "Good" response,
+    /// both signed by that responder.
+    #[cfg(feature = "openssl")]
+    fn stale_and_fresh_good_responses() -> (CertificateTrustPolicy, Vec<u8>, Vec<u8>) {
+        use crate::crypto::ocsp::test_responder::{good_basic_response, TestResponder};
+
+        let responder = TestResponder::new();
+        let mut policy = CertificateTrustPolicy::new();
+        policy
+            .add_end_entity_credentials(&responder.cert_pem())
+            .unwrap();
+
+        // Same data as the stale fixture (long expired), signed by the trusted responder
+        // so it reaches the freshness check instead of being dropped as untrusted.
+        let stale = responder.sign(good_basic_response());
+        (policy, stale, responder.sign(fresh_basic_response()))
+    }
+
+    // With a trusted timestamp, a "good" response whose window ended before the
+    // attested time is inconclusive: it must neither fail validation as revoked nor
+    // hide a later usable response or the online-fetch fallback.
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn out_of_window_response_with_timestamp_is_inconclusive() {
+        use crate::crypto::ocsp::test_responder::{good_basic_response, TestResponder};
+
+        let timestamp = supplied_timestamp();
+        let attested: DateTime<Utc> = timestamp.gen_time.clone().into();
+        let responder = TestResponder::new();
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_end_entity_credentials(&responder.cert_pem())
+            .unwrap();
+        let response_for = |this_update_hours: i64, next_update_hours: i64| {
+            let this_update = attested + chrono::Duration::hours(this_update_hours);
+            let mut basic = good_basic_response();
+            basic.tbs_response_data.produced_at = this_update.fixed_offset();
+            let single = &mut basic.tbs_response_data.responses[0];
+            single.this_update = this_update.fixed_offset();
+            single.next_update =
+                Some((attested + chrono::Duration::hours(next_update_hours)).fixed_offset());
+            responder.sign(basic)
+        };
+        let expired = response_for(-48, -24);
+        let valid = response_for(-1, 24);
+
+        let supplied = vec![expired.clone(), valid.clone()];
+        let mut log = StatusTracker::default();
+        let response = check_ocsp_status(
+            &sign1_with_x5chain(&ocsp_signing_chain()),
+            b"payload",
+            OcspFetchPolicy::DoNotFetch,
+            &ctp,
+            Some(&supplied),
+            Some(&timestamp),
+            &mut log,
+            &Context::new(),
+        )
+        .unwrap();
+        assert_eq!(response.ocsp_der, valid);
+        assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+
+        let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        staple(&mut sign1, rvals(vec![Value::Bytes(expired)]));
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let context = Context::new().with_resolver(RecordingResolver {
+            calls: calls.clone(),
+        });
+        let mut log = StatusTracker::default();
+        check_ocsp_status(
+            &sign1,
+            b"payload",
+            OcspFetchPolicy::FetchAllowed,
+            &ctp,
+            None,
+            Some(&timestamp),
+            &mut log,
+            &context,
+        )
+        .unwrap();
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(log.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    // A stale response is inconclusive, so it must not stop a later usable response
+    // from being considered, regardless of order.
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn stale_good_response_does_not_hide_fresh_good_response() {
+        let (ctp, stale, fresh) = stale_and_fresh_good_responses();
+        let sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+
+        for override_status in [false, true] {
+            for supplied in [
+                vec![stale.clone(), fresh.clone()],
+                vec![fresh.clone(), stale.clone()],
+            ] {
+                let context = Context::new()
+                    .with_settings_value(
+                        "builder.certificate_status_should_override",
+                        override_status,
+                    )
+                    .unwrap();
+                let mut log = StatusTracker::default();
+                let response = check_ocsp_status(
+                    &sign1,
+                    b"payload",
+                    OcspFetchPolicy::DoNotFetch,
+                    &ctp,
+                    Some(&supplied),
+                    None,
+                    &mut log,
+                    &context,
                 )
                 .unwrap();
-            let ctp = if trusted {
-                trusted_responder()
-            } else {
-                CertificateTrustPolicy::new()
-            };
 
-            let mut log = StatusTracker::default();
-            let result = check_ocsp_status_async(
-                &sign1,
-                b"payload",
-                fetch,
-                &ctp,
-                if matches!(case, StatusCase::Missing | StatusCase::OverrideMissing) {
-                    None
-                } else {
-                    Some(&supplied)
-                },
-                None,
-                &mut log,
-                &context,
-            )
-            .await;
-            assert_status_case(
-                case,
-                result,
-                &log,
-                calls.load(std::sync::atomic::Ordering::SeqCst),
-            );
+                assert_eq!(response.ocsp_der, fresh);
+                assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+                assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+            }
         }
+    }
+
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    #[tokio::test]
+    async fn stale_good_response_does_not_hide_fresh_good_response_async() {
+        let (ctp, stale, fresh) = stale_and_fresh_good_responses();
+        let sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        let supplied = vec![stale, fresh.clone()];
+        let context = Context::new()
+            .with_settings_value("builder.certificate_status_should_override", true)
+            .unwrap();
+
+        let mut log = StatusTracker::default();
+        let response = check_ocsp_status_async(
+            &sign1,
+            b"payload",
+            OcspFetchPolicy::DoNotFetch,
+            &ctp,
+            Some(&supplied),
+            None,
+            &mut log,
+            &context,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.ocsp_der, fresh);
+        assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
     }
 
     fn supplied_timestamp() -> TstInfo {

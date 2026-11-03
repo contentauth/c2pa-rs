@@ -104,6 +104,7 @@ impl AsyncCredentialHolder for AsyncX509CredentialHolder {
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(), // RawSignerCoseSigner has no timestamp service or network requests.
         )
         .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))?)
     }

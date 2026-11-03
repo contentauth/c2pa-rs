@@ -51,6 +51,15 @@ pub(crate) const MAX_ASSERTIONS: usize = 100_000;
 /// Default maximum remote manifest response size in bytes (10 MiB).
 pub(crate) const DEFAULT_MAX_MANIFEST_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
 
+/// Default number of attempts of a blocking time-stamp request.
+pub(crate) const DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS: u32 = 3;
+
+/// Default time limit of each time-stamp request attempt, in milliseconds.
+pub(crate) const DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS: u64 = 10_000;
+
+/// Default pause before the second time-stamp request attempt, in milliseconds.
+pub(crate) const DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS: u64 = 500;
+
 thread_local!(
     static SETTINGS: RefCell<Value> = RefCell::new(
         serde_json::to_value(Settings::default()).unwrap_or(Value::Object(Map::new())),
@@ -85,7 +94,7 @@ pub enum TrustListKind {
 )]
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct TrustAnchor {
-    /// Specifies the details of a specific trust list.  
+    /// Specifies the details of a specific trust list.
     ///
     /// Normally this option contains the official C2PA-recognized trust anchors found here:
     /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
@@ -114,7 +123,7 @@ pub struct TrustAnchor {
     /// certificates must have. This will overlay the default top level trust_config.
     /// If the trust_kind is CAWG it will override the top level trust config
     ///
-    ///  When validating CAWG identity certificates.
+    /// When validating CAWG identity certificates.
     ///
     /// The CAWG interim trust model (CAWG identity assertion spec §8.2.4.1)
     /// requires the `id-kp-emailProtection` EKU (1.3.6.1.5.5.7.3.4) together with
@@ -232,7 +241,21 @@ pub struct Trust {
 
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
+    ///
+    /// When [`Trust::use_default_ekus`] is true (the default), the EKUs defined by
+    /// the C2PA specification are always accepted and any OIDs listed here are
+    /// added to that set rather than replacing it.
     pub trust_config: Option<String>,
+
+    /// Whether to accept the built-in set of extended key usage (EKU) OIDs defined
+    /// by the C2PA specification in addition to those listed in [`Trust::trust_config`].
+    ///
+    /// When false, only the EKUs listed in [`Trust::trust_config`] (and any
+    /// [`TrustAnchor::trust_config`]) are accepted. Note that `id-kp-emailProtection`,
+    /// `id-kp-timeStamping`, and `id-kp-OCSPSigning` are always accepted.
+    ///
+    /// The default value is true.
+    pub use_default_ekus: bool,
 }
 
 impl Trust {
@@ -325,6 +348,7 @@ impl Default for Trust {
             let mut trust = Self {
                 anchors: None,
                 trust_config: None,
+                use_default_ekus: true,
             };
 
             trust.trust_config = Some(
@@ -343,6 +367,7 @@ impl Default for Trust {
             Self {
                 anchors: None,
                 trust_config: None,
+                use_default_ekus: true,
             }
         }
     }
@@ -505,6 +530,24 @@ pub struct Core {
     ///
     /// The default is 32 MB.
     pub max_decompressed_manifest_size_in_mb: usize,
+    /// Number of times a blocking time-stamp request is sent before its last error is
+    /// returned. A new attempt is made only after a transient failure: no answer, a
+    /// timeout, or an HTTP 408, 429, 500, 502, 503 or 504 response. `1` disables retries.
+    ///
+    /// The default is 3. The value must be at least 1. Async time-stamp requests are sent
+    /// once, as are blocking requests on browser WASM (which cannot sleep between attempts).
+    pub time_stamp_request_attempts: u32,
+    /// Time limit of each time-stamp request attempt, in milliseconds, applied by the
+    /// SDK's built-in HTTP resolvers. A time-stamp service answers in well under a second;
+    /// without a limit an attempt that hangs would wait for the HTTP client's default.
+    ///
+    /// The default is 10,000 (10 seconds). The value must be positive.
+    pub time_stamp_request_timeout_in_ms: u64,
+    /// Pause before the second time-stamp request attempt, in milliseconds, doubled before
+    /// each later one.
+    ///
+    /// The default is 500.
+    pub time_stamp_retry_delay_in_ms: u64,
 }
 
 impl Default for Core {
@@ -518,6 +561,9 @@ impl Default for Core {
             allow_redirects: true,
             prefer_compress_manifests: false,
             max_decompressed_manifest_size_in_mb: 32,
+            time_stamp_request_attempts: DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS,
+            time_stamp_request_timeout_in_ms: DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS,
+            time_stamp_retry_delay_in_ms: DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS,
         }
     }
 }
@@ -529,6 +575,16 @@ impl SettingsValidate for Core {
             return Err(Error::BadParam(format!(
                 "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
             )));
+        }
+        if self.time_stamp_request_attempts == 0 {
+            return Err(Error::BadParam(
+                "time_stamp_request_attempts must be at least 1".to_string(),
+            ));
+        }
+        if self.time_stamp_request_timeout_in_ms == 0 {
+            return Err(Error::BadParam(
+                "time_stamp_request_timeout_in_ms must be positive".to_string(),
+            ));
         }
         Ok(())
     }
@@ -1461,6 +1517,53 @@ pub mod tests {
     }
 
     #[test]
+    fn test_time_stamp_request_configuration() {
+        let core = Settings::default().core;
+        assert_eq!(
+            (
+                core.time_stamp_request_attempts,
+                core.time_stamp_request_timeout_in_ms,
+                core.time_stamp_retry_delay_in_ms
+            ),
+            (
+                DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS,
+                DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS,
+                DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS
+            )
+        );
+
+        for context in [
+            crate::Context::new()
+                .with_settings(
+                    r#"{"core":{"time_stamp_request_attempts":5,"time_stamp_request_timeout_in_ms":2000,"time_stamp_retry_delay_in_ms":0}}"#,
+                )
+                .unwrap(),
+            crate::Context::new()
+                .with_settings(
+                    "[core]\ntime_stamp_request_attempts = 5\ntime_stamp_request_timeout_in_ms = 2000\ntime_stamp_retry_delay_in_ms = 0",
+                )
+                .unwrap(),
+            crate::Context::new()
+                .with_settings_value("core.time_stamp_request_attempts", 5u32)
+                .unwrap()
+                .with_settings_value("core.time_stamp_request_timeout_in_ms", 2000u64)
+                .unwrap()
+                .with_settings_value("core.time_stamp_retry_delay_in_ms", 0u64)
+                .unwrap(),
+        ] {
+            let core = &context.settings().core;
+            assert_eq!(
+                (
+                    core.time_stamp_request_attempts,
+                    core.time_stamp_request_timeout_in_ms,
+                    core.time_stamp_retry_delay_in_ms
+                ),
+                (5, 2000, 0)
+            );
+        }
+    }
+
+    #[test]
     fn test_max_manifest_response_size_validation() {
         for value in [0, isize::MAX as u64 + 1, u64::MAX] {
             let result = Settings::new().with_value("verify.max_manifest_response_size", value);
@@ -1482,6 +1585,25 @@ pub mod tests {
         for value in [serde_json::json!(-1), serde_json::json!("unlimited")] {
             assert!(Settings::new()
                 .with_value("verify.max_manifest_response_size", value)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn test_time_stamp_request_validation() {
+        for (key, value) in [
+            ("core.time_stamp_request_attempts", 0u64),
+            ("core.time_stamp_request_timeout_in_ms", 0u64),
+        ] {
+            let result = Settings::new().with_value(key, value);
+            assert!(
+                matches!(result, Err(Error::BadParam(ref msg)) if msg.contains(&key[5..])),
+                "expected an invalid {key} error, got {result:?}"
+            );
+        }
+        for value in [serde_json::json!(-1), serde_json::json!("never")] {
+            assert!(Settings::new()
+                .with_value("core.time_stamp_request_attempts", value)
                 .is_err());
         }
     }
@@ -1806,7 +1928,7 @@ pub mod tests {
                             "trust_anchors": "",
                             "trust_uri": "custom_ica_trust_anchor",
                             "trust_kind": "cawg",
-                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]
                         }
                     ]
                 }
@@ -1845,7 +1967,7 @@ pub mod tests {
                             "trust_anchors": "",
                             "trust_uri": "custom_ica_trust_anchor",
                             "trust_kind": "cawg",
-                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]
                         }
                     ]
                 }

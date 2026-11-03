@@ -32,7 +32,6 @@ use crate::{
     },
     crypto::cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy},
     error::{Error, Result},
-    hashed_uri::HashedUri,
     jumbf,
     jumbf::labels::{
         assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
@@ -49,6 +48,20 @@ use crate::{
 };
 
 pub(super) const LEGACY_WATERMARKED_ACTION: &str = "c2pa.watermarked";
+
+/// Failure codes that reject a claim because of its signing credential, before
+/// the claim signature itself is validated.
+///
+/// `signingCredential.untrusted` is deliberately not included: a manifest whose
+/// signer is not on a trust list can still be Valid (C2PA Trust Model, "Valid
+/// Manifest"), which requires `claimSignature.validated`.
+const SIGNING_CREDENTIAL_REJECTIONS: &[&str] = &[
+    validation_status::SIGNING_CREDENTIAL_INVALID,
+    validation_status::SIGNING_CREDENTIAL_REVOKED,
+    validation_status::SIGNING_CREDENTIAL_EXPIRED,
+    validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+    validation_status::ALGORITHM_UNSUPPORTED,
+];
 
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
@@ -116,9 +129,11 @@ impl Claim {
     /// Verify that the claim `signature` field points to the signature box of this manifest.
     ///
     /// The claim label comes from the JUMBF label of the manifest, which is outside the signed
-    /// claim. For V2 and greater claims the `signature` field must be an absolute URI. That URI
+    /// claim. Since Spec 2.3 (§10.2.2) the `signature` field must be an absolute URI. That URI
     /// names the manifest label, so it binds the label to the signed claim. Without it, the label
-    /// could be changed without invalidating the signature. V1 claims may use a relative URI.
+    /// could be changed without invalidating the signature. Earlier specs, including the Spec 2.2
+    /// claim example, allow a relative URI to this manifest's signature box, so V2 claims that do
+    /// not declare Spec 2.3 or later may still use one. V1 claims may always use a relative URI.
     pub(crate) fn verify_signature_box_uri(
         claim: &Claim,
         validation_log: &mut StatusTracker,
@@ -131,7 +146,7 @@ impl Claim {
             Some(signature_url) if signature_url != claim.label() => true,
             Some(_) => !is_signature_box,
             // relative signature box
-            None => claim.version() > 1 || !is_signature_box,
+            None => Self::requires_absolute_signature_uri(claim) || !is_signature_box,
         };
 
         if sig_box_err {
@@ -144,6 +159,27 @@ impl Claim {
             .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
         Ok(())
+    }
+
+    /// Whether the claim declares Spec 2.3 or later, which requires an absolute `signature` URI.
+    ///
+    /// The declared version is read from `claim_generator_info` (Spec 2.4) or the claim map
+    /// (Spec 2.3). Both are inside the signed claim, so the declaration cannot be stripped
+    /// without invalidating the signature. A declared version that cannot be parsed is treated
+    /// as requiring an absolute URI.
+    fn requires_absolute_signature_uri(claim: &Claim) -> bool {
+        if claim.version() < 2 {
+            return false;
+        }
+        let Some(declared) = claim.spec_version().or(claim.spec_version.as_ref()) else {
+            return false;
+        };
+        let mut parts = declared.split('.').map(|p| p.trim().parse::<u64>());
+        match (parts.next(), parts.next()) {
+            (Some(Ok(major)), Some(Ok(minor))) => (major, minor) >= (2, 3),
+            (Some(Ok(major)), None) => major > 2,
+            _ => true,
+        }
     }
 
     /// Verify claim signature, assertion store and asset hashes
@@ -221,14 +257,17 @@ impl Claim {
             )
             .await
         };
+        let mut ocsp_rejected = false;
         if let Err(err) = ocsp_result {
             if !matches!(err, Error::CertificateTrustError(_)) {
                 validation_log.pop_current_uri();
                 return Err(err);
             }
+            ocsp_rejected = true;
         }
 
         context.check_progress(ProgressPhase::VerifyingSignature, 1, 1)?;
+        let cose_log_start = validation_log.logged_items().len();
         let verified = if _sync {
             verify_cose(
                 sig,
@@ -253,6 +292,16 @@ impl Claim {
             )
             .await
         };
+
+        // The OCSP check found the signing credential revoked. That outranks
+        // the certificate chain reaching a trust anchor, so do not report the
+        // credential as trusted.
+        if ocsp_rejected {
+            validation_log.remove_status_since(
+                cose_log_start,
+                validation_status::SIGNING_CREDENTIAL_TRUSTED,
+            );
+        }
 
         let result = Claim::verify_internal(claim, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
@@ -460,7 +509,7 @@ impl Claim {
             // 2.e.i Actions icons
             if let Some(cgi_vec) = actions.software_agents() {
                 for cgi in cgi_vec {
-                    if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                    if let Some(icon) = cgi.icon() {
                         icons.push(icon);
                     }
                 }
@@ -468,14 +517,14 @@ impl Claim {
             // 2.f Template icons
             if let Some(template_vec) = actions.templates() {
                 for template in template_vec {
-                    if let Some(UriOrResource::HashedUri(icon)) = &template.icon {
+                    if let Some(icon) = &template.icon {
                         icons.push(icon);
                     }
                 }
             }
             // check top level icons
             if !icons.is_empty() {
-                Claim::verify_icons(claim, &icons, validation_log)?;
+                Claim::verify_icons(claim, &label, &icons, validation_log)?;
             }
 
             for (action_index, action) in actions.actions().iter().enumerate() {
@@ -972,12 +1021,12 @@ impl Claim {
                 if let Some(assertions::SoftwareAgent::ClaimGeneratorInfo(cgi)) =
                     action.software_agent()
                 {
-                    if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                    if let Some(icon) = cgi.icon() {
                         icons.push(icon);
                     }
                 }
                 if !icons.is_empty() {
-                    Claim::verify_icons(claim, &icons, validation_log)?;
+                    Claim::verify_icons(claim, &label, &icons, validation_log)?;
                 }
 
                 // check watermarks for required softbinding
@@ -1008,13 +1057,30 @@ impl Claim {
         Ok(())
     }
 
-    // check the validity of icons in a ClaimGeneratorInfo
+    /// Checks that each icon is a hashed URI that resolves within `claim`.
+    ///
+    /// `source_uri` is the JUMBF URI of the claim or assertion containing the icons, used to
+    /// locate failures for icons that have no hashed URI of their own.
     fn verify_icons(
         claim: &Claim,
-        icon_uris: &[&HashedUri],
+        source_uri: &str,
+        icon_uris: &[&UriOrResource],
         validation_log: &mut StatusTracker,
     ) -> Result<()> {
         for icon in icon_uris {
+            let icon = match icon {
+                UriOrResource::HashedUri(icon) => icon,
+                UriOrResource::ResourceRef(resource) => {
+                    let msg = format!(
+                        "icon must contain a hashed URI, found resource reference: {}",
+                        resource.identifier
+                    );
+                    log_item!(source_uri.to_owned(), msg.clone(), "verify_icons")
+                        .validation_status(validation_status::HASHED_URI_MISSING)
+                        .failure(validation_log, Error::ValidationRule(msg))?;
+                    continue;
+                }
+            };
             // make sure the icon uri is valid
             let (label, instance) = Claim::assertion_label_from_link(&icon.url());
             if let Some(ca) = claim.get_claim_assertion(&label, instance) {
@@ -1034,7 +1100,7 @@ impl Claim {
             } else if claim.get_databox(icon).is_some() {
                 // We have a databox with this icon
                 // todo: check the hash on the databox?
-                return Ok(());
+                continue;
             } else {
                 log_item!(icon.url(), "could not resolve icon address", "verify_icons")
                     .validation_status(validation_status::ASSERTION_MISSING)
@@ -1050,10 +1116,18 @@ impl Claim {
     fn classify_hash_verification_error(
         e: &Error,
         malformed: &'static str,
+        unknown_box: Option<&'static str>,
         mismatch: &'static str,
     ) -> &'static str {
         match e {
             Error::C2PAValidation(es) if es == malformed => malformed,
+            // The box-hash verifier signals a box present in the asset but
+            // absent from the list by returning this sentinel string (spec
+            // §14.12.3's `unknownBox`, distinct from a plain hash mismatch).
+            Error::HashMismatch(es) => match unknown_box {
+                Some(ub) if es == ub => ub,
+                _ => mismatch,
+            },
             _ => mismatch,
         }
     }
@@ -1341,6 +1415,7 @@ impl Claim {
                             let err_str = Self::classify_hash_verification_error(
                                 &e,
                                 validation_status::ASSERTION_BMFFHASH_MALFORMED,
+                                None,
                                 validation_status::ASSERTION_BMFFHASH_MISMATCH,
                             );
 
@@ -1451,6 +1526,7 @@ impl Claim {
                             let err_str = Self::classify_hash_verification_error(
                                 &e,
                                 validation_status::ASSERTION_BOXESHASH_MALFORMED,
+                                Some(validation_status::ASSERTION_BOXHASH_UNKNOWN_BOX),
                                 validation_status::ASSERTION_BOXHASH_MISMATCH,
                             );
 
@@ -1575,6 +1651,34 @@ impl Claim {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
+        // Statuses for this claim's signature are logged under its signature URI.
+        let signature_uri = to_signature_uri(claim.label());
+        let signature_has_status = |codes: &[&str]| {
+            validation_log.logged_items().iter().any(|item| {
+                item.label == signature_uri
+                    && item
+                        .validation_status
+                        .as_deref()
+                        .is_some_and(|code| codes.contains(&code))
+            })
+        };
+
+        // C2PA only validates the claim signature, and issues
+        // claimSignature.validated, "if the claim has not yet been rejected" by
+        // the checks on its signing credential. An untrusted credential does not
+        // count here; see SIGNING_CREDENTIAL_REJECTIONS.
+        let credential_rejected = signature_has_status(SIGNING_CREDENTIAL_REJECTIONS);
+
+        // claimSignature.insideValidity means the signer's certificate and all CA
+        // certificates up to the trust anchor were valid at the validation time,
+        // so it cannot be reported alongside claimSignature.outsideValidity, or
+        // alongside signingCredential.expired, which the certificate profile check
+        // has also used for an expired signer.
+        let outside_validity = signature_has_status(&[
+            validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+            validation_status::SIGNING_CREDENTIAL_EXPIRED,
+        ]);
+
         // signature check
         match verified {
             Ok(vi) => {
@@ -1587,23 +1691,26 @@ impl Claim {
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
                     .failure(validation_log, Error::CoseSignature)?;
                 } else {
-                    // signing cert has not expired
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                    .success(validation_log);
+                    if !outside_validity {
+                        log_item!(
+                            to_signature_uri(claim.label()),
+                            "claim signature valid",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                        .success(validation_log);
+                    }
 
                     // add signature validated status
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
-                    .success(validation_log);
+                    if !credential_rejected {
+                        log_item!(
+                            to_signature_uri(claim.label()),
+                            "claim signature valid",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                        .success(validation_log);
+                    }
                 }
             }
             Err(parse_err) => {
@@ -1624,12 +1731,12 @@ impl Claim {
         if let Some(cgi_vec) = claim.claim_generator_info() {
             let mut icons = Vec::new();
             for cgi in cgi_vec {
-                if let Some(UriOrResource::HashedUri(icon)) = cgi.icon() {
+                if let Some(icon) = cgi.icon() {
                     icons.push(icon);
                 }
             }
             if !icons.is_empty() {
-                Claim::verify_icons(claim, &icons, validation_log)?;
+                Claim::verify_icons(claim, &claim.to_claim_uri(), &icons, validation_log)?;
             }
         }
 

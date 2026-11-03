@@ -20,8 +20,8 @@ use thiserror::Error;
 
 use crate::{
     assertions::labels,
-    crypto::base64::encode_b64_wrapped,
     error::{Error, Result},
+    utils::json_b64::cbor_to_json_b64,
 };
 
 /// Check to see if this a label whose string can vary, if so return the root of the label and version if available
@@ -208,7 +208,7 @@ impl fmt::Debug for AssertionData {
             Self::Cbor(s) => {
                 let value: c2pa_cbor::Value =
                     c2pa_cbor::from_slice(s).map_err(|_err| fmt::Error)?;
-                let decoded = cbor_to_crjson(&value);
+                let decoded = cbor_to_json_b64(value);
 
                 write!(f, "{:?}", decoded.to_string())
             }
@@ -338,7 +338,7 @@ impl Assertion {
             AssertionData::Cbor(x) => {
                 let value: c2pa_cbor::Value = c2pa_cbor::from_slice(x)
                     .map_err(|e| AssertionDecodeError::from_assertion_and_cbor_err(self, e))?;
-                Ok(cbor_to_crjson(&value))
+                Ok(cbor_to_json_b64(value))
             }
 
             AssertionData::Binary(x) => {
@@ -486,50 +486,6 @@ impl Assertion {
             }
         }
         Ok(())
-    }
-}
-
-/// Converts a decoded CBOR value into its crJSON-mapped `serde_json::Value` form
-/// (spec: crJSON `cbor_serialised_assertions` mapping table).
-///
-/// Byte strings become `b64'<base64>'`-wrapped strings rather than JSON number
-/// arrays, so a bstr can never be confused with a genuine integer array further
-/// down the pipeline. Tags are unwrapped (dropping the tag number and recursing
-/// into the inner value), which also implements the spec's tag-0 date-time rule.
-/// Non-text map keys are stringified, since JSON object keys must be strings.
-pub(crate) fn cbor_to_crjson(value: &c2pa_cbor::Value) -> Value {
-    use c2pa_cbor::Value as Cbor;
-
-    match value {
-        Cbor::Null => Value::Null,
-        Cbor::Bool(b) => Value::Bool(*b),
-        Cbor::Integer(i) => Value::Number((*i).into()),
-        Cbor::Float(f) => serde_json::Number::from_f64(*f)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-        Cbor::Bytes(b) => Value::String(encode_b64_wrapped(b)),
-        Cbor::Text(s) => Value::String(s.clone()),
-        Cbor::Array(a) => Value::Array(a.iter().map(cbor_to_crjson).collect()),
-        Cbor::Map(m) => {
-            let mut obj = serde_json::Map::new();
-            for (k, v) in m {
-                obj.insert(cbor_key_to_string(k), cbor_to_crjson(v));
-            }
-            Value::Object(obj)
-        }
-        Cbor::Tag(_, inner) => cbor_to_crjson(inner),
-    }
-}
-
-/// Stringifies a CBOR map key for use as a JSON object key.
-fn cbor_key_to_string(key: &c2pa_cbor::Value) -> String {
-    use c2pa_cbor::Value as Cbor;
-
-    match key {
-        Cbor::Text(s) => s.clone(),
-        Cbor::Integer(i) => i.to_string(),
-        Cbor::Bool(b) => b.to_string(),
-        other => cbor_to_crjson(other).to_string(),
     }
 }
 
@@ -690,7 +646,10 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::{Action, Actions};
+    use crate::{
+        assertions::{Action, Actions},
+        crypto::base64::encode_b64_wrapped,
+    };
 
     #[test]
     fn test_version_label() {
@@ -747,7 +706,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_cbor_bytes_vs_int_array_crjson_encoding() {
+    fn test_cbor_bytes_vs_int_array_json_b64_encoding() {
         #[derive(Serialize)]
         struct BytesAndArray {
             raw_bytes: ByteBuf,
@@ -764,8 +723,7 @@ pub mod tests {
 
         let json = assertion.as_json_object().unwrap();
 
-        // A genuine CBOR byte string (major type 2) is reported in crJSON as a
-        // base64-wrapped string, per the spec's `cbor_serialised_assertions` mapping.
+        // A genuine CBOR byte string (major type 2) uses a json_b64 byte marker.
         assert_eq!(
             json.get("raw_bytes").unwrap().as_str().unwrap(),
             encode_b64_wrapped(&[1, 2, 3, 4])

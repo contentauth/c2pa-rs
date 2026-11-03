@@ -893,14 +893,188 @@ fn test_verify_signature_box_uri_absolute_to_other_box() {
     assert!(signature_box_uri_missing(claim, uri));
 }
 
+/// Creates a V2 test claim declaring `spec_version` in `claim_generator_info` (Spec 2.4 style).
+fn create_test_claim_with_cgi_spec_version(spec_version: &str) -> Claim {
+    let mut claim = create_test_claim().expect("create test claim");
+    let cgi = claim
+        .claim_generator_info
+        .as_mut()
+        .expect("test claim has claim_generator_info");
+    cgi[0].set_spec_version(spec_version);
+    claim
+}
+
 #[test]
-fn test_verify_signature_box_uri_relative_v2() {
+fn test_verify_signature_box_uri_relative_v2_spec_2_3() {
     // A relative URI does not name the manifest label, so it cannot bind the label to the
-    // signed claim. A V2 claim must use an absolute URI.
-    let claim = create_test_claim().expect("create test claim");
+    // signed claim. Since Spec 2.3, a V2 claim must use an absolute URI.
+    for version in ["2.3", "2.3.0", "2.4.0", "2.10.0", "3"] {
+        let claim = create_test_claim_with_cgi_spec_version(version);
+        assert!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            "relative URI should be rejected for spec {version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_claim_map_spec_2_3() {
+    // Spec 2.3 declared specVersion in the claim map rather than in claim_generator_info.
+    let mut claim = create_test_claim().expect("create test claim");
+    claim.spec_version = Some("2.3.0".to_string());
     assert!(signature_box_uri_missing(
         claim,
         "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_spec_version_precedence() {
+    for (cgi_version, claim_map_version, missing) in [
+        ("2.2.0", "2.3.0", false),
+        ("2.3.0", "2.2.0", true),
+        ("2.4.0", "2.3.0", true),
+        ("next", "2.2.0", true),
+        ("2.2.0", "next", false),
+    ] {
+        let mut claim = create_test_claim_with_cgi_spec_version(cgi_version);
+        claim.spec_version = Some(claim_map_version.to_string());
+
+        assert_eq!(
+            claim.spec_version().map(String::as_str),
+            Some(cgi_version),
+            "claim_generator_info should take precedence over the claim map"
+        );
+        assert_eq!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            missing,
+            "unexpected result for CGI spec {cgi_version}, claim-map spec {claim_map_version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_claim_map_fallback() {
+    for (version, missing) in [("2.2.0", false), ("2.3.0", true), ("next", true)] {
+        let mut claim = create_test_claim().expect("create test claim");
+        claim.spec_version = Some(version.to_string());
+        assert_eq!(claim.spec_version(), None);
+
+        assert_eq!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            missing,
+            "claim-map spec {version} should be used when CGI has no specVersion"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_signed_jpeg() -> Result<()> {
+    use crate::{
+        store::Store,
+        utils::{
+            test::{create_min_test_claim, create_test_streams, test_context},
+            test_signer::test_signer,
+        },
+        Reader, SigningAlg, ValidationState,
+    };
+
+    for version in [None, Some("2.2.0"), Some("2.3.0")] {
+        let mut context = test_context();
+        // Also produce the invalid 2.3 case so the reader, not the signer, checks the URI.
+        context.settings_mut().verify.verify_after_sign = false;
+        context.settings_mut().verify.verify_after_reading = true;
+        context.settings_mut().verify.verify_trust = false;
+
+        let mut claim = create_min_test_claim()?;
+        if let Some(version) = version {
+            claim
+                .claim_generator_info
+                .as_mut()
+                .expect("test claim has claim_generator_info")[0]
+                .set_spec_version(version);
+        }
+        let mut store = Store::from_context(&context);
+        store.commit_claim(claim)?;
+        store
+            .provenance_claim_mut()
+            .expect("store has a provenance claim")
+            .signature = "self#jumbf=c2pa.signature".to_string();
+
+        let (format, mut source, mut asset) = create_test_streams("earth_apollo17.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+        store.save_to_stream(format, &mut source, &mut asset, signer.as_ref(), &context)?;
+
+        let mut report = StatusTracker::default();
+        let restored = Store::from_stream(format, &mut asset, &mut report, &context)?;
+        let claim = restored
+            .provenance_claim()
+            .expect("signed JPEG has a provenance claim");
+        assert_eq!(claim.version(), 2);
+        assert_eq!(claim.spec_version().map(String::as_str), version);
+        assert_eq!(claim.signature, "self#jumbf=c2pa.signature");
+        assert!(!claim.signature_val().is_empty());
+
+        asset.set_position(0);
+        let reader = Reader::from_context(context).with_stream(format, &mut asset)?;
+        if version == Some("2.3.0") {
+            assert_eq!(reader.validation_state(), ValidationState::Invalid);
+            assert!(reader
+                .validation_status()
+                .expect("invalid JPEG has validation errors")
+                .iter()
+                .any(|status| status.code() == validation_status::CLAIM_SIGNATURE_MISSING));
+        } else {
+            assert_eq!(
+                reader.validation_state(),
+                ValidationState::Valid,
+                "signed pre-2.3 JPEG should validate for spec {version:?}"
+            );
+            assert!(
+                !report.has_any_error(),
+                "pre-2.3 JPEG has validation errors: {report:?}"
+            );
+            assert_eq!(reader.validation_status(), None);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_unparseable_spec_version() {
+    let claim = create_test_claim_with_cgi_spec_version("next");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_before_spec_2_3() {
+    // Spec 2.2 allows a relative URI to this manifest's signature box (its own claim example
+    // uses one), so V2 claims that do not declare Spec 2.3 or later remain valid.
+    let undeclared = create_test_claim().expect("create test claim");
+    assert!(!signature_box_uri_missing(
+        undeclared,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+
+    for version in ["2.2", "2.2.0", "2"] {
+        let claim = create_test_claim_with_cgi_spec_version(version);
+        assert!(
+            !signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            "relative URI should be accepted for spec {version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_to_other_box() {
+    // The relaxation only covers a relative URI to the signature box itself.
+    let claim = create_test_claim().expect("create test claim");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.assertions".to_string()
     ));
 }
 
@@ -1146,6 +1320,138 @@ fn test_verify_translated_action_with_languages_valid() {
         !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
         "c2pa.translated with both languages should not be malformed"
     );
+}
+
+#[test]
+fn test_verify_claim_generator_resource_ref_icons_rejected() {
+    for version in [1, 2] {
+        let mut claim = Claim::new("test", Some("test"), version);
+        let info: ClaimGeneratorInfo = serde_json::from_value(json!({
+            "name": "test",
+            "icon": {"format": "image/png", "identifier": "icon.png"}
+        }))
+        .unwrap();
+        claim.add_claim_generator_info(info);
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Err(Error::CoseSignature),
+            &mut validation_log,
+            &Context::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            hashed_uri_missing_location(&validation_log),
+            Some(claim.to_claim_uri())
+        );
+    }
+}
+
+/// Returns the location reported for the first `hashedURI.missing` failure.
+fn hashed_uri_missing_location(validation_log: &StatusTracker) -> Option<String> {
+    validation_log
+        .logged_items()
+        .iter()
+        .find(|item| {
+            item.validation_status.as_deref() == Some(validation_status::HASHED_URI_MISSING)
+        })
+        .map(|item| item.label.to_string())
+}
+
+#[test]
+fn test_verify_resource_ref_icons_rejected() {
+    let icon = json!({"format": "image/png", "identifier": "icon.png"});
+    let cases = [
+        json!({"actions": [{"action": "c2pa.created", "softwareAgent": {"name": "test", "icon": icon}}]}),
+        json!({"actions": [{"action": "c2pa.created"}], "softwareAgents": [{"name": "test", "icon": icon}]}),
+        json!({"actions": [{"action": "c2pa.created"}], "templates": [{"action": "com.example.edit", "icon": icon}]}),
+    ];
+    for case in cases {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let actions: Actions = serde_json::from_value(case.clone()).unwrap();
+        let actions_uri = claim.add_assertion(&actions).unwrap().url();
+        let (actions_label, _) = Claim::assertion_label_from_link(&actions_uri);
+        let expected_location = to_assertion_uri(claim.label(), &actions_label);
+        for behavior in [
+            ErrorBehavior::ContinueWhenPossible,
+            ErrorBehavior::StopOnFirstError,
+        ] {
+            let stop_on_error = matches!(behavior, ErrorBehavior::StopOnFirstError);
+            let mut validation_log = StatusTracker::with_error_behavior(behavior);
+            let result = Claim::verify_actions(
+                &claim,
+                &StoreValidationInfo::default(),
+                &mut validation_log,
+                &Settings::default(),
+            );
+            assert_eq!(
+                hashed_uri_missing_location(&validation_log).as_deref(),
+                Some(expected_location.as_str()),
+                "resource reference icon must be rejected at its actions assertion: {case}"
+            );
+            if stop_on_error {
+                assert!(
+                    matches!(result, Err(Error::ValidationRule(ref msg)) if msg.contains("icon.png"))
+                );
+            } else {
+                assert!(result.is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn test_verify_hashed_icons_and_resource_ref_after_databox() {
+    let mut claim = Claim::new("test", Some("test"), 2);
+    let embedded_icon = claim
+        .add_assertion(&assertions::EmbeddedData::new(
+            assertions::labels::ICON,
+            "image/png",
+            vec![1, 2, 3],
+        ))
+        .unwrap();
+    let databox_icon = claim.add_databox("image/png", vec![1, 2, 3], None).unwrap();
+    let mut actions_json = json!({
+        "actions": [{
+            "action": "c2pa.created",
+            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+            "softwareAgent": {"name": "test", "icon": embedded_icon}
+        }],
+        "softwareAgents": [{"name": "test", "icon": databox_icon}],
+        "templates": [{"action": "com.example.edit", "icon": embedded_icon}]
+    });
+    for invalid in [false, true] {
+        if invalid {
+            actions_json["softwareAgents"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({
+                    "name": "invalid",
+                    "icon": {"format": "image/png", "identifier": "icon.png"}
+                }));
+        }
+        let mut test_claim = claim.clone();
+        let actions: Actions = serde_json::from_value(actions_json.clone()).unwrap();
+        test_claim.add_assertion(&actions).unwrap();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_actions(
+            &test_claim,
+            &StoreValidationInfo::default(),
+            &mut validation_log,
+            &Settings::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            validation_log.has_status(validation_status::HASHED_URI_MISSING),
+            invalid
+        );
+        if !invalid {
+            assert!(!validation_log.has_any_error(), "{validation_log:?}");
+        }
+    }
 }
 
 fn verify_related_assertions(claim: &mut Claim, related: Vec<HashedUri>) -> StatusTracker {
@@ -1424,6 +1730,69 @@ fn test_update_manifest_with_claim_thumbnail_rejected() {
 }
 
 #[test]
+fn test_claim_signature_not_validated_after_credential_rejected() {
+    use crate::{crypto::cose::CertificateInfo, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let signature_uri = to_signature_uri(claim.label());
+    let verify = |validation_log: &mut StatusTracker| {
+        let _ = Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Ok(CertificateInfo {
+                validated: true,
+                ..Default::default()
+            }),
+            validation_log,
+            &Context::new(),
+        );
+    };
+
+    for rejection in [
+        validation_status::SIGNING_CREDENTIAL_INVALID,
+        validation_status::SIGNING_CREDENTIAL_REVOKED,
+        validation_status::SIGNING_CREDENTIAL_EXPIRED,
+        validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+        validation_status::ALGORITHM_UNSUPPORTED,
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(signature_uri.clone(), "signing credential rejected", "test")
+            .validation_status(rejection)
+            .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            !validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED),
+            "{rejection} should suppress claimSignature.validated"
+        );
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            "self#jumbf=/c2pa/other/c2pa.signature",
+            "signing credential rejected",
+            "test"
+        )
+        .validation_status(rejection)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED),
+            "{rejection} for another claim should not suppress claimSignature.validated"
+        );
+    }
+
+    // An untrusted signing credential does not stop the claim being Valid.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    log_item!(signature_uri, "signing certificate untrusted", "test")
+        .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+}
+
+#[test]
 fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
     let mut validation_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut claim = create_test_claim().expect("create test claim");
@@ -1439,4 +1808,66 @@ fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
         validation_log.has_any_error(),
         "actions in cloud-data of a non-update manifest should fail"
     );
+}
+
+#[test]
+fn test_inside_validity_not_reported_with_outside_validity() {
+    use crate::{crypto::cose::CertificateInfo, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let verify = |validation_log: &mut StatusTracker| {
+        let _ = Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Ok(CertificateInfo {
+                validated: true,
+                ..Default::default()
+            }),
+            validation_log,
+            &Context::new(),
+        );
+    };
+
+    // A CA certificate in the claim's chain was outside its validity period, or the
+    // signer itself expired (reported as signingCredential.expired by the profile check).
+    for code in [
+        validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+        validation_status::SIGNING_CREDENTIAL_EXPIRED,
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            to_signature_uri(claim.label()),
+            "certificate outside validity period",
+            "test"
+        )
+        .validation_status(code)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            !validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY),
+            "{code}"
+        );
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            "self#jumbf=/c2pa/other/c2pa.signature",
+            "certificate outside validity period",
+            "test"
+        )
+        .validation_status(code)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY),
+            "{code} for another claim should not suppress claimSignature.insideValidity"
+        );
+    }
+
+    // Without it, insideValidity is reported as before.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY));
 }

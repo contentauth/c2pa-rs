@@ -92,15 +92,16 @@ impl Store {
         claim: &Claim,
         signer: &dyn AsyncSigner,
         box_size: usize,
-        settings: &Settings,
+        context: &Context,
     ))]
     pub fn sign_claim(
         &self,
         claim: &Claim,
         signer: &dyn Signer,
         box_size: usize,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
+        let settings = context.settings();
         let claim_bytes = claim.data()?;
 
         // no verification of timestamp trust while signing
@@ -118,7 +119,7 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size, tss, &adjusted_settings)
+                cose_sign(signer, &claim_bytes, box_size, tss, context)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -126,7 +127,7 @@ impl Store {
                 return signer.sign(claim_bytes.clone()).await;
             // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size, tss, settings).await
+                cose_sign_async(signer, &claim_bytes, box_size, tss, context).await
             }
         };
         match result {

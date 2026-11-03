@@ -304,7 +304,7 @@ mod tests {
             b"claim",
             signer.reserve_size(),
             crate::crypto::cose::TimeStampStorage::V2_sigTst2_CTT,
-            &crate::Settings::default(),
+            &crate::Context::new(),
         )
         .unwrap();
         let cose = coset::CoseSign1::from_tagged_slice(&signed).unwrap();
