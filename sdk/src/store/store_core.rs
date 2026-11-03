@@ -60,8 +60,6 @@ use crate::{
 };
 
 pub(super) const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
-#[cfg(feature = "fetch_remote_manifests")]
-pub(super) const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 /// Maximum depth of nested ingredient references allowed during validation.
 ///
@@ -128,6 +126,9 @@ impl Store {
 
         // use the incoming trust settings
         store.ctp.clear();
+        if settings.trust.use_default_ekus {
+            store.ctp.add_default_valid_ekus();
+        }
 
         // Add all of the trust anchors
         if let Some(anchors) = &settings.trust.anchors {

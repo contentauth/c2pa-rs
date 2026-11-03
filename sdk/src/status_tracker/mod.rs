@@ -47,6 +47,17 @@ impl StatusTracker {
         &mut self.logged_items
     }
 
+    /// Removes entries logged at or after index `start` that carry the
+    /// supplied validation status code.
+    pub(crate) fn remove_status_since(&mut self, start: usize, code: &str) {
+        let mut index = 0;
+        self.logged_items.retain(|item| {
+            let keep = index < start || item.validation_status.as_deref() != Some(code);
+            index += 1;
+            keep
+        });
+    }
+
     /// Appends the contents of another [`StatusTracker`] to this list of
     /// validation log items.
     pub fn append(&mut self, other: &StatusTracker) {

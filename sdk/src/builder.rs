@@ -51,12 +51,12 @@ use crate::{
     error::{Error, Result},
     jumbf::labels::manifest_label_from_uri,
     maybe_send_sync::MaybeSend,
-    resource_store::{ResourceRef, ResourceResolver, ResourceStore},
+    resource_store::{ResourceRef, ResourceResolver, ResourceStore, UriOrResource},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
-        hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
-        path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
+        merkle::MerkleAccumulator, mime::format_to_mime, path_utils::sanitize_archive_path,
+        xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
@@ -121,6 +121,12 @@ impl ArchiveKind {
 #[non_exhaustive]
 pub struct ManifestDefinition {
     /// The version of the claim.  Defaults to 2.
+    ///
+    /// C2PA v1 claim signing (`Some(1)`) is deprecated as of 0.92.0 and will be
+    /// removed in 0.93.0, scheduled for mid-January 2027. Omit this field or set
+    /// it to `Some(2)` to sign C2PA v2 claims instead. Reading and validating
+    /// existing C2PA v1 claims is unaffected.
+    /// See the [migration guide](https://github.com/contentauth/c2pa-rs/blob/main/docs/c2pa-v1-signing-migration.md).
     pub claim_version: Option<u8>,
 
     /// Optional prefix added to the generated Manifest Label
@@ -236,6 +242,14 @@ impl TryFrom<serde_json::Value> for ManifestDefinition {
     }
 }
 
+/// Retains legacy numeric-array input for soft-binding byte fields (see #2689).
+/// Explicit json_b64 byte markers are decoded generically before this step.
+fn normalize_legacy_cbor_assertion(label: &str, value: &mut c2pa_cbor::Value) {
+    if labels::base(label) == labels::SOFT_BINDING {
+        crate::assertions::soft_binding_bytes_to_bstr(value);
+    }
+}
+
 fn default_vec<T>() -> Vec<T> {
     Vec::new()
 }
@@ -259,7 +273,8 @@ pub enum AssertionData {
 pub struct AssertionDefinition {
     /// An assertion label in reverse domain format
     pub label: String,
-    /// The assertion data
+    /// The assertion data. For CBOR assertions, JSON input accepts json_b64
+    /// `b64'<base64>'` strings for byte fields at any depth.
     pub data: AssertionData,
     /// The kind of assertion data, either Cbor or Json (defaults to Cbor)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -289,8 +304,9 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
         let data = match helper.kind {
             Some(ManifestAssertionKind::Json) => AssertionData::Json(helper.data),
             Some(ManifestAssertionKind::Cbor) | None => {
-                let cbor_val =
-                    c2pa_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
+                let mut cbor_val = crate::utils::json_b64::from_json_b64(helper.data)
+                    .map_err(serde::de::Error::custom)?;
+                normalize_legacy_cbor_assertion(&helper.label, &mut cbor_val);
                 AssertionData::Cbor(cbor_val)
             }
             _ => {
@@ -641,6 +657,7 @@ impl Builder {
     /// Returns the claim version for this builder.
     ///
     /// If not set, defaults to 2.
+    /// Signing C2PA v1 claims is deprecated; see [`ManifestDefinition::claim_version`].
     pub fn claim_version(&self) -> u8 {
         self.definition.claim_version.unwrap_or(2)
     }
@@ -817,12 +834,17 @@ impl Builder {
         T: Serialize,
     {
         self.check_assertion_limit()?;
+        let label: String = label.into();
         let assertion_data = match kind {
             Some(ManifestAssertionKind::Json) => AssertionData::Json(serde_json::to_value(data)?),
-            _ => AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
+            _ => {
+                let mut value = crate::utils::json_b64::from_json_b64(data)?;
+                normalize_legacy_cbor_assertion(&label, &mut value);
+                AssertionData::Cbor(value)
+            }
         };
         self.definition.assertions.push(AssertionDefinition {
-            label: label.into(),
+            label,
             data: assertion_data,
             kind,
             created,
@@ -830,6 +852,9 @@ impl Builder {
         Ok(self)
     }
 
+    /// Byte strings can be supplied as json_b64 `b64'<base64>'` strings at any depth.
+    /// Numeric arrays remain arrays, except for legacy soft-binding byte fields.
+    ///
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion. The data can be any Serde-serializable type or an AssertionDefinition.
@@ -1206,7 +1231,8 @@ impl Builder {
     ///
     /// This only records the label on the builder. During signing, any matching manifest(s) will
     /// have a [`TimeStamp`] assertion generated using the configured timestamping authority
-    /// ([`Signer::time_authority_url`]) if a timestamp for that manifest does not already exist.
+    /// ([`Signer::time_authority_url`], with any [`Signer::timestamp_request_headers`]) if a
+    /// timestamp for that manifest does not already exist.
     ///
     /// If [`TimeStampSettings::enabled`] is specified, the manifest labels specified here and the
     /// manifest labels obtained from the setting's scope will be merged and fetched.
@@ -1216,6 +1242,7 @@ impl Builder {
     /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
     ///
     /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// [`Signer::timestamp_request_headers`]: crate::Signer::timestamp_request_headers
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     /// [`TimeStampSettings::enabled`]: crate::settings::builder::TimeStampSettings::enabled
     pub fn add_timestamp(&mut self, manifest_label: impl Into<String>) -> &mut Self {
@@ -1567,6 +1594,11 @@ impl Builder {
 
         // Build the claim_generator string since this is required
         let claim_generator: String = if self.claim_version() == 1 {
+            log::warn!(
+                "C2PA v1 claim signing is deprecated as of 0.92.0 and will be removed in \
+                 0.93.0 (scheduled for mid-January 2027). Omit claim_version or set it to 2 \
+                 to sign C2PA v2 claims instead."
+            );
             claim_generator_info
                 .iter()
                 .map(|s| {
@@ -1792,41 +1824,53 @@ impl Builder {
             actions = actions.update_action(update.0, update.1);
         }
 
-        if let Some(templates) = actions.templates.as_mut() {
-            for template in templates {
-                // replace icon with hashed_uri
-                template.icon = match template.icon.take() {
-                    Some(icon) => Some(icon.to_hashed_uri(&self.resources, claim)?),
-                    None => None,
-                };
+        self.resolve_action_icons(&mut actions, claim)?;
 
-                // replace software agent with hashed_uri
-                template.software_agent = match template.software_agent.take() {
-                    Some(mut info) => {
-                        if let Some(icon) = info.icon.as_mut() {
-                            let icon = icon.to_hashed_uri(&self.resources, claim)?;
-                            info.set_icon(icon);
-                        }
-                        Some(info)
-                    }
-                    agent => agent,
-                };
+        Ok(actions)
+    }
+
+    /// Converts every resource-reference icon in `actions` into a hashed URI, adding the icon
+    /// assertions (or v1 data boxes) to `claim`.
+    ///
+    /// Covers top-level `softwareAgents`, per-action `softwareAgent`, and template `icon` and
+    /// `softwareAgent` icons. Icons that are already hashed URIs are left unchanged.
+    fn resolve_action_icons(&self, actions: &mut Actions, claim: &mut Claim) -> Result<()> {
+        let resolve_info = |info: &mut ClaimGeneratorInfo, claim: &mut Claim| -> Result<()> {
+            if let Some(icon) = info.icon.as_ref() {
+                let icon = icon.to_hashed_uri(&self.resources, claim)?;
+                info.set_icon(icon);
+            }
+            Ok(())
+        };
+
+        if let Some(agents) = actions.software_agents.as_mut() {
+            for info in agents {
+                resolve_info(info, claim)?;
             }
         }
 
-        // convert icons in software agents to hashed uris
-        for action in actions.actions_mut().iter_mut() {
-            if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) = action.software_agent() {
-                if let Some(icon) = info.icon.as_ref() {
-                    let mut info = info.to_owned();
-                    let icon_uri = icon.to_hashed_uri(&self.resources, claim)?;
-                    let update = info.set_icon(icon_uri);
-                    *action = std::mem::take(action).set_software_agent(update.to_owned());
+        if let Some(templates) = actions.templates.as_mut() {
+            for template in templates {
+                if let Some(icon) = template.icon.take() {
+                    template.icon = Some(icon.to_hashed_uri(&self.resources, claim)?);
+                }
+                if let Some(info) = template.software_agent.as_mut() {
+                    resolve_info(info, claim)?;
                 }
             }
         }
 
-        Ok(actions)
+        for action in actions.actions_mut().iter_mut() {
+            if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) = action.software_agent() {
+                if matches!(info.icon, Some(UriOrResource::ResourceRef(_))) {
+                    let mut info = info.to_owned();
+                    resolve_info(&mut info, claim)?;
+                    *action = std::mem::take(action).set_software_agent(info);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the position in `pending` of the Actions assertion that must carry the
@@ -2146,6 +2190,8 @@ impl Builder {
         self.merge_actions_settings(&mut designated)?;
         self.insert_auto_inception_action(&mut designated, ingredient_map)?;
         self.insert_auto_placed_actions(&mut designated, ingredient_map)?;
+        // Settings-supplied templates and actions carry resource-reference icons.
+        self.resolve_action_icons(&mut designated, claim)?;
 
         let has_inception = designated
             .actions()
@@ -2306,7 +2352,16 @@ impl Builder {
         );
         // Don't auto-add a parentOf ingredient if the user's manifest already declares a
         // c2pa.created or c2pa.opened action — those are mutually exclusive with auto-parent.
-        let has_created_or_opened = claim.created_action_assertions().into_iter().any(|a| {
+        // v1 claims have no created/gathered split, so their declared actions live in the single
+        // actions list rather than `created_action_assertions()`; inspect all action assertions
+        // for v1 so the guard isn't bypassed (which would auto-add a second actions assertion and
+        // fail validation with "only one action assertion allowed for v1 claims").
+        let action_assertions = if claim.version() < 2 {
+            claim.action_assertions()
+        } else {
+            claim.created_action_assertions()
+        };
+        let has_created_or_opened = action_assertions.into_iter().any(|a| {
             if !a.label().starts_with(crate::assertions::Actions::LABEL) {
                 return false;
             }
@@ -2404,9 +2459,15 @@ impl Builder {
     #[async_generic(async_signature(
         &self,
         tsa_url: &str,
+        tsa_headers: Option<Vec<(String, String)>>,
         provenance_claim: &mut Claim,
     ))]
-    fn maybe_add_timestamp(&self, tsa_url: &str, provenance_claim: &mut Claim) -> Result<()> {
+    fn maybe_add_timestamp(
+        &self,
+        tsa_url: &str,
+        tsa_headers: Option<Vec<(String, String)>>,
+        provenance_claim: &mut Claim,
+    ) -> Result<()> {
         let settings = self.context().settings();
 
         if !settings.builder.auto_timestamp_assertion.enabled
@@ -2486,13 +2547,20 @@ impl Builder {
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
                         tsa_url,
+                        tsa_headers.clone(),
                         &manifest_label,
                         &signature,
                         context,
                     )?;
                 } else {
                     timestamp_assertion
-                        .refresh_timestamp_async(tsa_url, &manifest_label, &signature, context)
+                        .refresh_timestamp_async(
+                            tsa_url,
+                            tsa_headers.clone(),
+                            &manifest_label,
+                            &signature,
+                            context,
+                        )
                         .await?;
                 }
             }
@@ -3217,10 +3285,14 @@ impl Builder {
         self.verify_redactions_applied(&claim)?;
 
         if let Some(tsa_url) = signer.time_authority_url() {
+            // Ingredient time stamps go to the same TSA as the claim signature, so
+            // they need the same (possibly authenticating) headers.
+            let tsa_headers = signer.timestamp_request_headers();
             if _sync {
-                self.maybe_add_timestamp(&tsa_url, &mut claim)?;
+                self.maybe_add_timestamp(&tsa_url, tsa_headers, &mut claim)?;
             } else {
-                self.maybe_add_timestamp_async(&tsa_url, &mut claim).await?
+                self.maybe_add_timestamp_async(&tsa_url, tsa_headers, &mut claim)
+                    .await?
             }
         }
 
@@ -3728,8 +3800,7 @@ impl Builder {
 
 impl std::fmt::Display for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut json = serde_json::to_value(self).map_err(|_| std::fmt::Error)?;
-        json = hash_to_b64(json);
+        let json = crate::utils::json_b64::to_json_b64(self).map_err(|_| std::fmt::Error)?;
         let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
         f.write_str(&output)
     }
@@ -4010,6 +4081,358 @@ mod tests {
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
     const TEST_MANIFEST_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
 
+    fn json_report_reader(mut builder: Builder) -> Reader {
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut output)
+            .unwrap();
+        output.rewind().unwrap();
+        Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap()
+    }
+
+    fn json_report_assertions(
+        reader: &Reader,
+        label: &str,
+    ) -> (serde_json::Value, serde_json::Value) {
+        let normal: serde_json::Value =
+            serde_json::from_str(&reader.json_checked().unwrap()).unwrap();
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let active = normal["active_manifest"].as_str().unwrap();
+        let assertion = normal["manifests"][active]["assertions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|assertion| assertion["label"] == label)
+            .unwrap();
+        (
+            assertion["data"].clone(),
+            detailed["manifests"][active]["assertion_store"][label].clone(),
+        )
+    }
+
+    #[test]
+    fn json_b64_byte_markers_work_for_custom_assertions() {
+        let data = json!({
+            "bytes": "b64'YIA='",
+            "empty": "b64''",
+            "values": [96, 384],
+            "nested": [{"bytes": "b64'AP8='"}, "b64'YIA='"]
+        });
+        let mut builder = Builder::default()
+            .with_definition(
+                json!({"assertions": [
+                    {"label": "org.example.nested", "data": data},
+                    {"label": "org.example.root", "data": "b64'YIA='"},
+                    {"label": "org.example.json", "kind": "Json", "data": data}
+                ]})
+                .to_string(),
+            )
+            .unwrap();
+        builder
+            .add_assertion("org.example.added", &data)
+            .unwrap()
+            .add_assertion("org.example.added_root", &"b64'YIA='")
+            .unwrap()
+            .add_assertion_json("org.example.added_json", &data)
+            .unwrap();
+
+        let expected = crate::utils::json_b64::from_json_b64(&data).unwrap();
+        let check = |builder: &Builder| {
+            for index in [0, 3] {
+                assert!(matches!(
+                    &builder.definition.assertions[index].data,
+                    AssertionData::Cbor(value) if value == &expected
+                ));
+            }
+            for index in [1, 4] {
+                assert!(matches!(
+                    &builder.definition.assertions[index].data,
+                    AssertionData::Cbor(c2pa_cbor::Value::Bytes(bytes)) if bytes == &[96, 128]
+                ));
+            }
+            for index in [2, 5] {
+                assert!(matches!(
+                    &builder.definition.assertions[index].data,
+                    AssertionData::Json(value) if value == &data
+                ));
+            }
+        };
+        check(&builder);
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        archive.rewind().unwrap();
+        let builder = Builder::default().with_archive(&mut archive).unwrap();
+        check(&builder);
+
+        let definitions = builder.definition.assertions.clone();
+        let reader = json_report_reader(builder);
+        let claims = reader.store.claims();
+        let claim = claims.last().unwrap();
+        for definition in definitions {
+            let stored = claim
+                .claim_assertion_store()
+                .iter()
+                .find(|assertion| assertion.label() == definition.label)
+                .unwrap();
+            match &definition.data {
+                AssertionData::Cbor(expected) => {
+                    assert_eq!(stored.assertion().mime_type(), "application/cbor");
+                    let value: c2pa_cbor::Value =
+                        c2pa_cbor::from_slice(stored.assertion().data()).unwrap();
+                    assert_eq!(&value, expected);
+                }
+                AssertionData::Json(expected) => {
+                    assert_eq!(stored.assertion().mime_type(), "application/json");
+                    assert_eq!(
+                        &serde_json::from_slice::<serde_json::Value>(stored.assertion().data())
+                            .unwrap(),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn json_reports_preserve_numeric_arrays() {
+        let data = json!({
+            "values": [96, 384],
+            "hash": [0, 255],
+            "empty": [],
+            "negative": [-1, -256],
+            "fractional": [1.5, 2.5],
+            "large": [u32::MAX],
+            "nested": [[96, 384], {"values": [0, 255]}]
+        });
+        let mut builder = Builder::default()
+            .with_definition(
+                json!({"assertions": [
+                    {"label": "org.example.nested", "data": data},
+                    {"label": "org.example.root", "data": [96, 384]},
+                    {"label": "org.example.json", "kind": "Json", "data": data}
+                ]})
+                .to_string(),
+            )
+            .unwrap();
+        builder
+            .add_assertion(
+                "c2pa.assertion.metadata",
+                &AssertionMetadata::new().set_field("values", json!([96, 384])),
+            )
+            .unwrap()
+            .add_assertion(
+                "c2pa.actions",
+                &json!({"actions": [{
+                    "action": "c2pa.created",
+                    "digitalSourceType": DigitalSourceType::Empty,
+                    "parameters": {"values": [96, 384]}
+                }]}),
+            )
+            .unwrap();
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(display["assertions"][0]["data"], data);
+        assert_eq!(display["assertions"][1]["data"], json!([96, 384]));
+        assert_eq!(display["assertions"][2]["data"], data);
+        builder
+            .add_assertion_json("org.example.unsigned", &json!([i64::MAX]))
+            .unwrap();
+
+        let reader = json_report_reader(builder);
+        for (label, expected) in [
+            ("org.example.nested", data.clone()),
+            ("org.example.root", json!([96, 384])),
+            ("org.example.json", data),
+            ("org.example.unsigned", json!([i64::MAX])),
+        ] {
+            let (normal, detailed) = json_report_assertions(&reader, label);
+            assert_eq!(normal, expected, "{label}: normal report");
+            assert_eq!(detailed, expected, "{label}: detailed report");
+            let typed: serde_json::Value = reader
+                .active_manifest()
+                .unwrap()
+                .find_assertion(label)
+                .unwrap();
+            assert_eq!(typed, expected);
+        }
+        let (normal, detailed) = json_report_assertions(&reader, "c2pa.assertion.metadata");
+        assert_eq!(normal["values"], json!([96, 384]));
+        assert_eq!(detailed["values"], json!([96, 384]));
+        let actions = reader
+            .active_manifest()
+            .unwrap()
+            .assertions
+            .iter()
+            .find(|assertion| assertion.label().starts_with("c2pa.actions"))
+            .unwrap();
+        let (normal, detailed) = json_report_assertions(&reader, actions.label());
+        assert_eq!(
+            normal["actions"][0]["parameters"]["values"],
+            json!([96, 384])
+        );
+        assert_eq!(
+            detailed["actions"][0]["parameters"]["values"],
+            json!([96, 384])
+        );
+    }
+
+    #[test]
+    fn json_reports_preserve_bytes_and_claim_hashes() {
+        #[derive(Serialize)]
+        struct Data {
+            bytes: serde_bytes::ByteBuf,
+            empty: serde_bytes::ByteBuf,
+            nested: Vec<serde_bytes::ByteBuf>,
+            values: Vec<u64>,
+        }
+        let mut builder = Builder::default();
+        builder
+            .add_assertion(
+                "org.example.bytes",
+                &Data {
+                    bytes: serde_bytes::ByteBuf::from(vec![96, 128]),
+                    empty: serde_bytes::ByteBuf::new(),
+                    nested: vec![
+                        serde_bytes::ByteBuf::from(vec![0, 255]),
+                        serde_bytes::ByteBuf::new(),
+                    ],
+                    values: vec![0, 255],
+                },
+            )
+            .unwrap()
+            .add_assertion(
+                "org.example.root",
+                &serde_bytes::ByteBuf::from(vec![96, 128]),
+            )
+            .unwrap();
+        let expected = json!({
+            "bytes": "b64'YIA='",
+            "empty": "b64''",
+            "nested": ["b64'AP8='", "b64''"],
+            "values": [0, 255]
+        });
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(display["assertions"][0]["data"], expected);
+        assert_eq!(display["assertions"][1]["data"], json!("b64'YIA='"));
+        let serialized = serde_json::to_value(&builder).unwrap();
+        assert_eq!(
+            serialized["assertions"][0]["data"]["bytes"],
+            json!([96, 128])
+        );
+        assert_eq!(
+            serialized["assertions"][0]["data"]["values"],
+            json!([0, 255])
+        );
+        let reader = json_report_reader(builder);
+        let (normal, detailed) = json_report_assertions(&reader, "org.example.bytes");
+        assert_eq!(normal, expected);
+        assert_eq!(detailed, expected);
+        let (normal, detailed) = json_report_assertions(&reader, "org.example.root");
+        assert_eq!(normal, json!("b64'YIA='"));
+        assert_eq!(detailed, json!("b64'YIA='"));
+
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let claims = reader.store.claims();
+        let claim = claims.last().unwrap();
+        let references = detailed["manifests"][claim.label()]["claim"]["created_assertions"]
+            .as_array()
+            .unwrap();
+        assert!(!references.is_empty());
+        for reference in references {
+            let original = claim
+                .assertions()
+                .iter()
+                .find(|assertion| reference["url"] == assertion.url())
+                .unwrap();
+            assert_eq!(
+                reference["hash"],
+                json!(crate::crypto::base64::encode_b64_wrapped(&original.hash()))
+            );
+        }
+    }
+
+    #[test]
+    fn json_reports_preserve_metadata_references() {
+        let metadata = json!({
+            "reference": {
+                "url": "https://example.test/assertion",
+                "alg": "sha256",
+                "hash": [96, 128]
+            },
+            "values": [96, 384]
+        });
+        let mut builder = Builder::default()
+            .with_definition(
+                json!({
+                    "metadata": [metadata],
+                    "ingredients": [{
+                        "title": "source",
+                        "format": "image/jpeg",
+                        "metadata": metadata
+                    }]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder
+            .add_assertion(
+                "c2pa.assertion.metadata",
+                &serde_json::from_value::<AssertionMetadata>(metadata.clone()).unwrap(),
+            )
+            .unwrap();
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(
+            display["metadata"][0]["reference"]["hash"],
+            json!("b64'YIA='")
+        );
+        assert_eq!(
+            display["ingredients"][0]["metadata"]["reference"]["hash"],
+            json!("b64'YIA='")
+        );
+        assert_eq!(display["metadata"][0]["values"], json!([96, 384]));
+        let reader = json_report_reader(builder);
+        let (normal, detailed) = json_report_assertions(&reader, "c2pa.assertion.metadata");
+        assert_eq!(normal["reference"]["hash"], json!("b64'YIA='"));
+        assert_eq!(detailed["reference"]["hash"], json!("b64'YIA='"));
+
+        let mut serialized = serde_json::to_value(&reader).unwrap();
+        let active = serialized["active_manifest"].as_str().unwrap().to_owned();
+        serialized["manifests"][&active]["metadata"] = json!([metadata]);
+        serialized["manifests"][&active]["ingredients"][0]["metadata"] = metadata.clone();
+        let reader: Reader = serde_json::from_value(serialized).unwrap();
+        let normal: serde_json::Value =
+            serde_json::from_str(&reader.json_checked().unwrap()).unwrap();
+        let active = normal["active_manifest"].as_str().unwrap();
+        let manifest = &normal["manifests"][active];
+        assert_eq!(
+            manifest["metadata"][0]["reference"]["hash"],
+            json!("b64'YIA='")
+        );
+        assert_eq!(
+            manifest["ingredients"][0]["metadata"]["reference"]["hash"],
+            json!("b64'YIA='")
+        );
+        assert_eq!(manifest["metadata"][0]["values"], json!([96, 384]));
+        builder = Builder::default()
+            .with_definition(
+                json!({"claim_generator_info": [{
+                    "name": "test",
+                    "icon": metadata["reference"]
+                }]})
+                .to_string(),
+            )
+            .unwrap();
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(
+            display["claim_generator_info"][0]["icon"]["hash"],
+            json!("b64'YIA='")
+        );
+    }
+
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]
     fn test_manifest_store_builder() {
@@ -4166,6 +4589,178 @@ mod tests {
             .expect("claim_generator_info in manifest");
         assert_eq!(cgi[0].name, "from_settings");
         assert_eq!(cgi[0].version.as_deref(), Some("9.9.9"));
+    }
+
+    /// A 32-byte soft binding value, supplied the only way JSON can: as an array of byte values.
+    fn soft_binding_json() -> serde_json::Value {
+        json!({
+            "alg": "com.example.watermark.1",
+            "blocks": [{ "scope": {}, "value": (0u8..32).collect::<Vec<u8>>() }]
+        })
+    }
+
+    fn soft_binding_block_value(data: &AssertionData) -> &c2pa_cbor::Value {
+        let text = |k: &str| c2pa_cbor::Value::Text(k.to_owned());
+        let map = match data {
+            AssertionData::Cbor(c2pa_cbor::Value::Map(map)) => Some(map),
+            _ => None,
+        }
+        .expect("CBOR map assertion data");
+        let block = match map.get(&text("blocks")) {
+            Some(c2pa_cbor::Value::Array(blocks)) => blocks.first(),
+            _ => None,
+        }
+        .expect("a blocks array with one block");
+        match block {
+            c2pa_cbor::Value::Map(block) => block.get(&text("value")),
+            _ => None,
+        }
+        .expect("block value")
+    }
+
+    // #2689: a soft binding block value must be a CBOR bstr, even when supplied as JSON.
+    #[test]
+    fn test_soft_binding_value_is_bstr_from_definition_json() {
+        let def: AssertionDefinition = serde_json::from_value(json!({
+            "label": "c2pa.soft-binding",
+            "data": soft_binding_json(),
+        }))
+        .unwrap();
+        assert_eq!(
+            soft_binding_block_value(&def.data),
+            &c2pa_cbor::Value::Bytes((0u8..32).collect())
+        );
+    }
+
+    #[test]
+    fn test_soft_binding_value_is_bstr_from_crjson_b64_text() {
+        let payload: Vec<u8> = (0u8..32).collect();
+        let def: AssertionDefinition = serde_json::from_value(json!({
+            "label": "c2pa.soft-binding",
+            "data": {
+                "alg": "com.example.watermark.1",
+                "blocks": [{
+                    "scope": {},
+                    "value": crate::crypto::base64::encode_b64_wrapped(&payload)
+                }]
+            },
+        }))
+        .unwrap();
+        assert_eq!(
+            soft_binding_block_value(&def.data),
+            &c2pa_cbor::Value::Bytes(payload)
+        );
+    }
+
+    #[test]
+    fn test_soft_binding_value_is_bstr_from_add_assertion_json_value() {
+        let mut builder = Builder::default();
+        builder
+            .add_assertion("c2pa.soft-binding", &soft_binding_json())
+            .unwrap();
+        builder
+            .add_assertion("c2pa.soft-binding__1", &soft_binding_json())
+            .unwrap();
+        for def in &builder.definition.assertions {
+            assert_eq!(
+                soft_binding_block_value(&def.data),
+                &c2pa_cbor::Value::Bytes((0u8..32).collect()),
+                "label {}",
+                def.label
+            );
+        }
+    }
+
+    #[test]
+    fn test_soft_binding_typed_struct_unchanged() {
+        let typed: crate::assertions::SoftBinding =
+            serde_json::from_value(soft_binding_json()).unwrap();
+        let mut builder = Builder::default();
+        builder.add_assertion("c2pa.soft-binding", &typed).unwrap();
+        assert_eq!(
+            soft_binding_block_value(&builder.definition.assertions[0].data),
+            &c2pa_cbor::Value::Bytes((0u8..32).collect())
+        );
+    }
+
+    #[test]
+    fn test_byte_like_arrays_untouched_outside_soft_binding() {
+        let mut builder = Builder::default();
+        builder
+            .add_assertion("org.example.custom", &soft_binding_json())
+            .unwrap();
+        assert!(matches!(
+            soft_binding_block_value(&builder.definition.assertions[0].data),
+            c2pa_cbor::Value::Array(_)
+        ));
+    }
+
+    #[test]
+    fn test_soft_binding_non_byte_arrays_untouched() {
+        let mut builder = Builder::default();
+        builder
+            .add_assertion(
+                "c2pa.soft-binding",
+                &json!({"alg": "com.example.watermark.1", "blocks": [{"scope": {}, "value": [1, 256, -1]}]}),
+            )
+            .unwrap();
+        assert!(matches!(
+            soft_binding_block_value(&builder.definition.assertions[0].data),
+            c2pa_cbor::Value::Array(_)
+        ));
+    }
+
+    /// Signs a JPEG with a JSON-supplied soft binding, through a builder archive round trip
+    /// (which carries byte strings as crJSON `b64'...'` text), and checks the raw manifest
+    /// bytes: the 32-byte value is encoded as a bstr (0x58 0x20).
+    #[test]
+    fn test_soft_binding_value_is_bstr_in_signed_manifest() {
+        let format = "image/jpeg";
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(
+                parent_json().to_string(),
+                format,
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        builder
+            .resources
+            .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+        builder
+            .add_assertion("c2pa.soft-binding", &soft_binding_json())
+            .unwrap();
+
+        let mut zipped = Cursor::new(Vec::new());
+        builder.to_archive(&mut zipped).unwrap();
+        zipped.rewind().unwrap();
+        let mut builder = Builder::default().with_archive(&mut zipped).unwrap();
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        let out = dest.into_inner();
+        let payload: Vec<u8> = (0u8..32).collect();
+        let mut bstr = vec![0x65, b'v', b'a', b'l', b'u', b'e', 0x58, 0x20];
+        bstr.extend_from_slice(&payload);
+        let contains = |needle: &[u8]| out.windows(needle.len()).any(|w| w == needle);
+        assert!(contains(&bstr), "soft binding value is not a CBOR bstr");
+
+        // And it still reads back as the typed assertion.
+        let reader = Reader::default()
+            .with_stream(format, Cursor::new(out))
+            .unwrap();
+        let sb: crate::assertions::SoftBinding = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion("c2pa.soft-binding")
+            .unwrap();
+        assert_eq!(sb.blocks[0].value, payload);
     }
 
     #[test]
@@ -4446,6 +5041,60 @@ mod tests {
         let gathered_actions = Actions::from_assertion(gathered_assertions[0].assertion()).unwrap();
         assert_eq!(gathered_actions.actions().len(), 1);
         assert_eq!(gathered_actions.actions()[0].action(), c2pa_action::CROPPED);
+    }
+
+    // Regression (CAI-13962 / c2pa-rs#2720): a v1 claim whose manifest already declares its own
+    // c2pa.opened/created action must not get a second actions assertion auto-added under an Edit
+    // intent. v1 claims have no created/gathered split, so the auto-parent guard has to inspect
+    // all action assertions (not only `created_action_assertions()`); otherwise a second actions
+    // assertion is added and validation fails with "only one action assertion allowed for v1
+    // claims".
+    #[test]
+    fn test_v1_declared_action_blocks_auto_parent_and_second_actions_assertion() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let manifest = json!({
+            "claim_version": 1,
+            "title": "V1 Declared Action",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": { "actions": [ { "action": "c2pa.opened" } ] }
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(manifest)
+            .unwrap();
+        // Default c2patool behaviour: Edit intent with no explicitly supplied parent.
+        builder.set_intent(BuilderIntent::Edit);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let reader = Reader::from_context(test_context())
+            .with_stream(format, &mut dest)
+            .unwrap();
+        assert_ne!(reader.validation_state(), ValidationState::Invalid);
+
+        // Exactly one c2pa.actions assertion must exist for the v1 claim.
+        let active = reader.active_manifest().unwrap();
+        let action_assertions = active
+            .assertions()
+            .iter()
+            .filter(|a| a.label().starts_with("c2pa.actions"))
+            .count();
+        assert_eq!(action_assertions, 1);
     }
 
     #[test]
@@ -5209,6 +5858,134 @@ mod tests {
         }
     }
 
+    fn sign_and_read_actions(builder: &mut Builder) -> Actions {
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "{:?}",
+            reader.validation_status()
+        );
+
+        reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap()
+    }
+
+    fn assert_resolved_icon(icon: Option<&UriOrResource>) {
+        // The reader may present a resolved icon as a resource ref to the embedded assertion.
+        let url = match icon.expect("icon missing") {
+            UriOrResource::HashedUri(uri) => uri.url(),
+            UriOrResource::ResourceRef(resource) => resource.identifier.clone(),
+        };
+        assert!(
+            url.contains(labels::ICON),
+            "icon must reference an embedded icon assertion: {icon:?}"
+        );
+    }
+
+    #[test]
+    fn test_builder_resolves_top_level_software_agent_icons() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let definition = json!({
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.created",
+                        "digitalSourceType": DigitalSourceType::Empty.to_string(),
+                        "softwareAgentIndex": 0
+                    }],
+                    "softwareAgents": [{
+                        "name": "TestApp",
+                        "icon": {"format": "image/png", "identifier": "icon.png"}
+                    }]
+                }
+            }]
+        })
+        .to_string();
+
+        let context = Context::new().with_signer(test_signer(SigningAlg::Ps256));
+        let mut builder = Builder::from_context(context)
+            .with_definition(definition.as_str())
+            .unwrap();
+        builder
+            .add_resource("icon.png", Cursor::new(b"png data"))
+            .unwrap();
+
+        let actions = sign_and_read_actions(&mut builder);
+
+        let agents = actions.software_agents().as_ref().unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_resolved_icon(agents[0].icon.as_ref());
+    }
+
+    #[test]
+    fn test_builder_resolves_settings_action_icons() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.actions.auto_created_action]
+                    enabled = true
+                    source_type = (DigitalSourceType::Empty.to_string())
+
+                    [[builder.actions.templates]]
+                    action = (c2pa_action::EDITED)
+                    icon = { format = "image/png", identifier = "icon.png" }
+                    software_agent = { name = "TemplateApp", icon = { format = "image/png", identifier = "icon.png" } }
+
+                    [[builder.actions.actions]]
+                    action = (c2pa_action::EDITED)
+                    software_agent = { name = "ActionApp", icon = { format = "image/png", identifier = "icon.png" } }
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+        let mut builder = Builder::from_context(context);
+        builder
+            .add_resource("icon.png", Cursor::new(b"png data"))
+            .unwrap();
+
+        let actions = sign_and_read_actions(&mut builder);
+
+        let templates = actions.templates().as_ref().unwrap();
+        assert_eq!(templates.len(), 1);
+        assert_resolved_icon(templates[0].icon.as_ref());
+        assert_resolved_icon(templates[0].software_agent.as_ref().unwrap().icon.as_ref());
+
+        let edited = actions
+            .actions()
+            .iter()
+            .find(|action| action.action() == c2pa_action::EDITED)
+            .unwrap();
+        let info = match edited.software_agent() {
+            Some(SoftwareAgent::ClaimGeneratorInfo(info)) => Some(info),
+            _ => None,
+        }
+        .expect("expected claim generator info software agent");
+        assert_resolved_icon(info.icon.as_ref());
+    }
+
     // Per Gavin's review feedback on #2503: settings-defined actions with no inception step
     // (`c2pa.created`/`c2pa.opened`) must not be forced into `created_assertions` -- only an
     // actions assertion that actually carries the inception step has that spec requirement.
@@ -5818,6 +6595,49 @@ mod tests {
         assert!(
             builder2.find_assertion::<BoxHash>(BoxHash::LABEL).is_err(),
             "BoxHash must NOT be auto-created by placeholder() — caller creates it via update_hash_from_stream()"
+        );
+
+        Ok(())
+    }
+
+    /// Regression (PR#2949): signing a JPEG that has bytes after its EOI marker
+    /// must produce a hard binding that lists and hashes those bytes as the
+    /// `c2pa.after` box (C2PA 2.5 §16.3.3.2), so the signed asset validates
+    /// rather than being rejected by its own box hash. Box-hash generation and
+    /// verification must agree on the trailer.
+    #[test]
+    fn test_box_hash_sign_verify_with_trailing_bytes() -> Result<()> {
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
+
+        // A clean JPEG with arbitrary data appended after the EOI marker.
+        const TRAILER: &[u8] = b"trailing bytes not part of the JPEG image";
+        let mut asset = TEST_IMAGE_CLEAN.to_vec();
+        asset.extend_from_slice(TRAILER);
+
+        let mut builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        let signer = test_signer(SigningAlg::Ed25519);
+        let mut source = Cursor::new(asset);
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        // The signer must have preserved the trailer (otherwise the scenario is
+        // not exercised), and it must be hashed by a `c2pa.after` box.
+        let signed = dest.get_ref().clone();
+        assert!(
+            signed.ends_with(TRAILER),
+            "signing must preserve bytes after EOI"
+        );
+
+        dest.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "a box-hash-signed JPEG with trailing bytes must validate: {:?}",
+            reader.validation_status()
         );
 
         Ok(())
@@ -12407,5 +13227,103 @@ mod tests {
                 .any(|i| i.label() == Some("INGREDIENT_2")));
             assert_no_action_failures(sign_and_read(opened));
         }
+    }
+
+    /// A signing credential that a stapled OCSP response reports as revoked is
+    /// not trusted, even though its certificate chain reaches a trust anchor.
+    #[test]
+    fn revoked_signing_credential_is_not_trusted() {
+        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
+
+        use crate::{
+            crypto::{cert_chain_pem_to_der, cose::cose_reserve_size},
+            validation_status::{
+                ValidationStatus, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_REVOKED,
+                SIGNING_CREDENTIAL_TRUSTED,
+            },
+        };
+
+        struct OcspSigner {
+            raw_signer: Box<dyn RawSigner>,
+            cert_chain: Vec<Vec<u8>>,
+            ocsp_rsp: Vec<u8>,
+        }
+
+        impl Signer for OcspSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                Ok(self.raw_signer.sign(data)?)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Es256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(self.cert_chain.clone())
+            }
+
+            fn reserve_size(&self) -> usize {
+                cose_reserve_size(
+                    self.raw_signer.max_signature_size(),
+                    &self.cert_chain,
+                    false,
+                    Some(&self.ocsp_rsp),
+                )
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                Some(self.ocsp_rsp.clone())
+            }
+        }
+
+        // A response from a test responder saying the es256 test signer was
+        // revoked on 2025-01-01.
+        let signer = OcspSigner {
+            raw_signer: signer_from_private_key(
+                include_bytes!("../tests/fixtures/certs/es256.pem"),
+                SigningAlg::Es256,
+            )
+            .unwrap(),
+            cert_chain: cert_chain_pem_to_der(include_bytes!("../tests/fixtures/certs/es256.pub"))
+                .unwrap(),
+            ocsp_rsp: include_bytes!("../tests/fixtures/crypto/ocsp/es256_revoked_response.der")
+                .to_vec(),
+        };
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let sign_context = Context::new()
+            .with_settings(json!({"verify": {"verify_after_sign": false}}))
+            .unwrap();
+        Builder::from_context(sign_context)
+            .sign(&signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        // Trust the test certificates, and the test OCSP responder directly.
+        let read_context = Context::new()
+            .with_settings(json!({
+                "trust": {"anchors": [{
+                    "trust_anchors": include_str!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
+                    "trust_kind": "manifest",
+                    "allowed_list": include_str!("../tests/fixtures/crypto/ocsp/es256_revoked_responder.pem"),
+                }]},
+                "verify": {"ocsp_fetch": false},
+            }))
+            .unwrap();
+        dest.rewind().unwrap();
+        let reader = Reader::from_context(read_context)
+            .with_stream(format, &mut dest)
+            .unwrap();
+
+        let results = reader
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap();
+        let has = |codes: &[ValidationStatus], code: &str| codes.iter().any(|s| s.code() == code);
+        assert!(has(results.failure(), SIGNING_CREDENTIAL_REVOKED));
+        assert!(!has(results.success(), SIGNING_CREDENTIAL_TRUSTED));
+        assert!(!has(results.success(), CLAIM_SIGNATURE_VALIDATED));
     }
 }
