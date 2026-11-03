@@ -3412,6 +3412,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "http"),
+        ignore = "fetches a remote manifest over the network"
+    )]
     fn test_c2pa_reader_remote_url() {
         let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
 
@@ -6008,8 +6012,11 @@ verify_after_sign = true
         );
         let json_ptr = unsafe { c2pa_reader_json(reader) };
         assert!(!json_ptr.is_null());
-        let json_str = unsafe { CString::from_raw(json_ptr) };
-        let json = json_str.to_str().unwrap();
+        let json = unsafe { CStr::from_ptr(json_ptr) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        unsafe { c2pa_free(json_ptr as *const c_void) };
         assert!(
             json.contains("\"cawg.identity\""),
             "missing first identity assertion"
@@ -6060,7 +6067,7 @@ verify_after_sign = true
         assert!(result.is_null(), "expected NULL for null c2pa_signer_ptr");
         let error = unsafe { c2pa_error() };
         assert!(!error.is_null());
-        let _ = unsafe { CString::from_raw(error) };
+        unsafe { c2pa_free(error as *const c_void) };
 
         let certs = include_str!(fixture_path!("certs/ed25519.pub"));
         let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
@@ -6087,8 +6094,10 @@ verify_after_sign = true
             )
         };
         assert!(result.is_null(), "expected NULL for empty sig_type");
-        let error = unsafe { CString::from_raw(c2pa_error()) };
-        assert!(error.to_str().unwrap().contains("sig_type"));
+        let error = unsafe { c2pa_error() };
+        let message = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
+        assert!(message.to_str().unwrap().contains("sig_type"));
         // The signer was NOT consumed by the failed call.
         let result = unsafe {
             c2pa_identity_signer_create_with_credential_holder(
@@ -6102,8 +6111,10 @@ verify_after_sign = true
             )
         };
         assert!(result.is_null(), "expected NULL for reserve_size 0");
-        let error = unsafe { CString::from_raw(c2pa_error()) };
-        assert!(error.to_str().unwrap().contains("reserve_size"));
+        let error = unsafe { c2pa_error() };
+        let message = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
+        assert!(message.to_str().unwrap().contains("reserve_size"));
         unsafe { c2pa_free(signer as *const c_void) };
     }
 
