@@ -63,6 +63,10 @@ lazy_static! {
         #[cfg(feature = "asset_io")]
         Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("svg")),
         Box::new(TiffIO::new("")),
+        // Registered after TiffIO so it takes TIFF and DNG; TiffIO keeps the read-only
+        // ARW and NEF types, which asset-io does not declare.
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("tif")),
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),

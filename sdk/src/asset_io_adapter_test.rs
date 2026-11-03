@@ -1,7 +1,7 @@
 // EXPERIMENT (local only, do not commit).
 //
-// The asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`), through the
-// same traits the SDK uses, on every JPEG, PNG, SVG, RIFF and PDF fixture.
+// The asset-io adapter against the handlers it replaces, through the same traits the SDK
+// uses, on every JPEG, PNG, SVG, RIFF, TIFF/DNG and PDF fixture.
 //
 // Run with: cargo test --features asset_io asset_io_adapter
 
@@ -13,7 +13,7 @@ use std::{fs, io::Cursor, mem::discriminant, path::PathBuf};
 use crate::{
     asset_handlers::{
         asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
-        svg_io::SvgIO,
+        svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, ObjectType, C2PA_BOXHASH},
     Error,
@@ -79,6 +79,10 @@ fn fixtures() -> Vec<Fixture> {
             Some("svg") => (
                 Box::new(SvgIO::new("svg")),
                 Box::new(AssetIoAdapter::new("svg")),
+            ),
+            Some(ext @ ("tif" | "tiff" | "dng")) => (
+                Box::new(TiffIO::new(ext)),
+                Box::new(AssetIoAdapter::new(ext)),
             ),
             _ => continue,
         };
@@ -202,12 +206,13 @@ fn manifest_locations_agree() {
     let mut problems = Vec::new();
     let mut compared = 0;
     for (name, bytes, old, new) in fixtures() {
+        let asset_type = name.rsplit('.').next().unwrap().to_ascii_lowercase();
         let ol = old
-            .get_writer("x")
+            .get_writer(&asset_type)
             .unwrap()
             .get_object_locations(&mut Cursor::new(&bytes));
         let nl = new
-            .get_writer("x")
+            .get_writer(&asset_type)
             .unwrap()
             .get_object_locations(&mut Cursor::new(&bytes));
         if legacy_reads_non_jumbf(&*old, &bytes) || declined(&nl) {
@@ -293,10 +298,11 @@ fn written_manifests_read_back_with_either_reader() {
     let mut problems = Vec::new();
     let mut done = 0;
     for (name, bytes, old, new) in fixtures() {
+        let asset_type = name.rsplit('.').next().unwrap().to_ascii_lowercase();
         // Only assets the legacy writer accepts.
         let mut legacy = Cursor::new(Vec::new());
         if old
-            .get_writer("x")
+            .get_writer(&asset_type)
             .unwrap()
             .write_c2pa(&mut Cursor::new(&bytes), &mut legacy, &s)
             .is_err()
@@ -305,7 +311,7 @@ fn written_manifests_read_back_with_either_reader() {
         }
         let mut out = Cursor::new(Vec::new());
         let written =
-            new.get_writer("x")
+            new.get_writer(&asset_type)
                 .unwrap()
                 .write_c2pa(&mut Cursor::new(&bytes), &mut out, &s);
         if declined(&written) {
@@ -341,7 +347,7 @@ fn written_manifests_read_back_with_either_reader() {
         // Replacing, then removing.
         let s2 = store(b"a different, longer payload");
         let mut replaced = Cursor::new(Vec::new());
-        new.get_writer("x")
+        new.get_writer(&asset_type)
             .unwrap()
             .write_c2pa(&mut Cursor::new(&out), &mut replaced, &s2)
             .unwrap();
@@ -351,7 +357,7 @@ fn written_manifests_read_back_with_either_reader() {
             other => problems.push(format!("{name}: replace: {:?}", other.map(|v| v.len()))),
         }
         let mut removed = Cursor::new(Vec::new());
-        new.get_writer("x")
+        new.get_writer(&asset_type)
             .unwrap()
             .remove_c2pa(&mut Cursor::new(&replaced), &mut removed)
             .unwrap();
@@ -561,13 +567,34 @@ fn box_maps_agree_apart_from_the_placeholder() {
 #[test]
 fn the_registry_resolves_formats_to_the_adapter() {
     let ctx = crate::Context::new();
-    for f in ["jpg", "jpeg", "image/jpeg", "png", "image/png"] {
+    for f in [
+        "jpg",
+        "jpeg",
+        "image/jpeg",
+        "png",
+        "image/png",
+        "tif",
+        "tiff",
+        "image/tiff",
+        "dng",
+        "image/dng",
+        "image/x-adobe-dng",
+    ] {
         assert!(ctx.io().handler(f).is_some(), "{f}");
         assert!(ctx.io().writer(f).is_some(), "{f}");
     }
     assert_eq!(ctx.io().mime_for("jpg"), Some("image/jpeg"));
     assert_eq!(ctx.io().mime_for("png"), Some("image/png"));
+    assert_eq!(ctx.io().mime_for("tif"), Some("image/tiff"));
+    assert_eq!(ctx.io().mime_for("dng"), Some("image/x-adobe-dng"));
     assert!(!ctx.io().is_bmff_format("jpg"));
+
+    // asset-io does not declare the raw formats, so TiffIO still reads them, and they
+    // remain read-only.
+    for f in ["arw", "image/x-sony-arw", "nef", "image/x-nikon-nef"] {
+        assert!(ctx.io().handler(f).is_some(), "{f}");
+        assert!(ctx.io().writer(f).is_none(), "{f}");
+    }
 }
 
 /// With a real store in the file, the SVG manifest is excluded by its payload alone,
@@ -668,6 +695,11 @@ fn signs_and_validates() {
         ("sample1.webp", "image/webp"),
         ("sample1.wav", "audio/wav"),
         ("test.avi", "video/avi"),
+        ("TUSCANY.TIF", "image/tiff"),
+        ("MultiPage.tif", "image/tiff"),
+        ("test.tiff", "image/tiff"),
+        ("Foo.dng", "image/x-adobe-dng"),
+        ("subfiles.dng", "image/x-adobe-dng"),
     ];
     if cfg!(feature = "pdf") {
         cases.extend([

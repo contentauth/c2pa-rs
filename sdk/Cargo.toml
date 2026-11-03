@@ -41,7 +41,7 @@ unstable_builder_filter = []
 # guarantees and may change or be removed in any release. See docs/experimental-features.md.
 unstable_plain_text = ["dep:unicode-normalization"]
 file_io = []
-# EXPERIMENT: JPEG, PNG, SVG and RIFF use asset-io; PDF does too with the pdf feature.
+# EXPERIMENT: JPEG, PNG, SVG, RIFF and TIFF/DNG use asset-io; PDF does too with the pdf feature.
 asset_io = ["dep:asset-io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -106,7 +106,7 @@ crate-type = ["lib"]
 
 [dependencies]
 # EXPERIMENT: asset-io from its main branch.
-asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", optional = true, default-features = false, features = ["jpeg", "png", "svg", "riff", "pdf"] }
+asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", optional = true, default-features = false, features = ["jpeg", "png", "svg", "riff", "pdf", "tiff"] }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
@@ -267,7 +267,7 @@ web-sys = { version = "0.3.99", features = [
 
 [dev-dependencies]
 # EXPERIMENT: asset-io from its main branch.
-asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf"] }
+asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf", "tiff"] }
 anyhow = "1.0.103"
 env_logger = "0.11.10"
 flate2 = "1.1.10"

@@ -21,9 +21,10 @@ At startup, each handler is instantiated, asked for its `supported_types()` (e.g
 
 ### Experimental asset-io adapter
 
-The `asset_io` feature routes JPEG, PNG, SVG and RIFF formats through
+The `asset_io` feature routes JPEG, PNG, SVG, RIFF, TIFF and DNG formats through
 [`AssetIoAdapter`](./asset_io_adapter.rs); PDF uses it when `pdf` is also enabled.
-Other formats keep their built-in handlers.
+Other formats keep their built-in handlers. `TiffIO` still reads ARW and NEF, which
+asset-io does not declare; those formats remain read-only.
 
 The adapter uses asset-io's `ItemKind` and `Item` APIs to identify logical
 metadata, and item `extents()` to locate its bytes within segments. Segment

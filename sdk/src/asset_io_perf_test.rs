@@ -1,6 +1,6 @@
 // EXPERIMENT (local only, do not commit).
 //
-// Timing of the asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`, `SvgIO`, `RiffIO`, `PdfIO`),
+// Timing of the asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`, `SvgIO`, `RiffIO`, `TiffIO`, `PdfIO`),
 // through the same traits the SDK uses. Not run by default: it only reports.
 //
 //   cargo test --release --features asset_io asset_io_perf -- --ignored --nocapture
@@ -36,7 +36,7 @@ use std::{
 use crate::{
     asset_handlers::{
         asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
-        svg_io::SvgIO,
+        svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::AssetIO,
     asset_io_adapter_test::{fixture_paths, store},
@@ -157,6 +157,10 @@ fn handlers(ext: &str) -> (Box<dyn AssetIO>, Box<dyn AssetIO>) {
             Box::new(RiffIO::new(ext)),
             Box::new(AssetIoAdapter::new(ext)),
         ),
+        "tif" | "dng" => (
+            Box::new(TiffIO::new(ext)),
+            Box::new(AssetIoAdapter::new(ext)),
+        ),
         #[cfg(feature = "pdf")]
         "pdf" => (
             Box::new(crate::asset_handlers::pdf_io::PdfIO::new("pdf")),
@@ -245,6 +249,8 @@ fn cases() -> Vec<Case> {
             Some("wav") => "wav",
             Some("webp") => "webp",
             Some("avi") => "avi",
+            Some("tif" | "tiff") => "tif",
+            Some("dng") => "dng",
             #[cfg(feature = "pdf")]
             Some("pdf") => "pdf",
             _ => continue,
