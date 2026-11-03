@@ -355,11 +355,18 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RedirectResolver<T> {
         &self,
         mut request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        let started = web_time::Instant::now();
+        let timeout = request
+            .extensions()
+            .get::<crate::http::RequestTimeout>()
+            .copied();
         for _ in 0..=MAX_REDIRECTS {
+            apply_remaining_timeout(&mut request, started, timeout)?;
             let from_uri = request.uri().clone();
             let method = request.method().clone();
             let headers = request.headers().clone();
             let body = request.body().clone();
+            let extensions = request.extensions().clone();
 
             let response = self.inner.http_resolve(request)?;
 
@@ -367,6 +374,7 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RedirectResolver<T> {
                 None => return Ok(response),
                 Some(target) => {
                     request = build_redirected_request(method, headers, body, target)?;
+                    *request.extensions_mut() = extensions;
                 }
             }
         }
@@ -384,11 +392,18 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectResolver<T> {
         &self,
         mut request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        let started = web_time::Instant::now();
+        let timeout = request
+            .extensions()
+            .get::<crate::http::RequestTimeout>()
+            .copied();
         for _ in 0..=MAX_REDIRECTS {
+            apply_remaining_timeout(&mut request, started, timeout)?;
             let from_uri = request.uri().clone();
             let method = request.method().clone();
             let headers = request.headers().clone();
             let body = request.body().clone();
+            let extensions = request.extensions().clone();
 
             let response = self.inner.http_resolve_async(request).await?;
 
@@ -396,6 +411,7 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectResolver<T> {
                 None => return Ok(response),
                 Some(target) => {
                     request = build_redirected_request(method, headers, body, target)?;
+                    *request.extensions_mut() = extensions;
                 }
             }
         }
@@ -406,6 +422,106 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectResolver<T> {
     }
 }
 
+fn apply_remaining_timeout(
+    request: &mut Request<Vec<u8>>,
+    started: web_time::Instant,
+    timeout: Option<crate::http::RequestTimeout>,
+) -> Result<(), HttpResolverError> {
+    if let Some(crate::http::RequestTimeout(timeout)) = timeout {
+        let remaining = timeout
+            .checked_sub(started.elapsed())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| {
+                HttpResolverError::Io(std::io::Error::from(std::io::ErrorKind::TimedOut))
+            })?;
+        request
+            .extensions_mut()
+            .insert(crate::http::RequestTimeout(remaining));
+    }
+
+    Ok(())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod timeout_tests {
+    use super::*;
+    use crate::http::RequestTimeout;
+    use std::{
+        io::Cursor,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    #[derive(Clone, Default)]
+    struct Redirecting(Arc<Mutex<Vec<Duration>>>);
+
+    impl SyncHttpResolver for Redirecting {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            assert_eq!(request.method(), http::Method::POST);
+            assert_eq!(request.headers()["x-preserved"], "yes");
+            assert_eq!(request.body(), b"payload");
+            assert_eq!(request.extensions().get::<u32>(), Some(&42));
+            let mut seen = self.0.lock().unwrap();
+            seen.push(request.extensions().get::<RequestTimeout>().unwrap().0);
+            std::thread::sleep(Duration::from_millis(20));
+            let status = if seen.len() == 1 { 307 } else { 200 };
+            Ok(Response::builder()
+                .status(status)
+                .header("location", "https://example.com/next")
+                .body(Box::new(Cursor::new(Vec::<u8>::new())) as Box<dyn Read>)
+                .unwrap())
+        }
+    }
+
+    #[async_trait]
+    impl AsyncHttpResolver for Redirecting {
+        async fn http_resolve_async(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            self.http_resolve(request)
+        }
+    }
+
+    fn request(timeout: u64) -> Request<Vec<u8>> {
+        Request::post("https://example.com/start")
+            .header("x-preserved", "yes")
+            .extension(42u32)
+            .extension(RequestTimeout(Duration::from_millis(timeout)))
+            .body(b"payload".to_vec())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn redirects_preserve_extensions_and_share_timeout_budget() {
+        for asynchronous in [false, true] {
+            for timeout in [1000, 10, 0] {
+                let inner = Redirecting::default();
+                let resolver = RedirectResolver::new(inner.clone(), true);
+                let result = if asynchronous {
+                    resolver.http_resolve_async(request(timeout)).await
+                } else {
+                    resolver.http_resolve(request(timeout))
+                };
+                let seen = inner.0.lock().unwrap();
+                if timeout == 1000 {
+                    assert!(result.is_ok());
+                    assert_eq!(seen.len(), 2);
+                    assert!(seen[0] <= Duration::from_millis(timeout));
+                    assert!(seen[1] < seen[0]);
+                } else {
+                    assert!(
+                        matches!(result, Err(HttpResolverError::Io(e)) if e.kind() == std::io::ErrorKind::TimedOut)
+                    );
+                    assert_eq!(seen.len(), usize::from(timeout != 0));
+                }
+            }
+        }
+    }
+}
 /// Returns the redirect target from a response's `Location` header if it is an HTTP redirect (a 3xx
 /// status carrying a `Location`), otherwise `None`. A 3xx without a `Location` (e.g.
 /// `304 Not Modified`) is not treated as a redirect.

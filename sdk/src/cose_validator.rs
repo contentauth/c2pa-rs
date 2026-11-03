@@ -329,9 +329,15 @@ pub mod tests {
 
         let signer = test_signer(SigningAlg::Ps256);
 
-        let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings)
-                .unwrap();
+        let cose_bytes = crate::cose_sign::sign_claim(
+            &claim_bytes,
+            signer.as_ref(),
+            box_size,
+            &crate::Context::new()
+                .with_settings(settings.clone())
+                .unwrap(),
+        )
+        .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
@@ -411,7 +417,9 @@ pub mod tests {
             &claim_bytes,
             &ocsp_signer,
             ocsp_signer.reserve_size(),
-            &settings,
+            &crate::Context::new()
+                .with_settings(settings.clone())
+                .unwrap(),
         )
         .unwrap();
 

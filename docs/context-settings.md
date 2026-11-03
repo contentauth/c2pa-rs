@@ -155,6 +155,22 @@ Equivalent JSON configuration:
 
 Async time-stamp requests are sent once, with the same per-attempt time limit.
 
+Signing passes the caller's `Context` through to the timestamp provider, including custom
+HTTP resolvers and network policy. Redirects share one attempt's timeout budget rather
+than restarting it at each hop. Native reqwest and ureq enforce the timeout while receiving
+headers and the response body. Browser-based reqwest on WASM does not support this timeout;
+other/custom resolvers must enforce the `RequestTimeout` request extension themselves.
+
+### Breaking timestamp API migration
+
+`Signer::send_timestamp_request`, `AsyncSigner::send_timestamp_request`,
+`TimeStampProvider::send_time_stamp_request`, and `AsyncTimeStampProvider::send_time_stamp_request`
+now take `context: &Context` after `message: &[u8]`. Update custom implementations and
+forward this same context when delegating; their dispatch and header/body hooks are unchanged.
+Detached `sign_claim`/`sign_claim_async` now take `&Context` instead of `&Settings`.
+Construct the context with your settings and resolver once and pass it through rather
+than creating a default context inside a timestamp override.
+
 ## Using Context
 
 ### With Reader
