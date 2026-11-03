@@ -903,6 +903,8 @@ impl Context {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use http::Request;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
     #[cfg(not(target_arch = "wasm32"))]
@@ -1263,7 +1265,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[c2pa_macros::c2pa_test_async]
     async fn test_explicit_allow_list_takes_precedence_over_metadata_guard() {
         for hosts in [Vec::<String>::new(), vec!["example.com".to_string()]] {
             let context = Context::new()

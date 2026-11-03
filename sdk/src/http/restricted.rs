@@ -678,6 +678,9 @@ fn ipv6_is_non_global(ip: Ipv6Addr) -> bool {
 mod test {
     #![allow(clippy::panic, clippy::unwrap_used)]
 
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
     use super::*;
 
     struct NoopHttpResolver;
@@ -1085,7 +1088,7 @@ mod test {
         );
     }
 
-    #[tokio::test]
+    #[c2pa_macros::c2pa_test_async]
     async fn async_metadata_guard_and_explicit_allow_list() {
         let uri = "http://169.254.169.254/latest/meta-data/";
         let guarded = MetadataGuardResolver::new(NoopHttpResolver);

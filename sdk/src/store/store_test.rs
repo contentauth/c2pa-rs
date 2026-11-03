@@ -5926,7 +5926,7 @@ mod remote_manifest_response_tests {
 
     const TEST_RESPONSE_SIZE: u64 = 16;
 
-    #[tokio::test]
+    #[c2pa_test_async]
     async fn test_remote_manifest_direct_metadata_url_blocked() {
         for allow_redirects in [true, false] {
             let context = Context::new()
