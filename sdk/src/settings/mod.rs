@@ -94,7 +94,7 @@ pub enum TrustListKind {
 )]
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct TrustAnchor {
-    /// Specifies the details of a specific trust list.  
+    /// Specifies the details of a specific trust list.
     ///
     /// Normally this option contains the official C2PA-recognized trust anchors found here:
     /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
@@ -123,7 +123,7 @@ pub struct TrustAnchor {
     /// certificates must have. This will overlay the default top level trust_config.
     /// If the trust_kind is CAWG it will override the top level trust config
     ///
-    ///  When validating CAWG identity certificates.
+    /// When validating CAWG identity certificates.
     ///
     /// The CAWG interim trust model (CAWG identity assertion spec §8.2.4.1)
     /// requires the `id-kp-emailProtection` EKU (1.3.6.1.5.5.7.3.4) together with
@@ -241,7 +241,21 @@ pub struct Trust {
 
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
+    ///
+    /// When [`Trust::use_default_ekus`] is true (the default), the EKUs defined by
+    /// the C2PA specification are always accepted and any OIDs listed here are
+    /// added to that set rather than replacing it.
     pub trust_config: Option<String>,
+
+    /// Whether to accept the built-in set of extended key usage (EKU) OIDs defined
+    /// by the C2PA specification in addition to those listed in [`Trust::trust_config`].
+    ///
+    /// When false, only the EKUs listed in [`Trust::trust_config`] (and any
+    /// [`TrustAnchor::trust_config`]) are accepted. Note that `id-kp-emailProtection`,
+    /// `id-kp-timeStamping`, and `id-kp-OCSPSigning` are always accepted.
+    ///
+    /// The default value is true.
+    pub use_default_ekus: bool,
 }
 
 impl Trust {
@@ -334,6 +348,7 @@ impl Default for Trust {
             let mut trust = Self {
                 anchors: None,
                 trust_config: None,
+                use_default_ekus: true,
             };
 
             trust.trust_config = Some(
@@ -352,6 +367,7 @@ impl Default for Trust {
             Self {
                 anchors: None,
                 trust_config: None,
+                use_default_ekus: true,
             }
         }
     }
@@ -1912,7 +1928,7 @@ pub mod tests {
                             "trust_anchors": "",
                             "trust_uri": "custom_ica_trust_anchor",
                             "trust_kind": "cawg",
-                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]
                         }
                     ]
                 }
@@ -1951,7 +1967,7 @@ pub mod tests {
                             "trust_anchors": "",
                             "trust_uri": "custom_ica_trust_anchor",
                             "trust_kind": "cawg",
-                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]
                         }
                     ]
                 }
