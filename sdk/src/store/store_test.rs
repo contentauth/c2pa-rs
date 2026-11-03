@@ -5926,6 +5926,30 @@ mod remote_manifest_response_tests {
 
     const TEST_RESPONSE_SIZE: u64 = 16;
 
+    #[c2pa_test_async]
+    async fn test_remote_manifest_direct_metadata_url_blocked() {
+        for allow_redirects in [true, false] {
+            let context = Context::new()
+                .with_settings_value("core.allow_redirects", allow_redirects)
+                .unwrap();
+            for url in [
+                "http://169.254.169.254/latest/meta-data/",
+                "http://[fe80::1]/",
+                "http://[fd00:ec2::254]/",
+            ] {
+                for result in [
+                    Store::fetch_remote_manifest(url, &context),
+                    Store::fetch_remote_manifest_async(url, &context).await,
+                ] {
+                    assert!(
+                        matches!(&result, Err(Error::RemoteManifestFetch(msg)) if msg.contains("link-local") && msg.contains("cloud-metadata")),
+                        "expected the metadata guard error for {url}, got {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
     struct Resolver {
         content_length: Option<&'static str>,
         body_length: u64,
