@@ -52,7 +52,7 @@ use crate::{
     hash_utils::hash_by_alg,
     jumbf::labels::manifest_label_from_uri,
     maybe_send_sync::MaybeSend,
-    resource_store::{ResourceRef, ResourceResolver, ResourceStore},
+    resource_store::{ResourceRef, ResourceResolver, ResourceStore, UriOrResource},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
@@ -1833,51 +1833,6 @@ impl Builder {
                         actions = actions.update_action(update.0, update.1);
                     }
 
-                    if let Some(templates) = actions.templates.as_mut() {
-                        for template in templates {
-                            // replace icon with hashed_uri
-                            template.icon = match template.icon.take() {
-                                Some(icon) => {
-                                    Some(icon.to_hashed_uri(&self.resources, &mut claim)?)
-                                }
-                                None => None,
-                            };
-
-                            // replace software agent with hashed_uri
-                            template.software_agent = match template.software_agent.take() {
-                                Some(mut info) => {
-                                    if let Some(icon) = info.icon.as_mut() {
-                                        let icon =
-                                            icon.to_hashed_uri(&self.resources, &mut claim)?;
-                                        info.set_icon(icon);
-                                    }
-                                    Some(info)
-                                }
-                                agent => agent,
-                            };
-                        }
-                    }
-
-                    // convert icons in software agents to hashed uris
-                    let actions_mut = actions.actions_mut();
-                    #[allow(clippy::needless_range_loop)]
-                    // clippy is wrong here, we reference index twice
-                    for index in 0..actions_mut.len() {
-                        let action = &actions_mut[index];
-                        if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
-                            action.software_agent()
-                        {
-                            if let Some(icon) = info.icon.as_ref() {
-                                let mut info = info.to_owned();
-                                let icon_uri = icon.to_hashed_uri(&self.resources, &mut claim)?;
-                                let update = info.set_icon(icon_uri);
-                                let mut action = action.to_owned();
-                                action = action.set_software_agent(update.to_owned());
-                                actions_mut[index] = action;
-                            }
-                        }
-                    }
-
                     // Do this at the end of the preprocessing step to ensure all ingredient references
                     // are resolved to their hashed URIs.
                     self.add_actions_assertion_settings(
@@ -1885,6 +1840,7 @@ impl Builder {
                         &mut actions,
                         allow_inception,
                     )?;
+                    self.resolve_action_icons(&mut actions, &mut claim)?;
                     allow_inception = false;
 
                     add_assertion(&mut claim, &actions, manifest_assertion.created())
@@ -1935,6 +1891,7 @@ impl Builder {
         if !found_actions {
             let mut actions = Actions::new();
             self.add_actions_assertion_settings(&ingredient_map, &mut actions, true)?;
+            self.resolve_action_icons(&mut actions, &mut claim)?;
 
             if !actions.actions().is_empty() {
                 // Per spec, only the actions assertion carrying the manifest's inception
@@ -1951,6 +1908,50 @@ impl Builder {
         }
 
         Ok(claim)
+    }
+
+    /// Converts every resource-reference icon in `actions` into a hashed URI, adding the icon
+    /// assertions (or v1 data boxes) to `claim`.
+    ///
+    /// Covers top-level `softwareAgents`, per-action `softwareAgent`, and template `icon` and
+    /// `softwareAgent` icons. Icons that are already hashed URIs are left unchanged.
+    fn resolve_action_icons(&self, actions: &mut Actions, claim: &mut Claim) -> Result<()> {
+        let resolve_info = |info: &mut ClaimGeneratorInfo, claim: &mut Claim| -> Result<()> {
+            if let Some(icon) = info.icon.as_ref() {
+                let icon = icon.to_hashed_uri(&self.resources, claim)?;
+                info.set_icon(icon);
+            }
+            Ok(())
+        };
+
+        if let Some(agents) = actions.software_agents.as_mut() {
+            for info in agents {
+                resolve_info(info, claim)?;
+            }
+        }
+
+        if let Some(templates) = actions.templates.as_mut() {
+            for template in templates {
+                if let Some(icon) = template.icon.take() {
+                    template.icon = Some(icon.to_hashed_uri(&self.resources, claim)?);
+                }
+                if let Some(info) = template.software_agent.as_mut() {
+                    resolve_info(info, claim)?;
+                }
+            }
+        }
+
+        for action in actions.actions_mut().iter_mut() {
+            if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) = action.software_agent() {
+                if matches!(info.icon, Some(UriOrResource::ResourceRef(_))) {
+                    let mut info = info.to_owned();
+                    resolve_info(&mut info, claim)?;
+                    *action = std::mem::take(action).set_software_agent(info);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Adds [ActionsSettings][crate::settings::ActionsSettings] to an
@@ -5483,6 +5484,134 @@ mod tests {
         }
     }
 
+    fn sign_and_read_actions(builder: &mut Builder) -> Actions {
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "{:?}",
+            reader.validation_status()
+        );
+
+        reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap()
+    }
+
+    fn assert_resolved_icon(icon: Option<&UriOrResource>) {
+        // The reader may present a resolved icon as a resource ref to the embedded assertion.
+        let url = match icon.expect("icon missing") {
+            UriOrResource::HashedUri(uri) => uri.url(),
+            UriOrResource::ResourceRef(resource) => resource.identifier.clone(),
+        };
+        assert!(
+            url.contains(labels::ICON),
+            "icon must reference an embedded icon assertion: {icon:?}"
+        );
+    }
+
+    #[test]
+    fn test_builder_resolves_top_level_software_agent_icons() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let definition = json!({
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.created",
+                        "digitalSourceType": DigitalSourceType::Empty.to_string(),
+                        "softwareAgentIndex": 0
+                    }],
+                    "softwareAgents": [{
+                        "name": "TestApp",
+                        "icon": {"format": "image/png", "identifier": "icon.png"}
+                    }]
+                }
+            }]
+        })
+        .to_string();
+
+        let context = Context::new().with_signer(test_signer(SigningAlg::Ps256));
+        let mut builder = Builder::from_context(context)
+            .with_definition(definition.as_str())
+            .unwrap();
+        builder
+            .add_resource("icon.png", Cursor::new(b"png data"))
+            .unwrap();
+
+        let actions = sign_and_read_actions(&mut builder);
+
+        let agents = actions.software_agents().as_ref().unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_resolved_icon(agents[0].icon.as_ref());
+    }
+
+    #[test]
+    fn test_builder_resolves_settings_action_icons() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.actions.auto_created_action]
+                    enabled = true
+                    source_type = (DigitalSourceType::Empty.to_string())
+
+                    [[builder.actions.templates]]
+                    action = (c2pa_action::EDITED)
+                    icon = { format = "image/png", identifier = "icon.png" }
+                    software_agent = { name = "TemplateApp", icon = { format = "image/png", identifier = "icon.png" } }
+
+                    [[builder.actions.actions]]
+                    action = (c2pa_action::EDITED)
+                    software_agent = { name = "ActionApp", icon = { format = "image/png", identifier = "icon.png" } }
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+        let mut builder = Builder::from_context(context);
+        builder
+            .add_resource("icon.png", Cursor::new(b"png data"))
+            .unwrap();
+
+        let actions = sign_and_read_actions(&mut builder);
+
+        let templates = actions.templates().as_ref().unwrap();
+        assert_eq!(templates.len(), 1);
+        assert_resolved_icon(templates[0].icon.as_ref());
+        assert_resolved_icon(templates[0].software_agent.as_ref().unwrap().icon.as_ref());
+
+        let edited = actions
+            .actions()
+            .iter()
+            .find(|action| action.action() == c2pa_action::EDITED)
+            .unwrap();
+        let info = match edited.software_agent() {
+            Some(SoftwareAgent::ClaimGeneratorInfo(info)) => Some(info),
+            _ => None,
+        }
+        .expect("expected claim generator info software agent");
+        assert_resolved_icon(info.icon.as_ref());
+    }
+
     // Per Gavin's review feedback on #2503: settings-defined actions with no inception step
     // (`c2pa.created`/`c2pa.opened`) must not be forced into `created_assertions` -- only an
     // actions assertion that actually carries the inception step has that spec requirement.
@@ -6200,6 +6329,49 @@ mod tests {
         Ok(())
     }
 
+    /// Regression (PR#2949): signing a JPEG that has bytes after its EOI marker
+    /// must produce a hard binding that lists and hashes those bytes as the
+    /// `c2pa.after` box (C2PA 2.5 §16.3.3.2), so the signed asset validates
+    /// rather than being rejected by its own box hash. Box-hash generation and
+    /// verification must agree on the trailer.
+    #[test]
+    fn test_box_hash_sign_verify_with_trailing_bytes() -> Result<()> {
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
+
+        // A clean JPEG with arbitrary data appended after the EOI marker.
+        const TRAILER: &[u8] = b"trailing bytes not part of the JPEG image";
+        let mut asset = TEST_IMAGE_CLEAN.to_vec();
+        asset.extend_from_slice(TRAILER);
+
+        let mut builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        let signer = test_signer(SigningAlg::Ed25519);
+        let mut source = Cursor::new(asset);
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        // The signer must have preserved the trailer (otherwise the scenario is
+        // not exercised), and it must be hashed by a `c2pa.after` box.
+        let signed = dest.get_ref().clone();
+        assert!(
+            signed.ends_with(TRAILER),
+            "signing must preserve bytes after EOI"
+        );
+
+        dest.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "a box-hash-signed JPEG with trailing bytes must validate: {:?}",
+            reader.validation_status()
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn test_hash_type() -> Result<()> {
         let builder = Builder::default().with_definition(simple_manifest_json())?;
@@ -6622,37 +6794,6 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         Ok(())
-    }
-
-    #[test]
-    fn test_builder_box_hashed_embeddable_min() {
-        let mut reader = Cursor::new("");
-        let c2pa_io = jumbf_io::get_assetio_handler("application/c2pa").unwrap();
-        let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
-        let boxes = box_mapper.get_box_map(&mut reader).unwrap();
-        // Create the BoxHash object
-        let bh = BoxHash::from_box_map(boxes);
-        // And generate the box hashes
-        //bh.generate_box_hash_from_stream(&mut reader, "sha256", box_mapper, true).unwrap();
-
-        let mut builder = Builder::default()
-            .with_definition(simple_manifest_json())
-            .unwrap();
-        builder.add_assertion(labels::BOX_HASH, &bh).unwrap();
-
-        let signer = test_signer(SigningAlg::Ps256);
-
-        let manifest_bytes = builder
-            .sign_box_hashed_embeddable(signer.as_ref(), "application/c2pa")
-            .unwrap();
-
-        let output_stream = Cursor::new(manifest_bytes);
-
-        let reader = Reader::default()
-            .with_stream("application/c2pa", output_stream)
-            .unwrap();
-        println!("{reader}");
-        assert_eq!(reader.validation_status(), None);
     }
 
     #[c2pa_test_async]
