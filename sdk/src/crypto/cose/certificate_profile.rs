@@ -55,7 +55,7 @@ pub fn check_end_entity_certificate_profile(
         CertificateProfileError::InvalidCertificate
     })?;
 
-    // makes sure the certificate has any mandatory EKU values
+    // Role-specific policies require every mandatory EKU, not just an allowed one.
     if ctp.has_mandatory_ekus() {
         if let Ok(Some(BasicExtension { value: eku, .. })) = signcert.extended_key_usage() {
             if !ctp.verify_mandatory_ekus(eku) {
@@ -66,6 +66,8 @@ pub fn check_end_entity_certificate_profile(
                 )
                 .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, CertificateProfileError::InvalidEku);
+
+                return Err(CertificateProfileError::InvalidEku);
             }
         } else {
             log_item!(
@@ -75,6 +77,8 @@ pub fn check_end_entity_certificate_profile(
             )
             .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, CertificateProfileError::InvalidEku);
+
+            return Err(CertificateProfileError::InvalidEku);
         }
     }
 
@@ -1114,14 +1118,15 @@ mod tests {
         ctp.add_mandatory_ekus(b"1.3.6.1.5.5.7.3.8");
         let cert = profile_cert();
         let mut log = StatusTracker::default();
-        // Mandatory EKU failures are currently logged, not returned as an error.
-        check_end_entity_certificate_profile(
-            &rasn::der::encode(&cert).unwrap(),
-            &ctp,
-            &mut log,
-            None,
-        )
-        .unwrap();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &ctp,
+                &mut log,
+                None,
+            ),
+            Err(super::CertificateProfileError::InvalidEku)
+        );
         assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
         assert!(log
             .logged_items()
@@ -1140,19 +1145,73 @@ mod tests {
         let mut log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
+            Err(super::CertificateProfileError::InvalidEku)
+        );
+        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+        assert!(log
+            .logged_items()
+            .iter()
+            .any(|item| item.description == "certificate missing mandatory EKU"));
+
+        ctp.clear_ekus();
+        let mut log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
             Err(super::CertificateProfileError::InvalidCertificate)
         );
         assert!(log
             .logged_items()
             .iter()
             .any(|item| item.description == "expected end-entity certificate"));
-        assert!(log
-            .logged_items()
-            .iter()
-            .any(|item| item.description == "certificate missing mandatory EKU"));
 
         cert.tbs_certificate.issuer = cert.tbs_certificate.subject.clone();
         assert_profile_error(&cert, super::CertificateProfileError::SelfSignedCertificate);
+    }
+
+    #[test]
+    fn mandatory_ekus_reject_other_allowed_purposes() {
+        let claim_signing = oid(&[1, 3, 6, 1, 4, 1, 62558, 2, 1]);
+        let email = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4]);
+        let timestamp = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 8]);
+        let ocsp = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9]);
+
+        for required in [&timestamp, &ocsp] {
+            for purposes in [
+                vec![claim_signing.clone()],
+                vec![email.clone()],
+                vec![email.clone(), claim_signing.clone()],
+                vec![timestamp.clone()],
+                vec![ocsp.clone()],
+            ] {
+                let mut cert = profile_cert();
+                extension(
+                    &mut cert,
+                    &[2, 5, 29, 37],
+                    rasn::der::encode(&purposes).unwrap(),
+                );
+                let mut ctp = CertificateTrustPolicy::default();
+                ctp.add_mandatory_ekus(required.to_string().as_bytes());
+                let mut log = StatusTracker::default();
+                let result = check_end_entity_certificate_profile(
+                    &rasn::der::encode(&cert).unwrap(),
+                    &ctp,
+                    &mut log,
+                    None,
+                );
+
+                if purposes.contains(required) {
+                    assert_eq!(result, Ok(()));
+                    assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
+                } else {
+                    assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
+                    assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+                    assert!(log
+                        .logged_items()
+                        .iter()
+                        .any(|item| { item.description == "certificate missing mandatory EKU" }));
+                }
+            }
+        }
     }
 
     #[test]

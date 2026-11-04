@@ -251,8 +251,11 @@ pub struct Trust {
     /// by the C2PA specification in addition to those listed in [`Trust::trust_config`].
     ///
     /// When false, only the EKUs listed in [`Trust::trust_config`] (and any
-    /// [`TrustAnchor::trust_config`]) are accepted. Note that `id-kp-emailProtection`,
-    /// `id-kp-timeStamping`, and `id-kp-OCSPSigning` are always accepted.
+    /// [`TrustAnchor::trust_config`]) are accepted for claim signing.
+    /// For legacy compatibility, `id-kp-emailProtection` is also accepted when
+    /// no valid EKUs are loaded. `id-kp-timeStamping` and `id-kp-OCSPSigning`
+    /// remain accepted by the general profile check; TSA and OCSP responder
+    /// profiles additionally require their respective EKU.
     ///
     /// The default value is true.
     pub use_default_ekus: bool,

@@ -6486,16 +6486,33 @@ fn test_from_context_single_eku_certs() {
         );
     }
 
-    // default settings overrides these when compiling for test, so we reset them here
-    let mut settings = Settings::default();
-    settings.trust.trust_config = None;
-    settings.trust.anchors = None;
+    for use_defaults in [false, true] {
+        for configured in [
+            None,
+            Some(""),
+            Some(C2PA_CLAIM_SIGNING),
+            Some(DOCUMENT_SIGNING),
+            Some(EMAIL_PROTECTION),
+        ] {
+            let mut settings = Settings::default();
+            settings.trust.trust_config = configured.map(str::to_owned);
+            settings.trust.anchors = None;
+            settings.trust.use_default_ekus = use_defaults;
 
-    let context = Context::new().with_settings(settings).unwrap();
-    let store = Store::from_context(&context);
+            let context = Context::new().with_settings(settings).unwrap();
+            let store = Store::from_context(&context);
 
-    for (_, oid) in cases {
-        assert!(store.ctp.has_allowed_eku(&eku(oid)).is_some());
+            for (name, oid) in cases {
+                let expected = use_defaults
+                    || configured == Some(oid)
+                    || (oid == EMAIL_PROTECTION && configured.unwrap_or_default().is_empty());
+                assert_eq!(
+                    store.ctp.has_allowed_eku(&eku(oid)).is_some(),
+                    expected,
+                    "{name}: defaults={use_defaults}, configured={configured:?}"
+                );
+            }
+        }
     }
 }
 

@@ -415,8 +415,8 @@ impl CertificateTrustPolicy {
     /// dotted-decimal notation (one per line) and configures the trust handler
     /// to accept certificates that are issued with one of those EKUs.
     ///
-    /// IMPORTANT: The trust configuration will always accept the default set of
-    /// OIDs descfibed in the C2PA Technical Specification.
+    /// OIDs are added to the current set. Use [`Self::clear_ekus`] to remove
+    /// configured and built-in EKUs before adding a replacement set.
     ///
     /// This function will quietly ignore any invalid input, such as a non-UTF8
     /// input or lines within the input such as comments or blank lines that can
@@ -435,7 +435,7 @@ impl CertificateTrustPolicy {
         }
     }
 
-    // does the CTP require any mandatory EKUs?  If so, the certificate must have at least one of them to be valid
+    // All configured mandatory EKUs must be present in an end-entity certificate.
     pub(crate) fn has_mandatory_ekus(&self) -> bool {
         !self.mandatory_ekus.is_empty()
     }
@@ -563,12 +563,12 @@ impl CertificateTrustPolicy {
         true
     }
 
-    /// Return `true` if the EKU OID is allowed.
+    /// Return the first allowed EKU OID, if any.
     ///
-    /// `c2pa-kp-claimSigning` is always allowed: a validator always has a trust
-    /// list for it (C2PA Trust Model, "C2PA Signers"). `id-kp-emailProtection`,
-    /// which earlier versions of the specification required, is allowed unless
-    /// a list of valid EKUs has been configured that leaves it out.
+    /// Claim-signing EKUs follow the configured set, including any built-in
+    /// defaults that were loaded. For legacy compatibility, emailProtection is
+    /// also allowed when that set is empty. timeStamping and OCSPSigning remain
+    /// allowed here; end-entity role checks additionally require mandatory EKUs.
     pub(crate) fn has_allowed_eku<'a>(&self, eku: &'a ExtendedKeyUsage) -> Option<Oid<'a>> {
         if eku.email_protection
             && (self.additional_ekus.is_empty()
@@ -587,13 +587,9 @@ impl CertificateTrustPolicy {
             return Some(OCSP_SIGNING_OID.clone());
         }
 
-        // TO REVIEW: Earlier implementation used the last match; this one uses the
-        // first. Does that make a difference?
-
         for extra_oid in eku.other.iter().as_ref() {
             let extra_oid_str = extra_oid.to_string();
-            if *extra_oid == C2PA_CLAIM_SIGNING_OID || self.additional_ekus.contains(&extra_oid_str)
-            {
+            if self.additional_ekus.contains(&extra_oid_str) {
                 return Some(extra_oid.clone());
             }
         }
@@ -683,6 +679,7 @@ impl fmt::Display for InvalidCertificateError {
 impl Error for InvalidCertificateError {}
 
 static EMAIL_PROTECTION_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .4);
+#[cfg(test)]
 static C2PA_CLAIM_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .62558 .2 .1);
 static TIMESTAMPING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .8);
 static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9);
@@ -933,21 +930,50 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
-    fn c2pa_claim_signing_eku_always_allowed() {
-        // With no list of valid EKUs configured.
-        let ctp = CertificateTrustPolicy::new();
+    fn c2pa_claim_signing_eku_follows_defaults_and_configuration() {
+        let ctp = CertificateTrustPolicy::default();
         assert_eq!(
             ctp.has_allowed_eku(&c2pa_claim_signing_eku()).unwrap(),
             super::C2PA_CLAIM_SIGNING_OID
         );
 
-        // With a list that does not mention it.
         let mut ctp = CertificateTrustPolicy::new();
+        assert!(ctp.has_allowed_eku(&c2pa_claim_signing_eku()).is_none());
+        ctp.add_valid_ekus(b"");
+        assert!(ctp.has_allowed_eku(&c2pa_claim_signing_eku()).is_none());
         ctp.add_valid_ekus(b"1.3.6.1.5.5.7.3.36");
+        assert!(ctp.has_allowed_eku(&c2pa_claim_signing_eku()).is_none());
+        ctp.add_valid_ekus(b"1.3.6.1.4.1.62558.2.1");
         assert_eq!(
             ctp.has_allowed_eku(&c2pa_claim_signing_eku()).unwrap(),
             super::C2PA_CLAIM_SIGNING_OID
         );
+
+        ctp.clear_ekus();
+        assert!(ctp.has_allowed_eku(&c2pa_claim_signing_eku()).is_none());
+        ctp.add_default_valid_ekus();
+        assert!(ctp.has_allowed_eku(&c2pa_claim_signing_eku()).is_some());
+        ctp.clear();
+        assert!(ctp.has_allowed_eku(&c2pa_claim_signing_eku()).is_none());
+    }
+
+    #[test]
+    fn configured_ekus_accept_any_matching_claim_signer_purpose() {
+        let mut eku = email_eku();
+        eku.other = c2pa_claim_signing_eku().other;
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_valid_ekus(b"1.3.6.1.5.5.7.3.36");
+        assert!(ctp.has_allowed_eku(&eku).is_none());
+        ctp.add_valid_ekus(b"1.3.6.1.4.1.62558.2.1");
+        assert_eq!(
+            ctp.has_allowed_eku(&eku).unwrap(),
+            super::C2PA_CLAIM_SIGNING_OID
+        );
+
+        eku.other.extend(document_signing_eku().other);
+        ctp.clear_ekus();
+        ctp.add_valid_ekus(b"1.3.6.1.5.5.7.3.36");
+        assert_eq!(ctp.has_allowed_eku(&eku).unwrap(), DOCUMENT_SIGNING_OID);
     }
 
     #[test]
