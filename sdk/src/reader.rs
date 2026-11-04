@@ -1340,6 +1340,72 @@ pub mod tests {
         Builder, SigningAlg,
     };
 
+    #[test]
+    fn test_reader_rejects_truncated_box_hash_list() -> Result<()> {
+        use std::io::{Read, Seek, Write};
+
+        use crate::{
+            assertions::BoxHash,
+            asset_handlers::jpeg_io::JpegIO,
+            asset_io::{C2paWriter, ObjectType},
+        };
+
+        const IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
+        const HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash.json");
+
+        for truncated in [false, true] {
+            let mut hash: BoxHash = serde_json::from_slice(HASH)?;
+            if truncated {
+                let c2pa_index = hash
+                    .boxes
+                    .iter()
+                    .position(|b| b.names.iter().any(|name| name == "C2PA"))
+                    .expect("fixture must contain the manifest box");
+                assert!(c2pa_index + 1 < hash.boxes.len());
+                hash.boxes.truncate(c2pa_index + 1);
+            }
+
+            let mut builder = Builder::from_context(test_context())
+                .with_definition(r#"{"title":"truncated box list"}"#)?;
+            builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+            builder.add_assertion("c2pa.hash.boxes", &hash)?;
+            let signer = test_signer(SigningAlg::Ps256);
+            let manifest = builder.sign_box_hashed_embeddable(signer.as_ref(), "image/jpeg")?;
+
+            let mut input = Cursor::new(IMAGE);
+            let locations = JpegIO {}.get_object_locations(&mut input)?;
+            let location = locations
+                .iter()
+                .find(|location| location.htype == ObjectType::C2pa)
+                .expect("fixture must contain a manifest location");
+            input.rewind()?;
+            let mut output = Cursor::new(Vec::new());
+            let mut before = vec![0; usize::try_from(location.offset).unwrap()];
+            input.read_exact(&mut before)?;
+            output.write_all(&before)?;
+            output.write_all(&manifest)?;
+            std::io::copy(&mut input, &mut output)?;
+            output.rewind()?;
+
+            let reader = Reader::default().with_stream("image/jpeg", &mut output)?;
+            if truncated {
+                assert_eq!(reader.validation_state(), ValidationState::Invalid);
+                assert!(
+                    reader
+                        .validation_status()
+                        .unwrap()
+                        .iter()
+                        .any(|status| { status.code() == "assertion.boxesHash.unknownBox" }),
+                    "expected unknownBox, got {:?}",
+                    reader.validation_status()
+                );
+            } else {
+                assert_eq!(reader.validation_state(), ValidationState::Trusted);
+            }
+        }
+        Ok(())
+    }
+
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     #[cfg(feature = "fetch_remote_manifests")]
