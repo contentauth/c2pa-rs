@@ -17,7 +17,7 @@ use std::str::FromStr;
 
 use c2pa_raw_crypto::RawSignatureValidationError;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use rasn_ocsp::{BasicOcspResponse, CertId, CertStatus, OcspResponseStatus};
+use rasn_ocsp::{BasicOcspResponse, CertId, CertStatus, OcspResponseStatus, ResponderId};
 use rasn_pkix::{Certificate, CrlReason};
 use thiserror::Error;
 
@@ -38,7 +38,8 @@ pub struct OcspResponse {
     /// Time when certificate was revoked, if applicable.
     pub revoked_at: Option<DateTime<Utc>>,
 
-    /// OCSP certificate chain.
+    /// Authenticated responder certificate chain, including an issuing CA
+    /// resolved from the signing chain when it signs the response directly.
     pub ocsp_certs: Option<Vec<Vec<u8>>>,
 
     /// Associated certificate serial number
@@ -69,6 +70,11 @@ impl OcspResponse {
     /// single response in the OCSP response whose `certId` does not identify
     /// that certificate is ignored, so a validly-signed response issued for an
     /// unrelated certificate cannot produce a status for the signer.
+    ///
+    /// The responder is selected by `ResponderID` and its response signature.
+    /// The issuing CA may sign without embedding its certificate (RFC 6960
+    /// section 4.2.2.2). Callers must still validate responder authorization and
+    /// certificate validity before accepting the response's status log.
     pub(crate) fn from_der_checked(
         der: &[u8],
         signing_cert_chain: &[Vec<u8>],
@@ -121,63 +127,86 @@ impl OcspResponse {
         let mut internal_validation_log = StatusTracker::default();
         let response_data = &basic_response.tbs_response_data;
 
-        // get OCSP cert chain if available
-        if let Some(ocsp_certs) = &basic_response.certs {
-            let mut cert_der_vec = Vec::new();
+        let Ok(sig_alg) =
+            bcder::Oid::from_str(&basic_response.signature_algorithm.algorithm.to_string())
+        else {
+            return Ok(output);
+        };
 
-            for ocsp_cert in ocsp_certs {
-                let cert_der =
-                    rasn::der::encode(ocsp_cert).map_err(|_e| OcspError::InvalidCertificate)?;
+        let Some(hash_alg) = hash_alg_for_sig_alg(&basic_response.signature_algorithm.algorithm)
+        else {
+            return Ok(output);
+        };
 
-                cert_der_vec.push(cert_der);
-            }
+        let sig_val = bcder::OctetString::new(bytes::Bytes::copy_from_slice(
+            basic_response.signature.as_raw_slice(),
+        ));
+        let Ok(tbs) = rasn::der::encode(response_data) else {
+            return Ok(output);
+        };
 
-            // make sure the certificate was correctly signed
+        let mut cert_der_vec = basic_response
+            .certs
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|cert| rasn::der::encode(cert).map_err(|_| OcspError::InvalidCertificate))
+            .collect::<Result<Vec<_>, _>>()?;
 
-            // alg used for signature
-            let Ok(sig_alg) =
-                bcder::Oid::from_str(&basic_response.signature_algorithm.algorithm.to_string())
-            else {
-                return Ok(output);
+        // Embedded certificates are unordered. Only a certificate identifying
+        // the responder and verifying the signature can become the path's leaf.
+        let responder_index = cert_der_vec.iter().position(|der| {
+            let Ok(cert) = rasn::der::decode::<Certificate>(der) else {
+                return false;
             };
 
-            let Some(hash_alg) =
-                hash_alg_for_sig_alg(&basic_response.signature_algorithm.algorithm)
-            else {
+            responder_id_matches(&response_data.responder_id, &cert)
+                && rasn::der::encode(&cert.tbs_certificate.subject_public_key_info).is_ok_and(
+                    |key| validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &key).is_ok(),
+                )
+        });
+
+        if let Some(index) = responder_index {
+            let responder = cert_der_vec.remove(index);
+            cert_der_vec.insert(0, responder);
+        } else {
+            // RFC 6960 section 4.2.2.2 permits the issuing CA to sign without
+            // embedding its certificate. x5chain is only candidate input:
+            // authenticate issuance as well as the responder ID and signature.
+            let Some(issuer_der) = signing_cert_chain.get(1) else {
                 return Ok(output);
             };
+            let issuer = rasn::der::decode::<Certificate>(issuer_der)
+                .map_err(|_| OcspError::InvalidCertificate)?;
 
-            // grab signature value.
-            let sig_val = bcder::OctetString::new(bytes::Bytes::copy_from_slice(
-                basic_response.signature.as_raw_slice(),
-            ));
-
-            // grab the to be signed data
-            let Ok(tbs) = rasn::der::encode(&basic_response.tbs_response_data) else {
-                return Ok(output);
-            };
-
-            // grab the signing key from the first cert; reject if certs is empty
-            let Some(first_cert) = ocsp_certs.first() else {
-                return Ok(output);
-            };
-            let Ok(signing_key_der) =
-                rasn::der::encode(&first_cert.tbs_certificate.subject_public_key_info)
-            else {
-                return Ok(output);
-            };
-
-            // if not valid we will not add the cert to list to be checked for trust later
-            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der).is_ok() {
-                output.ocsp_certs = Some(cert_der_vec);
-            } else {
-                // signature failed so don't use
+            if !signing_cert_chain
+                .first()
+                .is_some_and(|leaf| certificate_issued_by(leaf, issuer_der))
+                || !responder_id_matches(&response_data.responder_id, &issuer)
+            {
                 return Ok(OcspResponse::default());
             }
-        } else {
-            // we cannot validate the OCSP response signature, so treat as unknown
+
+            let key = rasn::der::encode(&issuer.tbs_certificate.subject_public_key_info)
+                .map_err(|_| OcspError::InvalidCertificate)?;
+            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &key).is_err() {
+                return Ok(OcspResponse::default());
+            }
+
+            cert_der_vec = signing_cert_chain[1..].to_vec();
+        }
+
+        // The embedded issuer case must obey the same issuance checks as the
+        // certificate-less case; neither CertID hashes nor names prove issuance.
+        if signing_cert_chain.get(1) == cert_der_vec.first()
+            && !signing_cert_chain
+                .first()
+                .is_some_and(|leaf| certificate_issued_by(leaf, &cert_der_vec[0]))
+        {
             return Ok(OcspResponse::default());
         }
+
+        output.ocsp_certs = Some(cert_der_vec);
 
         for single_response in &response_data.responses {
             // RFC 6960 §4.1.1/§4.2.1: only a single response whose `certId`
@@ -373,6 +402,103 @@ fn validate_ocsp_sig(
     } else {
         Err(RawSignatureValidationError::UnsupportedAlgorithm)
     }
+}
+
+fn responder_id_matches(id: &ResponderId, cert: &Certificate) -> bool {
+    match id {
+        ResponderId::ByName(name) => name == &cert.tbs_certificate.subject,
+        ResponderId::ByKey(hash) => {
+            hash.as_ref()
+                == crate::crypto::hash::sha1(
+                    cert.tbs_certificate
+                        .subject_public_key_info
+                        .subject_public_key
+                        .as_raw_slice(),
+                )
+        }
+    }
+}
+
+/// Checks direct issuance and CA authority, not path trust or validity times.
+pub(crate) fn certificate_issued_by(cert_der: &[u8], issuer_der: &[u8]) -> bool {
+    use x509_parser::{certificate::X509Certificate, prelude::FromDer};
+
+    let (Ok((_, cert)), Ok((_, issuer))) = (
+        X509Certificate::from_der(cert_der),
+        X509Certificate::from_der(issuer_der),
+    ) else {
+        return false;
+    };
+
+    if cert.issuer() != issuer.subject()
+        || cert.tbs_certificate.signature != cert.signature_algorithm
+        || !issuer
+            .basic_constraints()
+            .is_ok_and(|bc| bc.is_some_and(|bc| bc.value.ca))
+        || !issuer
+            .key_usage()
+            .is_ok_and(|ku| ku.is_none_or(|ku| ku.value.key_cert_sign()))
+    {
+        return false;
+    }
+
+    let Ok(cert_asn1) = rasn::der::decode::<Certificate>(cert_der) else {
+        return false;
+    };
+    let Ok(sig_alg) = bcder::Oid::from_str(&cert.signature_algorithm.algorithm.to_id_string())
+    else {
+        return false;
+    };
+
+    let hash_alg = if cert.signature_algorithm.algorithm.to_id_string() == "1.2.840.113549.1.1.10" {
+        use x509_parser::signature_algorithm::SignatureAlgorithm;
+
+        let Ok(SignatureAlgorithm::RSASSA_PSS(params)) =
+            SignatureAlgorithm::try_from(&cert.signature_algorithm)
+        else {
+            return false;
+        };
+        let hash_oid = params.hash_algorithm_oid().to_id_string();
+        let digest_len = match hash_oid.as_str() {
+            "2.16.840.1.101.3.4.2.1" => 32,
+            "2.16.840.1.101.3.4.2.2" => 48,
+            "2.16.840.1.101.3.4.2.3" => 64,
+            _ => return false,
+        };
+
+        let Ok(mgf) = params.mask_gen_algorithm() else {
+            return false;
+        };
+
+        if mgf.mgf.to_id_string() != "1.2.840.113549.1.1.8"
+            || mgf.hash.to_id_string() != hash_oid
+            || params.salt_length() != digest_len
+            || params.trailer_field() != 1
+        {
+            return false;
+        }
+
+        let Ok(hash_alg) = bcder::Oid::from_str(&hash_oid) else {
+            return false;
+        };
+
+        hash_alg
+    } else {
+        let Some(hash_alg) = hash_alg_for_sig_alg(&cert_asn1.signature_algorithm.algorithm) else {
+            return false;
+        };
+
+        hash_alg
+    };
+
+    validate_ocsp_sig(
+        &sig_alg,
+        &hash_alg,
+        &bcder::OctetString::new(bytes::Bytes::copy_from_slice(cert.signature_value.as_ref())),
+        cert.tbs_certificate.as_ref(),
+        issuer.public_key().raw,
+    )
+    .is_ok()
 }
 
 /// Returns `true` only if `cert_id` identifies the end-entity certificate
@@ -838,7 +964,6 @@ mod tests {
         basic.signature_algorithm.algorithm =
             rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
         responses.push(encode_response(&basic));
-        responses.push(OCSP_EMPTY_CERTS_DER.to_vec());
         for der in responses {
             let mut log = StatusTracker::default();
             let parsed =
@@ -871,6 +996,350 @@ mod tests {
             assert!(parsed.ocsp_certs.is_none());
             assert!(log.logged_items().is_empty());
         }
+    }
+
+    #[test]
+    fn issuer_signed_response_without_certs_authenticates_both_responder_ids() {
+        use super::test_responder::IssuerResponder;
+
+        let responder = IssuerResponder::new();
+        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+
+        for by_name in [false, true] {
+            for certs in [
+                None,
+                Some(vec![]),
+                Some(basic_response().certs.unwrap()),
+                Some(vec![rasn::der::decode(&responder.chain[1]).unwrap()]),
+            ] {
+                let mut basic = responder.basic_response(by_name);
+                basic.certs = certs;
+                let der = responder.sign(basic);
+                let mut log = StatusTracker::default();
+                let parsed =
+                    OcspResponse::from_der_checked_at(&der, &responder.chain, None, now, &mut log)
+                        .unwrap();
+
+                assert_eq!(parsed.ocsp_der, der);
+                assert_eq!(parsed.ocsp_certs.as_ref().unwrap()[0], responder.chain[1]);
+                assert!(!parsed.certificate_serial_num.is_empty());
+                assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+                assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+            }
+        }
+    }
+
+    #[test]
+    fn issuer_response_rejects_signed_wrong_ids_and_cert_ids_and_bad_signature() {
+        use super::test_responder::IssuerResponder;
+
+        let responder = IssuerResponder::new();
+        let original = responder.basic_response(false);
+        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+        let mut wrong_key_id = original.clone();
+        wrong_key_id.tbs_response_data.responder_id =
+            rasn_ocsp::ResponderId::ByKey(vec![0; 20].into());
+
+        let mut wrong_name_id = original.clone();
+        let leaf: rasn_pkix::Certificate = rasn::der::decode(&responder.chain[0]).unwrap();
+        wrong_name_id.tbs_response_data.responder_id =
+            rasn_ocsp::ResponderId::ByName(leaf.tbs_certificate.subject);
+
+        let mut variants = vec![wrong_key_id, wrong_name_id];
+
+        for field in 0..3 {
+            let mut basic = original.clone();
+            let id = &mut basic.tbs_response_data.responses[0].cert_id;
+            match field {
+                0 => id.serial_number = 0.into(),
+                1 => id.issuer_name_hash = vec![0; 20].into(),
+                _ => id.issuer_key_hash = vec![0; 20].into(),
+            }
+
+            variants.push(basic);
+        }
+
+        let mut ders: Vec<_> = variants.into_iter().map(|b| responder.sign(b)).collect();
+        let mut bad_signature = original;
+        bad_signature.signature = rasn::types::BitString::from_vec(vec![0; 64]);
+        ders.push(encode_response(&bad_signature));
+
+        for der in ders {
+            let mut log = StatusTracker::default();
+            let parsed =
+                OcspResponse::from_der_checked_at(&der, &responder.chain, None, now, &mut log)
+                    .unwrap();
+
+            assert!(parsed.certificate_serial_num.is_empty());
+            assert!(parsed.revoked_at.is_none());
+            assert!(log.logged_items().is_empty());
+        }
+    }
+
+    #[test]
+    fn issuer_candidate_must_actually_issue_leaf_and_be_a_ca() {
+        use super::test_responder::IssuerResponder;
+
+        let responder = IssuerResponder::new();
+        let der = responder.sign(responder.basic_response(false));
+        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+
+        for variant in 0..6 {
+            let mut chain = responder.chain.clone();
+            match variant {
+                0 => chain.truncate(1),
+                1 => {
+                    let mut leaf: rasn_pkix::Certificate = rasn::der::decode(&chain[0]).unwrap();
+                    leaf.signature_value = rasn::types::BitString::from_vec(vec![0; 64]);
+                    chain[0] = rasn::der::encode(&leaf).unwrap();
+                }
+                2 => {
+                    let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+                    issuer.tbs_certificate.extensions = None;
+                    chain[1] = rasn::der::encode(&issuer).unwrap();
+                }
+                3 => chain[1] = signing_cert_chain()[1].clone(),
+                4 => {
+                    let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+                    issuer
+                        .tbs_certificate
+                        .extensions
+                        .as_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .find(|ext| ext.extn_id.to_string() == "2.5.29.15")
+                        .unwrap()
+                        .extn_value = vec![0x03, 0x02, 0x07, 0x80].into();
+
+                    chain[1] = rasn::der::encode(&issuer).unwrap();
+                }
+                _ => {
+                    let leaf: rasn_pkix::Certificate = rasn::der::decode(&chain[0]).unwrap();
+                    let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+                    issuer.tbs_certificate.subject = leaf.tbs_certificate.subject;
+                    chain[1] = rasn::der::encode(&issuer).unwrap();
+                }
+            }
+
+            let mut log = StatusTracker::default();
+            let parsed =
+                OcspResponse::from_der_checked_at(&der, &chain, None, now, &mut log).unwrap();
+
+            assert!(parsed.ocsp_certs.is_none());
+            assert!(parsed.certificate_serial_num.is_empty());
+            assert!(log.logged_items().is_empty());
+        }
+    }
+
+    #[test]
+    fn issuance_authentication_preserves_rsa_pss_certificate_support() {
+        let chain = signing_cert_chain();
+        let mut leaf: rasn_pkix::Certificate = rasn::der::decode(&chain[0]).unwrap();
+        let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+        let rsa_cert = pem::parse_many(include_bytes!("../../../tests/fixtures/certs/ps256.pub"))
+            .unwrap()
+            .remove(0);
+
+        let rsa_cert: rasn_pkix::Certificate = rasn::der::decode(rsa_cert.contents()).unwrap();
+        issuer.tbs_certificate.subject_public_key_info =
+            rsa_cert.tbs_certificate.subject_public_key_info;
+
+        // SHA-256, MGF1(SHA-256), 32-byte salt, default trailer field.
+        let params = [
+            0x30, 0x34, 0xa0, 0x0f, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
+            0x04, 0x02, 0x01, 0x05, 0x00, 0xa1, 0x1c, 0x30, 0x1a, 0x06, 0x09, 0x2a, 0x86, 0x48,
+            0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+            0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0xa2, 0x03, 0x02, 0x01, 0x20,
+        ];
+
+        leaf.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
+            algorithm: rasn::types::ObjectIdentifier::new_unchecked(
+                vec![1, 2, 840, 113549, 1, 1, 10].into(),
+            ),
+            parameters: Some(rasn::der::decode(&params).unwrap()),
+        };
+
+        leaf.tbs_certificate.signature = leaf.signature_algorithm.clone();
+        let signer = c2pa_raw_crypto::signer_from_private_key(
+            include_bytes!("../../../tests/fixtures/certs/ps256.pem"),
+            c2pa_raw_crypto::SigningAlg::Ps256,
+        )
+        .unwrap();
+
+        leaf.signature_value = rasn::types::BitString::from_vec(
+            signer
+                .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
+                .unwrap(),
+        );
+
+        let issuer = rasn::der::encode(&issuer).unwrap();
+        assert!(super::certificate_issued_by(
+            &rasn::der::encode(&leaf).unwrap(),
+            &issuer
+        ));
+
+        let mut wrong_salt = params;
+        wrong_salt[53] = 31;
+        let mut wrong_mgf_hash = params;
+        wrong_mgf_hash[46] = 2;
+
+        for invalid_params in [wrong_salt, wrong_mgf_hash] {
+            leaf.signature_algorithm.parameters = Some(rasn::der::decode(&invalid_params).unwrap());
+            leaf.tbs_certificate.signature = leaf.signature_algorithm.clone();
+            // Re-sign the modified TBS with SHA-256/default salt so rejection
+            // depends on the declared parameters, not a stale signature.
+            leaf.signature_value = rasn::types::BitString::from_vec(
+                signer
+                    .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
+                    .unwrap(),
+            );
+
+            assert!(!super::certificate_issued_by(
+                &rasn::der::encode(&leaf).unwrap(),
+                &issuer
+            ));
+        }
+    }
+
+    #[test]
+    fn issuer_response_preserves_stale_good_and_trusted_time_windows() {
+        use super::test_responder::IssuerResponder;
+
+        let responder = IssuerResponder::new();
+
+        for has_next_update in [false, true] {
+            let mut basic = responder.basic_response(false);
+            let start = basic.tbs_response_data.responses[0].this_update.to_utc();
+            let end = if has_next_update {
+                let end = start + chrono::Duration::hours(48);
+                basic.tbs_response_data.responses[0].next_update = Some(end.fixed_offset());
+                end
+            } else {
+                basic.tbs_response_data.responses[0].next_update = None;
+                basic.tbs_response_data.produced_at.to_utc() + chrono::Duration::hours(24)
+            };
+
+            let der = responder.sign(basic);
+
+            for (now, signing_time, accepted) in [
+                (start - chrono::Duration::seconds(1), Some(start), false),
+                (start, None, true),
+                (end, None, true),
+                (end + chrono::Duration::seconds(1), None, false),
+                (end + chrono::Duration::days(1), Some(start), true),
+                (end + chrono::Duration::days(1), Some(end), true),
+                (
+                    end + chrono::Duration::days(1),
+                    Some(start - chrono::Duration::seconds(1)),
+                    true,
+                ),
+                (
+                    end + chrono::Duration::days(1),
+                    Some(end + chrono::Duration::seconds(1)),
+                    false,
+                ),
+            ] {
+                let mut log = StatusTracker::default();
+                let parsed = OcspResponse::from_der_checked_at(
+                    &der,
+                    &responder.chain,
+                    signing_time,
+                    now,
+                    &mut log,
+                )
+                .unwrap();
+
+                assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), accepted);
+                assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+                assert!(!log.has_any_error());
+                assert!(parsed.revoked_at.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn issuer_signed_revoked_and_unknown_responses_preserve_status_codes() {
+        use super::test_responder::IssuerResponder;
+
+        let responder = IssuerResponder::new();
+        let outer: rasn_ocsp::OcspResponse = rasn::der::decode(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/response_revoked.der"
+        ))
+        .unwrap();
+
+        let revoked: rasn_ocsp::BasicOcspResponse =
+            rasn::der::decode(&outer.bytes.unwrap().response).unwrap();
+
+        for (status, expected) in [
+            (
+                revoked.tbs_response_data.responses[0].cert_status.clone(),
+                SIGNING_CREDENTIAL_REVOKED,
+            ),
+            (
+                rasn_ocsp::CertStatus::Unknown(Default::default()),
+                SIGNING_CREDENTIAL_OCSP_UNKNOWN,
+            ),
+        ] {
+            let mut basic = responder.basic_response(false);
+            basic.tbs_response_data.responses[0].cert_status = status;
+            let mut log = StatusTracker::default();
+            let parsed = OcspResponse::from_der_checked_at(
+                &responder.sign(basic),
+                &responder.chain,
+                None,
+                Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap(),
+                &mut log,
+            )
+            .unwrap();
+
+            assert_eq!(
+                parsed.revoked_at.is_some(),
+                expected == SIGNING_CREDENTIAL_REVOKED
+            );
+
+            assert!(log.has_status(expected));
+            assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        }
+    }
+
+    #[test]
+    fn delegated_responder_is_selected_by_id_not_certificate_order() {
+        let mut basic = basic_response();
+        let responder = basic.certs.as_ref().unwrap()[0].clone();
+        basic
+            .certs
+            .as_mut()
+            .unwrap()
+            .insert(0, rasn::der::decode(&signing_cert_chain()[1]).unwrap());
+
+        let mut log = StatusTracker::default();
+        let parsed = OcspResponse::from_der_checked(
+            &encode_response(&basic),
+            &signing_cert_chain(),
+            Some(Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap()),
+            &mut log,
+        )
+        .unwrap();
+
+        assert_eq!(
+            parsed.ocsp_certs.unwrap()[0],
+            rasn::der::encode(&responder).unwrap()
+        );
+
+        assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+
+        basic.tbs_response_data.responder_id = rasn_ocsp::ResponderId::ByKey(vec![0; 20].into());
+        let mut log = StatusTracker::default();
+        let parsed = OcspResponse::from_der_checked(
+            &encode_response(&basic),
+            &signing_cert_chain(),
+            None,
+            &mut log,
+        )
+        .unwrap();
+
+        assert!(parsed.ocsp_certs.is_none());
+        assert!(log.logged_items().is_empty());
     }
 
     #[test]
