@@ -153,8 +153,6 @@ impl Store {
                         None => ingredient.alg().to_owned(),
                     };
 
-                    // are we evaluating a 2.x manifest, then use those rule
-                    let ingredient_version = ingredient.version();
                     let has_redactions = svi.redactions.iter().any(|r| r.contains(&label));
 
                     // allow the extra ingredient trust checks
@@ -208,9 +206,9 @@ impl Store {
                         )?;
                     }
 
-                    // if manifest hash did not match because of redaction and this is a V2 or greater claim then we
-                    // must try the signature validation method before proceeding
-                    if !manifests_match && has_redactions && ingredient_version > 1 {
+                    // Redaction changes the manifest hash; bind the ingredient through its
+                    // signature box regardless of the child claim version.
+                    if !manifests_match && has_redactions {
                         let claim_signature =
                             ingredient_assertion.signature().ok_or_else(|| {
                                 log_item!(
