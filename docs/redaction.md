@@ -28,17 +28,20 @@ The C2PA specification imposes restrictions on what can be redacted:
 
 ### Ingredient binding during validation
 
-Redaction changes an ingredient's manifest hash. Validation therefore checks the
-`claimSignature` hash in the referencing ingredient assertion against the
-ingredient's signature box, including when the ingredient contains a Claim-v1
-manifest. Verifying the ingredient's own signature alone does not establish this
-parent-to-ingredient binding.
+Redaction changes an ingredient's manifest hash. For V3 ingredient assertions,
+validation therefore checks the `claimSignature` hash in the referencing
+ingredient assertion against the ingredient's signature box, including when the
+ingredient contains a Claim-v1 manifest. The ingredient assertion version, not
+the child Claim version, determines whether this check is required.
 
 A missing signature hash is reported as `ingredient.claimSignature.missing`; a
-mismatch is reported as `ingredient.claimSignature.mismatch`. Legacy ingredient
-assertions without `claimSignature` cannot establish this binding after redaction
-and fail validation. Unredacted ingredients can still be validated by their
-manifest hash.
+mismatch is reported as `ingredient.claimSignature.mismatch`.
+
+V1 and V2 ingredient assertions predate `claimSignature` and remain accepted
+after redaction for legacy compatibility. Their ingredient signatures are still
+verified, but those signatures alone cannot establish the parent-to-ingredient
+binding once redaction changes the manifest hash. Unredacted ingredients of all
+assertion versions must still match their manifest hash.
 
 ## JUMBF URI format
 

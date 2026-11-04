@@ -206,9 +206,9 @@ impl Store {
                         )?;
                     }
 
-                    // Redaction changes the manifest hash; bind the ingredient through its
-                    // signature box regardless of the child claim version.
-                    if !manifests_match && has_redactions {
+                    // Only ingredient assertions v3 and later support claimSignature.
+                    // Require it regardless of the child claim version.
+                    if !manifests_match && has_redactions && ingredient_assertion.version >= 3 {
                         let claim_signature =
                             ingredient_assertion.signature().ok_or_else(|| {
                                 log_item!(
