@@ -1152,53 +1152,114 @@ mod tests {
             0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0xa2, 0x03, 0x02, 0x01, 0x20,
         ];
 
-        leaf.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
-            algorithm: rasn::types::ObjectIdentifier::new_unchecked(
-                vec![1, 2, 840, 113549, 1, 1, 10].into(),
-            ),
-            parameters: Some(rasn::der::decode(&params).unwrap()),
-        };
-
-        leaf.tbs_certificate.signature = leaf.signature_algorithm.clone();
-        let signer = c2pa_raw_crypto::signer_from_private_key(
-            include_bytes!("../../../tests/fixtures/certs/ps256.pem"),
-            c2pa_raw_crypto::SigningAlg::Ps256,
-        )
-        .unwrap();
-
-        leaf.signature_value = rasn::types::BitString::from_vec(
-            signer
-                .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
-                .unwrap(),
-        );
-
         let issuer = rasn::der::encode(&issuer).unwrap();
-        assert!(super::certificate_issued_by(
-            &rasn::der::encode(&leaf).unwrap(),
-            &issuer
-        ));
 
-        let mut wrong_salt = params;
-        wrong_salt[53] = 31;
-        let mut wrong_mgf_hash = params;
-        wrong_mgf_hash[46] = 2;
+        for (alg, hash_suffix, salt_len) in [
+            (c2pa_raw_crypto::SigningAlg::Ps256, 1, 32),
+            (c2pa_raw_crypto::SigningAlg::Ps384, 2, 48),
+            (c2pa_raw_crypto::SigningAlg::Ps512, 3, 64),
+        ] {
+            let mut params = params;
+            params[16] = hash_suffix;
+            params[46] = hash_suffix;
+            params[53] = salt_len;
+            leaf.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
+                algorithm: rasn::types::ObjectIdentifier::new_unchecked(
+                    vec![1, 2, 840, 113549, 1, 1, 10].into(),
+                ),
+                parameters: Some(rasn::der::decode(&params).unwrap()),
+            };
 
-        for invalid_params in [wrong_salt, wrong_mgf_hash] {
-            leaf.signature_algorithm.parameters = Some(rasn::der::decode(&invalid_params).unwrap());
             leaf.tbs_certificate.signature = leaf.signature_algorithm.clone();
-            // Re-sign the modified TBS with SHA-256/default salt so rejection
-            // depends on the declared parameters, not a stale signature.
+            let signer = c2pa_raw_crypto::signer_from_private_key(
+                include_bytes!("../../../tests/fixtures/certs/ps256.pem"),
+                alg,
+            )
+            .unwrap();
+
             leaf.signature_value = rasn::types::BitString::from_vec(
                 signer
                     .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
                     .unwrap(),
             );
 
-            assert!(!super::certificate_issued_by(
+            assert!(super::certificate_issued_by(
                 &rasn::der::encode(&leaf).unwrap(),
                 &issuer
             ));
+
+            let mut wrong_salt = params;
+            wrong_salt[53] -= 1;
+            let mut wrong_mgf_hash = params;
+            wrong_mgf_hash[46] = if hash_suffix == 1 { 2 } else { 1 };
+            let mut unsupported_hash = params;
+            unsupported_hash[16] = 4;
+            let mut malformed_mgf = params.to_vec();
+            // Replace MGF1's nested digest AlgorithmIdentifier with NULL.
+            malformed_mgf.splice(34..49, [0x05, 0x00]);
+            malformed_mgf[1] -= 13;
+            malformed_mgf[20] -= 13;
+            malformed_mgf[22] -= 13;
+            let mut wrong_mgf = params;
+            wrong_mgf[33] = 9;
+            let mut wrong_trailer = params.to_vec();
+            wrong_trailer[1] += 5;
+            wrong_trailer.extend_from_slice(&[0xa3, 0x03, 0x02, 0x01, 0x02]);
+
+            for invalid_params in [
+                Some(rasn::der::decode(&wrong_salt).unwrap()),
+                Some(rasn::der::decode(&wrong_mgf_hash).unwrap()),
+                Some(rasn::der::decode(&unsupported_hash).unwrap()),
+                Some(rasn::der::decode(&malformed_mgf).unwrap()),
+                Some(rasn::der::decode(&wrong_mgf).unwrap()),
+                Some(rasn::der::decode(&wrong_trailer).unwrap()),
+                Some(rasn::der::decode(&[0x05, 0x00]).unwrap()),
+                None,
+            ] {
+                leaf.signature_algorithm.parameters = invalid_params;
+                leaf.tbs_certificate.signature = leaf.signature_algorithm.clone();
+                // A fresh signature isolates parameter validation from signature failure.
+                leaf.signature_value = rasn::types::BitString::from_vec(
+                    signer
+                        .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
+                        .unwrap(),
+                );
+
+                assert!(!super::certificate_issued_by(
+                    &rasn::der::encode(&leaf).unwrap(),
+                    &issuer
+                ));
+            }
         }
+    }
+
+    #[test]
+    fn issuance_authentication_rejects_malformed_and_unsupported_certificates() {
+        let responder = super::test_responder::IssuerResponder::new();
+        let [leaf_der, issuer_der] = responder.chain.as_slice() else {
+            panic!("test chain must contain the leaf and its issuer");
+        };
+
+        assert!(!super::certificate_issued_by(&[0xde, 0xad], issuer_der));
+        assert!(!super::certificate_issued_by(leaf_der, &[0xde, 0xad]));
+
+        let leaf: rasn_pkix::Certificate = rasn::der::decode(leaf_der).unwrap();
+        let mut mismatched = leaf.clone();
+        mismatched.tbs_certificate.signature.algorithm =
+            rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
+        assert!(!super::certificate_issued_by(
+            &rasn::der::encode(&mismatched).unwrap(),
+            issuer_der,
+        ));
+
+        let mut unsupported = leaf;
+        unsupported.signature_algorithm.algorithm =
+            rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
+        unsupported.tbs_certificate.signature = unsupported.signature_algorithm.clone();
+        assert!(!super::certificate_issued_by(
+            &rasn::der::encode(&unsupported).unwrap(),
+            issuer_der,
+        ));
     }
 
     #[test]
@@ -1276,7 +1337,7 @@ mod tests {
                 SIGNING_CREDENTIAL_REVOKED,
             ),
             (
-                rasn_ocsp::CertStatus::Unknown(Default::default()),
+                rasn_ocsp::CertStatus::Unknown(()),
                 SIGNING_CREDENTIAL_OCSP_UNKNOWN,
             ),
         ] {

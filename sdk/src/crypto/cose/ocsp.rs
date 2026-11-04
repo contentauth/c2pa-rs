@@ -2730,7 +2730,7 @@ mod tests {
                 &sign1,
                 b"payload",
                 &ctp,
-                &[der.clone()],
+                std::slice::from_ref(&der),
                 None,
                 &mut log,
                 context.settings(),
@@ -2934,10 +2934,10 @@ mod tests {
             let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
             if future {
                 issuer.tbs_certificate.validity.not_before =
-                    issuer.tbs_certificate.validity.not_after.clone();
+                    issuer.tbs_certificate.validity.not_after;
             } else {
                 issuer.tbs_certificate.validity.not_after =
-                    issuer.tbs_certificate.validity.not_before.clone();
+                    issuer.tbs_certificate.validity.not_before;
             }
 
             chain[1] = rasn::der::encode(&issuer).unwrap();
@@ -2979,6 +2979,25 @@ mod tests {
             &responder_chain,
             &wrong_chain,
             &pinned,
+            None,
+        ));
+    }
+
+    #[test]
+    fn responder_authorization_rejects_incomplete_and_malformed_chains() {
+        let (responder, ctp, _) = issuer_response_fixture();
+        for chain in [
+            vec![],
+            responder.chain[..1].to_vec(),
+            vec![responder.chain[0].clone(), vec![0xde, 0xad]],
+        ] {
+            assert!(!super::issuer_response_authorized(&chain, &ctp, None, None));
+        }
+
+        assert!(!super::delegated_response_authorized(
+            &[],
+            &responder.chain,
+            &ctp,
             None,
         ));
     }
