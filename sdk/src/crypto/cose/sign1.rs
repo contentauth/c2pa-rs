@@ -91,52 +91,39 @@ pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, Co
     }
 }
 
-/// TO DO: Documentation for this function.
+/// Extract the signing certificate chain, preferring integer label 33 over "x5chain".
+///
+/// C2PA 2.5 section 13.5 treats the two labels as one credential, but rejects
+/// the same label appearing in both protected and unprotected headers.
 pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
-    // Check the protected header first.
-    let Some(value) = sign1
-        .protected
-        .header
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| is_x5chain_label(&x.0).then(|| x.1.clone()))
-    else {
-        // Not there: Also try unprotected header. (This was permitted in older versions
-        // of C2PA.)
-        return get_unprotected_header_certs(sign1);
-    };
+    let (protected_integer, protected_text) = x5chain_header_values(&sign1.protected.header);
+    let (unprotected_integer, unprotected_text) = x5chain_header_values(&sign1.unprotected);
 
-    // Certs may be in protected or unprotected header, but not both. Check for the
-    // label itself, so a malformed chain in the unprotected header is not ignored.
-    if sign1
-        .unprotected
-        .rest
-        .iter()
-        .any(|x: &(Label, Value)| is_x5chain_label(&x.0))
+    // Check label presence before parsing, so malformed duplicates are rejected too.
+    if (protected_integer.is_some() && unprotected_integer.is_some())
+        || (protected_text.is_some() && unprotected_text.is_some())
     {
         return Err(CoseError::MultipleSigningCertificateChains);
     }
 
-    cert_chain_from_cbor_value(value)
+    let value = protected_integer
+        .or(unprotected_integer)
+        .or(protected_text)
+        .or(unprotected_text)
+        .ok_or(CoseError::MissingSigningCertificateChain)?;
+
+    cert_chain_from_cbor_value(value.clone())
 }
 
-/// The x5chain header may use its text label or its IANA integer label (33).
-fn is_x5chain_label(label: &Label) -> bool {
-    *label == Label::Text("x5chain".to_string())
-        || *label == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
-}
+fn x5chain_header_values(header: &coset::Header) -> (Option<&Value>, Option<&Value>) {
+    let integer = header.rest.iter().find_map(|(label, value)| {
+        (*label == Label::Int(iana::HeaderParameter::X5Chain.to_i64())).then_some(value)
+    });
+    let text = header.rest.iter().find_map(|(label, value)| {
+        matches!(label, Label::Text(text) if text == "x5chain").then_some(value)
+    });
 
-fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
-    let Some(value) = sign1
-        .unprotected
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| is_x5chain_label(&x.0).then(|| x.1.clone()))
-    else {
-        return Err(CoseError::MissingSigningCertificateChain);
-    };
-
-    cert_chain_from_cbor_value(value)
+    (integer, text)
 }
 
 fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
@@ -268,12 +255,9 @@ mod tests {
         assert_eq!(cert_chain_from_sign1(&legacy).unwrap(), vec![cert.clone()]);
         legacy.protected.header.rest.push((
             Label::Int(iana::HeaderParameter::X5Chain.to_i64()),
-            Value::Bytes(cert),
+            Value::Bytes(cert.clone()),
         ));
-        assert!(matches!(
-            cert_chain_from_sign1(&legacy),
-            Err(CoseError::MultipleSigningCertificateChains)
-        ));
+        assert_eq!(cert_chain_from_sign1(&legacy).unwrap(), vec![cert]);
     }
 
     #[test]
@@ -360,26 +344,97 @@ mod tests {
     }
 
     #[test]
-    fn x5chain_in_both_headers_is_rejected_for_either_label() {
-        for unprotected in [
-            HeaderBuilder::new().value(X5CHAIN, chain(&[b"other"])),
-            HeaderBuilder::new().text_value("x5chain".to_string(), chain(&[b"other"])),
-            // A malformed chain must not let the check pass.
-            HeaderBuilder::new().value(X5CHAIN, Value::Text("not a chain".to_string())),
-        ] {
-            let sign1 = CoseSign1Builder::new()
-                .protected(
-                    HeaderBuilder::new()
-                        .value(X5CHAIN, chain(&[b"leaf"]))
-                        .build(),
-                )
-                .unprotected(unprotected.build())
-                .build();
+    fn same_x5chain_label_in_both_headers_is_rejected_even_when_malformed() {
+        for label in [Label::Int(X5CHAIN), Label::Text("x5chain".to_string())] {
+            for protected in [chain(&[b"leaf"]), Value::Null, Value::Array(vec![])] {
+                for unprotected in [chain(&[b"other"]), Value::Null, Value::Array(vec![])] {
+                    let mut sign1 = CoseSign1::default();
+                    sign1
+                        .protected
+                        .header
+                        .rest
+                        .push((label.clone(), protected.clone()));
+                    sign1.unprotected.rest.push((label.clone(), unprotected));
 
-            assert!(matches!(
-                cert_chain_from_sign1(&sign1),
-                Err(CoseError::MultipleSigningCertificateChains)
-            ));
+                    assert!(matches!(
+                        cert_chain_from_sign1(&sign1),
+                        Err(CoseError::MultipleSigningCertificateChains)
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn integer_x5chain_takes_precedence_in_either_header_and_order() {
+        for integer_protected in [true, false] {
+            for text_protected in [true, false] {
+                for integer_first in [true, false] {
+                    for text_value in [chain(&[b"other"]), Value::Null] {
+                        let mut entries = vec![
+                            (
+                                integer_protected,
+                                Label::Int(X5CHAIN),
+                                chain(&[b"leaf", b"ca"]),
+                            ),
+                            (
+                                text_protected,
+                                Label::Text("x5chain".to_string()),
+                                text_value,
+                            ),
+                        ];
+                        if !integer_first {
+                            entries.reverse();
+                        }
+
+                        let mut sign1 = CoseSign1::default();
+                        for (protected, label, value) in entries {
+                            let header = if protected {
+                                &mut sign1.protected.header
+                            } else {
+                                &mut sign1.unprotected
+                            };
+                            header.rest.push((label, value));
+                        }
+
+                        assert_eq!(
+                            cert_chain_from_sign1(&sign1).unwrap(),
+                            vec![b"leaf".to_vec(), b"ca".to_vec()]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_integer_x5chain_does_not_fall_back_to_text_label() {
+        for integer_protected in [true, false] {
+            for text_protected in [true, false] {
+                for integer_value in [Value::Null, Value::Array(vec![])] {
+                    let mut sign1 = CoseSign1::default();
+                    for (protected, label, value) in [
+                        (
+                            text_protected,
+                            Label::Text("x5chain".to_string()),
+                            chain(&[b"other"]),
+                        ),
+                        (integer_protected, Label::Int(X5CHAIN), integer_value),
+                    ] {
+                        let header = if protected {
+                            &mut sign1.protected.header
+                        } else {
+                            &mut sign1.unprotected
+                        };
+                        header.rest.push((label, value));
+                    }
+
+                    assert!(matches!(
+                        cert_chain_from_sign1(&sign1),
+                        Err(CoseError::MissingSigningCertificateChain)
+                    ));
+                }
+            }
         }
     }
 
