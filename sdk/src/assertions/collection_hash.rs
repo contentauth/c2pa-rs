@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::{self, Read, Seek},
     path::{Component, Path, PathBuf},
@@ -26,13 +25,9 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 /// A collection hash is used to hash multiple files within a collection (e.g. a folder or a zip file).
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct CollectionHash {
-    /// Map of file path to their metadata for the collection.
-    ///
-    /// Note, while this type does not accurately represent the specifications definition,
-    /// it is properly serialized as an array of objects internally. This was done for
-    /// backwards compatibility with the existing SDK implementation.
-    #[serde(with = "compat")]
-    pub uris: HashMap<PathBuf, UriHashedDataMap>,
+    /// List of files and their metadata in the collection.
+    #[serde(deserialize_with = "compat::deserialize_uris")]
+    pub uris: Vec<UriHashedDataMap>,
 
     /// Algorithm used to hash the files.
     pub alg: String,
@@ -47,6 +42,11 @@ pub struct CollectionHash {
 /// Information about a file in a [`CollectionHash`][CollectionHash].
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct UriHashedDataMap {
+    /// Relative URI of the file in the collection.
+    ///
+    /// Path segments are separated by `/` regardless of the operating system.
+    pub uri: String,
+
     /// Hash of the entire file contents.
     ///
     /// For a ZIP, the hash must span starting from the file header to the end of the compressed file data.
@@ -70,6 +70,19 @@ pub struct UriHashedDataMap {
     pub data_types: Option<Vec<AssetType>>,
 }
 
+impl UriHashedDataMap {
+    /// Create a new entry for the given URI with no hash or metadata.
+    pub fn new(uri: String) -> Self {
+        Self {
+            uri,
+            hash: None,
+            size: None,
+            dc_format: None,
+            data_types: None,
+        }
+    }
+}
+
 impl CollectionHash {
     pub const LABEL: &'static str = COLLECTION_HASH;
 
@@ -79,15 +92,21 @@ impl CollectionHash {
     /// [`gen_hash`](Self::gen_hash) and [`verify_hash`](Self::verify_hash).
     pub fn new(alg: String) -> Self {
         Self {
-            uris: HashMap::new(),
+            uris: Vec::new(),
             alg,
             zip_central_directory_hash: None,
         }
     }
 
+    /// Returns the entry for the given URI, if any.
+    pub fn get(&self, uri: &str) -> Option<&UriHashedDataMap> {
+        self.uris.iter().find(|entry| entry.uri == uri)
+    }
+
     /// Adds a new file to the collection hash.
     ///
-    /// The specified path MUST be a file, not a directory.
+    /// The specified path MUST be a file, not a directory. If an entry with the same URI
+    /// already exists, it is replaced.
     pub fn add_file(&mut self, path: PathBuf) -> Result<()> {
         if !path.is_file() {
             return Err(Error::BadParam(format!(
@@ -116,15 +135,21 @@ impl CollectionHash {
 
         let format = mime::mime_from_path(&path);
         let metadata = fs::metadata(&path)?;
-        self.uris.insert(
-            path,
-            UriHashedDataMap {
-                hash: None,
-                size: Some(metadata.len()),
-                dc_format: format,
-                data_types: None,
-            },
-        );
+        let entry = UriHashedDataMap {
+            uri: Self::path_to_uri(&path),
+            hash: None,
+            size: Some(metadata.len()),
+            dc_format: format,
+            data_types: None,
+        };
+        match self
+            .uris
+            .iter_mut()
+            .find(|existing_entry| existing_entry.uri == entry.uri)
+        {
+            Some(existing) => *existing = entry,
+            None => self.uris.push(entry),
+        }
 
         Ok(())
     }
@@ -140,7 +165,8 @@ impl CollectionHash {
             )));
         }
 
-        for (uri, uri_map) in &mut self.uris {
+        for uri_map in &mut self.uris {
+            let uri = Path::new(&uri_map.uri);
             Self::validate_uri(uri)?;
 
             let mut file = File::open(base_path.join(uri)).map_err(|err| match err.kind() {
@@ -175,11 +201,12 @@ impl CollectionHash {
             )));
         }
 
-        for (uri, uri_map) in &self.uris {
+        for uri_map in &self.uris {
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
             })?;
 
+            let uri = Path::new(&uri_map.uri);
             Self::validate_uri(uri)?;
 
             let mut file = File::open(base_path.join(uri)).map_err(|err| match err.kind() {
@@ -199,7 +226,7 @@ impl CollectionHash {
             ) {
                 return Err(Error::HashMismatch(format!(
                     "hash for {} does not match",
-                    uri.display()
+                    uri_map.uri
                 )));
             }
         }
@@ -226,26 +253,23 @@ impl CollectionHash {
     where
         R: Read + Seek + ?Sized,
     {
-        self.uris = HashMap::new();
+        self.uris = Vec::new();
         for (path, hash_range) in zip_uri_ranges(stream)? {
-            // Path needs to be a valid URI, so normalize.
-            // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
-            let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
-
             let hash =
                 hash_stream_by_alg(&self.alg, stream, Some(vec![hash_range.clone()]), false)?;
 
             let format = mime::mime_from_path(&path);
-            self.uris.insert(
-                path,
-                UriHashedDataMap {
-                    hash: Some(hash),
-                    size: Some(hash_range.length()),
-                    dc_format: format,
-                    data_types: None,
-                },
-            );
+            self.uris.push(UriHashedDataMap {
+                uri: Self::path_to_uri(&path),
+                hash: Some(hash),
+                size: Some(hash_range.length()),
+                dc_format: format,
+                data_types: None,
+            });
         }
+
+        // sort by URI for deterministic output
+        self.uris.sort_by(|a, b| a.uri.cmp(&b.uri));
 
         Ok(())
     }
@@ -304,10 +328,8 @@ impl CollectionHash {
         }
 
         let uri_ranges = zip_uri_ranges(stream)?;
-        for (path, uri_map) in &self.uris {
-            // Path needs to be a valid URI, so normalize.
-            // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
-            let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
+        for uri_map in &self.uris {
+            let path = PathBuf::from(Self::path_to_uri(Path::new(&uri_map.uri)));
             Self::validate_uri(&path)?;
 
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
@@ -326,6 +348,14 @@ impl CollectionHash {
         }
 
         Ok(())
+    }
+
+    /// Converts a path to a URI.
+    ///
+    /// Path needs to be a valid URI, so normalize separators.
+    /// https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
+    fn path_to_uri(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
     }
 
     /// Validates a collection URI per the C2PA spec.
@@ -369,81 +399,38 @@ impl AssertionBase for CollectionHash {
 
 impl AssertionCbor for CollectionHash {}
 
-/// C2PA requires [`CollectionHash::uris`] to be encoded as an array of objects, but
-/// we currently define them as a hash map of objects.
+/// Deserialization support for [`CollectionHash::uris`].
 ///
-/// This custom ser/de encodes and decodes the correct type while maintaining backwards
-/// compatibility for existing (non-standard) SDK behavior.
+/// C2PA requires `uris` to be encoded as an array of objects, but older versions of the
+/// SDK encoded it as a map of objects keyed by URI. Both forms are accepted here.
 mod compat {
-    use std::{collections::HashMap, fmt, path::PathBuf};
+    use std::fmt;
 
     use serde::{
         de::{MapAccess, SeqAccess, Visitor},
-        Deserialize, Deserializer, Serialize, Serializer,
+        Deserialize, Deserializer,
     };
 
     use super::{AssetType, UriHashedDataMap};
 
-    /// On-wire representation of a single [`UriHashedDataMap`] entry.
-    #[derive(Serialize, Deserialize)]
-    struct StandardUriHashedDataMap {
-        uri: PathBuf,
-
-        #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
+    /// Legacy on-wire representation of a [`UriHashedDataMap`], where the URI is the map key.
+    #[derive(Deserialize)]
+    struct LegacyUriHashedDataMap {
+        #[serde(with = "serde_bytes")]
         hash: Option<Vec<u8>>,
 
-        #[serde(skip_serializing_if = "Option::is_none")]
         size: Option<u64>,
 
-        #[serde(rename = "dc:format", skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "dc:format")]
         dc_format: Option<String>,
 
-        #[serde(skip_serializing_if = "Option::is_none")]
         data_types: Option<Vec<AssetType>>,
     }
 
-    impl StandardUriHashedDataMap {
-        fn into_parts(self) -> (PathBuf, UriHashedDataMap) {
-            (
-                self.uri,
-                UriHashedDataMap {
-                    hash: self.hash,
-                    size: self.size,
-                    dc_format: self.dc_format,
-                    data_types: self.data_types,
-                },
-            )
-        }
-    }
-
-    pub(super) fn serialize<S>(
-        uris: &HashMap<PathBuf, UriHashedDataMap>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut entries: Vec<StandardUriHashedDataMap> = uris
-            .iter()
-            .map(|(uri, map)| StandardUriHashedDataMap {
-                uri: uri.clone(),
-                hash: map.hash.clone(),
-                size: map.size,
-                dc_format: map.dc_format.clone(),
-                data_types: map.data_types.clone(),
-            })
-            .collect();
-
-        // sort by URI for deterministic output
-        entries.sort_by(|a, b| a.uri.cmp(&b.uri));
-        entries.serialize(serializer)
-    }
-
-    /// Accepts both the spec-compliant array form and the legacy map form.
     struct UrisVisitor;
 
     impl<'de> Visitor<'de> for UrisVisitor {
-        type Value = HashMap<PathBuf, UriHashedDataMap>;
+        type Value = Vec<UriHashedDataMap>;
 
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
             f.write_str("an array of URI entries or a map keyed by URI")
@@ -454,15 +441,9 @@ mod compat {
         where
             A: SeqAccess<'de>,
         {
-            let mut uris = HashMap::with_capacity(seq.size_hint().unwrap_or(0));
-            while let Some(entry) = seq.next_element::<StandardUriHashedDataMap>()? {
-                let (uri, map) = entry.into_parts();
-                if uris.insert(uri.clone(), map).is_some() {
-                    return Err(serde::de::Error::custom(format!(
-                        "duplicate uri in collection hash: {}",
-                        uri.display()
-                    )));
-                }
+            let mut uris = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+            while let Some(entry) = seq.next_element::<UriHashedDataMap>()? {
+                uris.push(entry);
             }
             Ok(uris)
         }
@@ -472,17 +453,25 @@ mod compat {
         where
             A: MapAccess<'de>,
         {
-            let mut uris = HashMap::with_capacity(access.size_hint().unwrap_or(0));
-            while let Some((uri, map)) = access.next_entry::<PathBuf, UriHashedDataMap>()? {
-                uris.insert(uri, map);
+            let mut uris = Vec::with_capacity(access.size_hint().unwrap_or(0));
+            while let Some((uri, map)) = access.next_entry::<String, LegacyUriHashedDataMap>()? {
+                uris.push(UriHashedDataMap {
+                    uri,
+                    hash: map.hash,
+                    size: map.size,
+                    dc_format: map.dc_format,
+                    data_types: map.data_types,
+                });
             }
+            // sort by URI for deterministic ordering
+            uris.sort_by(|a, b| a.uri.cmp(&b.uri));
             Ok(uris)
         }
     }
 
-    pub(super) fn deserialize<'de, D>(
+    pub(super) fn deserialize_uris<'de, D>(
         deserializer: D,
-    ) -> Result<HashMap<PathBuf, UriHashedDataMap>, D::Error>
+    ) -> Result<Vec<UriHashedDataMap>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -492,7 +481,7 @@ mod compat {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{collections::HashMap, io::Cursor};
 
     #[cfg(not(target_arch = "wasm32"))]
     use tempfile::TempDir;
@@ -518,15 +507,7 @@ mod tests {
 
         let mut collection = CollectionHash::new("sha256".to_owned());
         for uri in ["a.txt", "sub/b.txt"] {
-            collection.uris.insert(
-                PathBuf::from(uri),
-                UriHashedDataMap {
-                    hash: None,
-                    size: None,
-                    dc_format: None,
-                    data_types: None,
-                },
-            );
+            collection.uris.push(UriHashedDataMap::new(uri.to_owned()));
         }
         collection.gen_hash(dir.path())?;
 
@@ -571,15 +552,41 @@ mod tests {
         let array_form = c2pa_cbor::to_vec(&collection)?;
 
         #[derive(Serialize)]
+        struct LegacyUriHashedDataMap {
+            #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
+            hash: Option<Vec<u8>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            size: Option<u64>,
+            #[serde(rename = "dc:format", skip_serializing_if = "Option::is_none")]
+            dc_format: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            data_types: Option<Vec<AssetType>>,
+        }
+
+        #[derive(Serialize)]
         struct LegacyCollectionHash {
-            uris: HashMap<PathBuf, UriHashedDataMap>,
+            uris: HashMap<String, LegacyUriHashedDataMap>,
             alg: String,
             #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
             zip_central_directory_hash: Option<Vec<u8>>,
         }
         let legacy_src = gen_zip_collection_hash()?;
         let legacy = LegacyCollectionHash {
-            uris: legacy_src.uris,
+            uris: legacy_src
+                .uris
+                .into_iter()
+                .map(|entry| {
+                    (
+                        entry.uri,
+                        LegacyUriHashedDataMap {
+                            hash: entry.hash,
+                            size: entry.size,
+                            dc_format: entry.dc_format,
+                            data_types: entry.data_types,
+                        },
+                    )
+                })
+                .collect(),
             alg: legacy_src.alg,
             zip_central_directory_hash: legacy_src.zip_central_directory_hash,
         };
@@ -600,21 +607,12 @@ mod tests {
     fn test_zip_uri_hash_separators_do_not_depend_on_operating_system() -> Result<()> {
         // PathBuf separator depends on the platform (operating system).
         // Here we run verification with paths having `/`, then `\`.
-        let nested = PathBuf::from("sample1/test1/test1.txt");
+        let nested = "sample1/test1/test1.txt";
         for possible_separator in ['/', '\\'] {
             let mut hash_collection = gen_zip_collection_hash()?;
-            hash_collection.uris = std::mem::take(&mut hash_collection.uris)
-                .into_iter()
-                .map(|(path, uri_map)| {
-                    (
-                        PathBuf::from(
-                            path.to_string_lossy()
-                                .replace('/', &possible_separator.to_string()),
-                        ),
-                        uri_map,
-                    )
-                })
-                .collect();
+            for uri_map in &mut hash_collection.uris {
+                uri_map.uri = uri_map.uri.replace('/', &possible_separator.to_string());
+            }
 
             let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
             // An error here means there is a parsing issue due to separators.
@@ -623,22 +621,13 @@ mod tests {
             // Verify a hash mismatch is still detected.
             let mut hash_collection = gen_zip_collection_hash()?;
             let mut corrupted = false;
-            hash_collection.uris = std::mem::take(&mut hash_collection.uris)
-                .into_iter()
-                .map(|(path, mut uri_map)| {
-                    if path == nested {
-                        uri_map.hash = Some(vec![0; 32]);
-                        corrupted = true;
-                    }
-                    (
-                        PathBuf::from(
-                            path.to_string_lossy()
-                                .replace('/', &possible_separator.to_string()),
-                        ),
-                        uri_map,
-                    )
-                })
-                .collect();
+            for uri_map in &mut hash_collection.uris {
+                if uri_map.uri == nested {
+                    uri_map.hash = Some(vec![0; 32]);
+                    corrupted = true;
+                }
+                uri_map.uri = uri_map.uri.replace('/', &possible_separator.to_string());
+            }
             assert!(corrupted);
 
             let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
@@ -654,7 +643,7 @@ mod tests {
     #[test]
     fn test_verify_zip_stream_hash_mismatch() -> Result<()> {
         let mut collection = gen_zip_collection_hash()?;
-        if let Some(entry) = collection.uris.values_mut().next() {
+        if let Some(entry) = collection.uris.first_mut() {
             entry.hash = Some(vec![0; 32]);
         }
 
@@ -684,15 +673,13 @@ mod tests {
     #[test]
     fn test_verify_zip_invalid_uri() -> Result<()> {
         let mut collection = gen_zip_collection_hash()?;
-        collection.uris.insert(
-            PathBuf::from("../evil.txt"),
-            UriHashedDataMap {
-                hash: Some(vec![0; 32]),
-                size: Some(0),
-                dc_format: None,
-                data_types: None,
-            },
-        );
+        collection.uris.push(UriHashedDataMap {
+            uri: "../evil.txt".into(),
+            hash: Some(vec![0; 32]),
+            size: Some(0),
+            dc_format: None,
+            data_types: None,
+        });
 
         let mut stream = Cursor::new(ZIP_SAMPLE1);
         assert!(matches!(
@@ -707,15 +694,13 @@ mod tests {
     fn test_verify_zip_absolute_uri() -> Result<()> {
         for evil in ["/etc/passwd", "/tmp/evil.txt"] {
             let mut collection = gen_zip_collection_hash()?;
-            collection.uris.insert(
-                PathBuf::from(evil),
-                UriHashedDataMap {
-                    hash: Some(vec![0; 32]),
-                    size: Some(0),
-                    dc_format: None,
-                    data_types: None,
-                },
-            );
+            collection.uris.push(UriHashedDataMap {
+                uri: evil.into(),
+                hash: Some(vec![0; 32]),
+                size: Some(0),
+                dc_format: None,
+                data_types: None,
+            });
 
             let mut stream = Cursor::new(ZIP_SAMPLE1);
             assert!(matches!(
@@ -730,15 +715,13 @@ mod tests {
     #[test]
     fn test_verify_zip_incorrect_file_count() -> Result<()> {
         let mut collection = gen_zip_collection_hash()?;
-        collection.uris.insert(
-            PathBuf::from("sample1/not_in_zip.txt"),
-            UriHashedDataMap {
-                hash: Some(vec![0; 32]),
-                size: Some(0),
-                dc_format: None,
-                data_types: None,
-            },
-        );
+        collection.uris.push(UriHashedDataMap {
+            uri: "sample1/not_in_zip.txt".into(),
+            hash: Some(vec![0; 32]),
+            size: Some(0),
+            dc_format: None,
+            data_types: None,
+        });
 
         let mut stream = Cursor::new(ZIP_SAMPLE1);
         assert!(matches!(
@@ -790,7 +773,7 @@ mod tests {
     #[test]
     fn test_directory_verify_missing_hash_is_malformed() -> Result<()> {
         let (dir, mut collection) = gen_dir_collection_hash()?;
-        if let Some(entry) = collection.uris.values_mut().next() {
+        if let Some(entry) = collection.uris.first_mut() {
             entry.hash = None;
         }
 
@@ -835,7 +818,7 @@ mod tests {
         let mut stream = Cursor::new(ZIP_SAMPLE1);
 
         let mut collection = CollectionHash {
-            uris: HashMap::new(),
+            uris: Vec::new(),
             alg: "sha256".to_owned(),
             zip_central_directory_hash: None,
         };
@@ -850,8 +833,9 @@ mod tests {
         );
 
         assert_eq!(
-            collection.uris.get(Path::new("sample1/test1.txt")),
+            collection.get("sample1/test1.txt"),
             Some(&UriHashedDataMap {
+                uri: "sample1/test1.txt".into(),
                 hash: Some(vec![
                     39, 147, 91, 240, 68, 172, 194, 43, 70, 207, 141, 151, 141, 239, 180, 17, 170,
                     106, 248, 168, 169, 245, 207, 172, 29, 204, 80, 155, 37, 30, 186, 60
@@ -862,8 +846,9 @@ mod tests {
             })
         );
         assert_eq!(
-            collection.uris.get(Path::new("sample1/test1/test1.txt")),
+            collection.get("sample1/test1/test1.txt"),
             Some(&UriHashedDataMap {
+                uri: "sample1/test1/test1.txt".into(),
                 hash: Some(vec![
                     136, 103, 106, 251, 180, 19, 60, 244, 42, 171, 44, 215, 65, 252, 59, 127, 84,
                     63, 175, 25, 6, 118, 200, 12, 188, 128, 67, 78, 249, 182, 242, 156
@@ -874,8 +859,9 @@ mod tests {
             })
         );
         assert_eq!(
-            collection.uris.get(Path::new("sample1/test1/test2.txt")),
+            collection.get("sample1/test1/test2.txt"),
             Some(&UriHashedDataMap {
+                uri: "sample1/test1/test2.txt".into(),
                 hash: Some(vec![
                     164, 100, 0, 41, 229, 201, 3, 228, 30, 254, 72, 205, 60, 70, 104, 78, 121, 21,
                     187, 230, 19, 242, 52, 212, 181, 104, 99, 179, 177, 81, 150, 33
@@ -886,8 +872,9 @@ mod tests {
             })
         );
         assert_eq!(
-            collection.uris.get(Path::new("sample1/test1/test3.txt")),
+            collection.get("sample1/test1/test3.txt"),
             Some(&UriHashedDataMap {
+                uri: "sample1/test1/test3.txt".into(),
                 hash: Some(vec![
                     129, 96, 58, 105, 119, 67, 2, 71, 77, 151, 99, 201, 192, 32, 213, 77, 19, 22,
                     106, 204, 158, 142, 176, 247, 251, 174, 145, 243, 12, 22, 151, 116
@@ -898,8 +885,9 @@ mod tests {
             })
         );
         assert_eq!(
-            collection.uris.get(Path::new("sample1/test2.txt")),
+            collection.get("sample1/test2.txt"),
             Some(&UriHashedDataMap {
+                uri: "sample1/test2.txt".into(),
                 hash: Some(vec![
                     118, 254, 231, 173, 246, 184, 45, 104, 69, 72, 23, 21, 177, 202, 184, 241, 162,
                     36, 28, 55, 23, 62, 109, 143, 182, 233, 99, 144, 23, 139, 9, 118
@@ -910,8 +898,9 @@ mod tests {
             })
         );
         assert_eq!(
-            collection.uris.get(Path::new("sample1/test1")),
+            collection.get("sample1/test1"),
             Some(&UriHashedDataMap {
+                uri: "sample1/test1".into(),
                 hash: Some(vec![
                     199, 134, 99, 174, 54, 178, 120, 199, 28, 217, 185, 86, 200, 187, 5, 90, 182,
                     134, 28, 246, 5, 219, 189, 243, 221, 164, 149, 198, 146, 113, 183, 219
@@ -922,8 +911,9 @@ mod tests {
             })
         );
         assert_eq!(
-            collection.uris.get(Path::new("sample1/test2")),
+            collection.get("sample1/test2"),
             Some(&UriHashedDataMap {
+                uri: "sample1/test2".into(),
                 hash: Some(vec![
                     9, 26, 48, 179, 113, 110, 125, 60, 147, 43, 208, 136, 111, 196, 48, 16, 226,
                     74, 37, 100, 184, 237, 36, 219, 220, 156, 240, 35, 129, 155, 171, 14
