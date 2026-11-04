@@ -48,6 +48,18 @@ const MERGE_MAX_DEPTH: usize = 64;
 /// all enforcement points use the same value.
 pub(crate) const MAX_ASSERTIONS: usize = 100_000;
 
+/// Default maximum remote manifest response size in bytes (10 MiB).
+pub(crate) const DEFAULT_MAX_MANIFEST_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Default number of attempts of a blocking time-stamp request.
+pub(crate) const DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS: u32 = 3;
+
+/// Default time limit of each time-stamp request attempt, in milliseconds.
+pub(crate) const DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS: u64 = 10_000;
+
+/// Default pause before the second time-stamp request attempt, in milliseconds.
+pub(crate) const DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS: u64 = 500;
+
 thread_local!(
     static SETTINGS: RefCell<Value> = RefCell::new(
         serde_json::to_value(Settings::default()).unwrap_or(Value::Object(Map::new())),
@@ -82,7 +94,7 @@ pub enum TrustListKind {
 )]
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct TrustAnchor {
-    /// Specifies the details of a specific trust list.  
+    /// Specifies the details of a specific trust list.
     ///
     /// Normally this option contains the official C2PA-recognized trust anchors found here:
     /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
@@ -111,7 +123,7 @@ pub struct TrustAnchor {
     /// certificates must have. This will overlay the default top level trust_config.
     /// If the trust_kind is CAWG it will override the top level trust config
     ///
-    ///  When validating CAWG identity certificates.
+    /// When validating CAWG identity certificates.
     ///
     /// The CAWG interim trust model (CAWG identity assertion spec §8.2.4.1)
     /// requires the `id-kp-emailProtection` EKU (1.3.6.1.5.5.7.3.4) together with
@@ -229,7 +241,21 @@ pub struct Trust {
 
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
+    ///
+    /// When [`Trust::use_default_ekus`] is true (the default), the EKUs defined by
+    /// the C2PA specification are always accepted and any OIDs listed here are
+    /// added to that set rather than replacing it.
     pub trust_config: Option<String>,
+
+    /// Whether to accept the built-in set of extended key usage (EKU) OIDs defined
+    /// by the C2PA specification in addition to those listed in [`Trust::trust_config`].
+    ///
+    /// When false, only the EKUs listed in [`Trust::trust_config`] (and any
+    /// [`TrustAnchor::trust_config`]) are accepted. Note that `id-kp-emailProtection`,
+    /// `id-kp-timeStamping`, and `id-kp-OCSPSigning` are always accepted.
+    ///
+    /// The default value is true.
+    pub use_default_ekus: bool,
 }
 
 impl Trust {
@@ -322,6 +348,7 @@ impl Default for Trust {
             let mut trust = Self {
                 anchors: None,
                 trust_config: None,
+                use_default_ekus: true,
             };
 
             trust.trust_config = Some(
@@ -340,6 +367,7 @@ impl Default for Trust {
             Self {
                 anchors: None,
                 trust_config: None,
+                use_default_ekus: true,
             }
         }
     }
@@ -502,6 +530,24 @@ pub struct Core {
     ///
     /// The default is 32 MB.
     pub max_decompressed_manifest_size_in_mb: usize,
+    /// Number of times a blocking time-stamp request is sent before its last error is
+    /// returned. A new attempt is made only after a transient failure: no answer, a
+    /// timeout, or an HTTP 408, 429, 500, 502, 503 or 504 response. `1` disables retries.
+    ///
+    /// The default is 3. The value must be at least 1. Async time-stamp requests are sent
+    /// once, as are blocking requests on browser WASM (which cannot sleep between attempts).
+    pub time_stamp_request_attempts: u32,
+    /// Time limit of each time-stamp request attempt, in milliseconds, applied by the
+    /// SDK's built-in HTTP resolvers. A time-stamp service answers in well under a second;
+    /// without a limit an attempt that hangs would wait for the HTTP client's default.
+    ///
+    /// The default is 10,000 (10 seconds). The value must be positive.
+    pub time_stamp_request_timeout_in_ms: u64,
+    /// Pause before the second time-stamp request attempt, in milliseconds, doubled before
+    /// each later one.
+    ///
+    /// The default is 500.
+    pub time_stamp_retry_delay_in_ms: u64,
 }
 
 impl Default for Core {
@@ -515,6 +561,9 @@ impl Default for Core {
             allow_redirects: true,
             prefer_compress_manifests: false,
             max_decompressed_manifest_size_in_mb: 32,
+            time_stamp_request_attempts: DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS,
+            time_stamp_request_timeout_in_ms: DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS,
+            time_stamp_retry_delay_in_ms: DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS,
         }
     }
 }
@@ -526,6 +575,16 @@ impl SettingsValidate for Core {
             return Err(Error::BadParam(format!(
                 "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
             )));
+        }
+        if self.time_stamp_request_attempts == 0 {
+            return Err(Error::BadParam(
+                "time_stamp_request_attempts must be at least 1".to_string(),
+            ));
+        }
+        if self.time_stamp_request_timeout_in_ms == 0 {
+            return Err(Error::BadParam(
+                "time_stamp_request_timeout_in_ms must be positive".to_string(),
+            ));
         }
         Ok(())
     }
@@ -589,12 +648,33 @@ pub struct Verify {
     /// Whether to fetch the certificates OCSP status during validation.
     ///
     /// Revocation status is checked in the following order:
-    /// 1. The OCSP staple stored in the COSE claim of the manifest
-    /// 2. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
-    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks `CertificateStatus` assertions
+    /// 1. If [`Verify::ocsp_fetch_should_override`] is enabled, it fetches a new OCSP status. If the
+    ///    live fetch does not produce a definitive status (`notRevoked` or `revoked`), validation
+    ///    falls back to the remaining steps below.
+    /// 2. If `builder.certificate_status_should_override` is enabled, it checks [`CertificateStatus`]
+    ///    assertions.
+    /// 3. Otherwise, it checks the OCSP staple stored in the COSE claim (`rVals.ocspVals`) of the
+    ///    manifest.
+    /// 4. Otherwise, if `ocsp_fetch` is enabled, it fetches a new OCSP status.
+    /// 5. Otherwise, it checks [`CertificateStatus`] assertions.
     ///
     /// The default value is false.
+    ///
+    /// [`CertificateStatus`]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion
     pub ocsp_fetch: bool,
+    /// Whether to always fetch a live OCSP response first during validation, before checking any
+    /// [`CertificateStatus`] assertions or stapled OCSP response in the COSE claim.
+    ///
+    /// Enabling this setting implies [`Verify::ocsp_fetch`] (you do not need to set both). It also
+    /// takes precedence over `builder.certificate_status_should_override`. If the live fetch fails
+    /// or does not produce a definitive revocation status (`notRevoked` or `revoked`), validation
+    /// falls back to the embedded [`CertificateStatus`] assertions and COSE OCSP staple before
+    /// reporting the OCSP responder as inaccessible.
+    ///
+    /// The default value is false.
+    ///
+    /// [`CertificateStatus`]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion
+    pub ocsp_fetch_should_override: bool,
     /// Whether to fetch remote manifests in the following scenarios:
     /// - Constructing a [`Reader`]
     /// - Adding an [`Ingredient`] to the [`Builder`]
@@ -609,6 +689,16 @@ pub struct Verify {
     /// [`Ingredient`]: crate::Ingredient
     /// [`Builder`]: crate::Builder
     pub remote_manifest_fetch: bool,
+    /// Maximum remote manifest response size in bytes. Responses with a larger
+    /// `Content-Length` or body return [`Error::RemoteManifestFetch`].
+    ///
+    /// The default is 10 MiB (10,485,760 bytes). The value must be positive and
+    /// must not exceed the platform's maximum vector capacity (`isize::MAX`).
+    /// Applies only when the `fetch_remote_manifests` feature is enabled.
+    ///
+    /// This limit is enforced after the HTTP resolver returns. It does not bound
+    /// buffering inside a resolver, including the built-in reqwest adapters.
+    pub max_manifest_response_size: u64,
     /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
     /// manifest identifier. This settings is only applicable for C2PA v2 validation.
     ///
@@ -632,14 +722,28 @@ impl Default for Verify {
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
+            ocsp_fetch_should_override: false,
             remote_manifest_fetch: true,
+            max_manifest_response_size: DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
         }
     }
 }
 
-impl SettingsValidate for Verify {}
+impl SettingsValidate for Verify {
+    fn validate(&self) -> Result<()> {
+        if self.max_manifest_response_size == 0
+            || self.max_manifest_response_size > isize::MAX as u64
+        {
+            return Err(Error::BadParam(format!(
+                "max_manifest_response_size must be between 1 and {} bytes",
+                isize::MAX
+            )));
+        }
+        Ok(())
+    }
+}
 
 #[cfg_attr(
     feature = "json_schema",
@@ -1185,6 +1289,7 @@ impl SettingsValidate for Settings {
         }
         self.trust.validate()?;
         self.core.validate()?;
+        self.verify.validate()?;
         self.builder.validate()
     }
 }
@@ -1362,6 +1467,145 @@ pub mod tests {
         let result =
             Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_max_manifest_response_size_configuration() {
+        assert_eq!(
+            Settings::default().verify.max_manifest_response_size,
+            DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+        );
+        for settings in [
+            Settings::new()
+                .with_json(r#"{"verify":{"remote_manifest_fetch":true}}"#)
+                .unwrap(),
+            Settings::new()
+                .with_toml("[verify]\nremote_manifest_fetch = true")
+                .unwrap(),
+        ] {
+            assert_eq!(
+                settings.verify.max_manifest_response_size,
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+            );
+        }
+
+        for context in [
+            crate::Context::new()
+                .with_settings(r#"{"verify":{"max_manifest_response_size":20971520}}"#)
+                .unwrap(),
+            crate::Context::new()
+                .with_settings("[verify]\nmax_manifest_response_size = 20971520")
+                .unwrap(),
+            crate::Context::new()
+                .with_settings_value("verify.max_manifest_response_size", 20971520u64)
+                .unwrap(),
+        ] {
+            assert_eq!(
+                context.settings().verify.max_manifest_response_size,
+                20971520
+            );
+            let json = serde_json::to_string(context.settings()).unwrap();
+            assert_eq!(
+                Settings::new()
+                    .with_json(&json)
+                    .unwrap()
+                    .verify
+                    .max_manifest_response_size,
+                20971520
+            );
+        }
+    }
+
+    #[test]
+    fn test_time_stamp_request_configuration() {
+        let core = Settings::default().core;
+        assert_eq!(
+            (
+                core.time_stamp_request_attempts,
+                core.time_stamp_request_timeout_in_ms,
+                core.time_stamp_retry_delay_in_ms
+            ),
+            (
+                DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS,
+                DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS,
+                DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS
+            )
+        );
+
+        for context in [
+            crate::Context::new()
+                .with_settings(
+                    r#"{"core":{"time_stamp_request_attempts":5,"time_stamp_request_timeout_in_ms":2000,"time_stamp_retry_delay_in_ms":0}}"#,
+                )
+                .unwrap(),
+            crate::Context::new()
+                .with_settings(
+                    "[core]\ntime_stamp_request_attempts = 5\ntime_stamp_request_timeout_in_ms = 2000\ntime_stamp_retry_delay_in_ms = 0",
+                )
+                .unwrap(),
+            crate::Context::new()
+                .with_settings_value("core.time_stamp_request_attempts", 5u32)
+                .unwrap()
+                .with_settings_value("core.time_stamp_request_timeout_in_ms", 2000u64)
+                .unwrap()
+                .with_settings_value("core.time_stamp_retry_delay_in_ms", 0u64)
+                .unwrap(),
+        ] {
+            let core = &context.settings().core;
+            assert_eq!(
+                (
+                    core.time_stamp_request_attempts,
+                    core.time_stamp_request_timeout_in_ms,
+                    core.time_stamp_retry_delay_in_ms
+                ),
+                (5, 2000, 0)
+            );
+        }
+    }
+
+    #[test]
+    fn test_max_manifest_response_size_validation() {
+        for value in [0, isize::MAX as u64 + 1, u64::MAX] {
+            let result = Settings::new().with_value("verify.max_manifest_response_size", value);
+            assert!(
+                matches!(result, Err(Error::BadParam(ref msg)) if msg.contains("max_manifest_response_size")),
+                "expected invalid response limit error, got {result:?}"
+            );
+        }
+        for value in [1, isize::MAX as u64] {
+            assert_eq!(
+                Settings::new()
+                    .with_value("verify.max_manifest_response_size", value)
+                    .unwrap()
+                    .verify
+                    .max_manifest_response_size,
+                value
+            );
+        }
+        for value in [serde_json::json!(-1), serde_json::json!("unlimited")] {
+            assert!(Settings::new()
+                .with_value("verify.max_manifest_response_size", value)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn test_time_stamp_request_validation() {
+        for (key, value) in [
+            ("core.time_stamp_request_attempts", 0u64),
+            ("core.time_stamp_request_timeout_in_ms", 0u64),
+        ] {
+            let result = Settings::new().with_value(key, value);
+            assert!(
+                matches!(result, Err(Error::BadParam(ref msg)) if msg.contains(&key[5..])),
+                "expected an invalid {key} error, got {result:?}"
+            );
+        }
+        for value in [serde_json::json!(-1), serde_json::json!("never")] {
+            assert!(Settings::new()
+                .with_value("core.time_stamp_request_attempts", value)
+                .is_err());
+        }
     }
 
     #[test]
@@ -1684,7 +1928,7 @@ pub mod tests {
                             "trust_anchors": "",
                             "trust_uri": "custom_ica_trust_anchor",
                             "trust_kind": "cawg",
-                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]
                         }
                     ]
                 }
@@ -1723,7 +1967,7 @@ pub mod tests {
                             "trust_anchors": "",
                             "trust_uri": "custom_ica_trust_anchor",
                             "trust_kind": "cawg",
-                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]
                         }
                     ]
                 }

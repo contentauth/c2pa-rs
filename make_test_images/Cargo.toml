@@ -28,4 +28,3 @@ regex = "1.12.3"
 serde = "1.0.228"
 serde_json = { version = "1.0.150", features = ["preserve_order"] }
 tempfile = "3.27.0"
-toml = "1.1.2"

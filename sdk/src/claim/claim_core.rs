@@ -22,8 +22,8 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{
-        cbor_to_crjson, get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type,
-        Assertion, AssertionBase, AssertionData,
+        get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
+        AssertionBase, AssertionData,
     },
     assertions::{
         self,
@@ -49,7 +49,10 @@ use crate::{
     },
     salt::{DefaultSalt, SaltGenerator},
     settings::MAX_ASSERTIONS,
-    utils::hash_utils::{hash_by_alg, vec_compare},
+    utils::{
+        hash_utils::{hash_by_alg, vec_compare},
+        json_b64::cbor_to_json_b64,
+    },
     ClaimGeneratorInfo,
 };
 
@@ -2082,7 +2085,7 @@ impl Claim {
                                 let cbor_value: c2pa_cbor::Value = c2pa_cbor::from_slice(x)
                                     .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
-                                json_map.insert(label, cbor_to_crjson(&cbor_value));
+                                json_map.insert(label, cbor_to_json_b64(cbor_value));
                             }
                             AssertionData::Binary(x) => {
                                 // binary vecs
@@ -2163,7 +2166,7 @@ impl Claim {
                                 // some types are not translatable to json so explicitly convert
                                 let cbor_value: c2pa_cbor::Value = c2pa_cbor::from_slice(x)
                                     .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
-                                let d = cbor_to_crjson(&cbor_value);
+                                let d = cbor_to_json_b64(cbor_value);
 
                                 let j = JsonOrderedAssertionData {
                                     label: claim_assertion.label().to_owned(),

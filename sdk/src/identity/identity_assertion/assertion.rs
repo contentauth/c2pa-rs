@@ -24,7 +24,9 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     context::Context,
-    crypto::cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
+    crypto::cose::{
+        parse_cose_sign1, CertificateTrustPolicy, CoseError, TrustAnchorType, Verifier,
+    },
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -335,7 +337,10 @@ impl IdentityAssertion {
                     }
                 }
             }
-            let cose_verifier = Verifier::VerifyTrustPolicy(Cow::Owned(ctp));
+            // The identity signer must chain to a CAWG anchor; a C2PA manifest
+            // anchor does not make it trusted.
+            let cose_verifier =
+                Verifier::VerifyTrustPolicyFor(Cow::Owned(ctp), TrustAnchorType::CAWG);
 
             let mut signer_payload_cbor: Vec<u8> = vec![];
             c2pa_cbor::to_writer(&mut signer_payload_cbor, &self.signer_payload).map_err(|_| {

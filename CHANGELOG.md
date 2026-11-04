@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+### Deprecated
+
+* C2PA v1 claim signing is deprecated in 0.92.0 and will be removed in 0.93.0,
+  scheduled for mid-January 2027. Omit `claim_version` or set it to `2` to sign
+  C2PA v2 claims. Reading and validating existing v1 claims is unaffected. See
+  the [migration guide](docs/c2pa-v1-signing-migration.md).
+
 ## [0.89.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.2...c2pa-v0.89.3)
 _13 July 2026_
 
