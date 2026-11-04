@@ -2552,6 +2552,127 @@ fn add_ingredient_assertion_to_claim(
     Ok(())
 }
 
+#[c2pa_test_async]
+async fn test_redacted_ingredient_signature_binding() {
+    use crate::{
+        hashed_uri::HashedUri,
+        jumbf::labels::to_signature_uri,
+        utils::test::{create_test_store, create_test_store_v1},
+        ValidationResults,
+    };
+
+    let context = Context::new();
+    let signer = test_signer(SigningAlg::Ps256);
+
+    for version in [1, 2] {
+        let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+        let mut store = if version == 1 {
+            create_test_store_v1().unwrap()
+        } else {
+            create_test_store().unwrap()
+        };
+        store
+            .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+        output.rewind().unwrap();
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let store = Store::from_stream(format, &mut output, &mut report, &context).unwrap();
+        let child = store.provenance_claim().unwrap();
+        assert_eq!(child.version(), version);
+        let hashes = store.get_manifest_box_hashes(child);
+
+        for (redacted, signature_hash, expected_status) in [
+            (
+                true,
+                Some(vec![0; hashes.signature_box_hash.len()]),
+                validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH,
+            ),
+            (
+                true,
+                Some(hashes.signature_box_hash.clone()),
+                validation_status::INGREDIENT_CLAIM_SIGNATURE_VALIDATED,
+            ),
+            (
+                true,
+                None,
+                validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING,
+            ),
+            (
+                false,
+                None,
+                validation_status::INGREDIENT_MANIFEST_VALIDATED,
+            ),
+        ] {
+            let mut parent = Claim::new("redaction binding test", Some("test"), 2);
+            parent.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+            let manifest = HashedUri::new(
+                store.provenance_path().unwrap(),
+                Some(child.alg().to_owned()),
+                &hashes.manifest_box_hash,
+            );
+            let signature = signature_hash.map(|hash| {
+                HashedUri::new(
+                    to_signature_uri(child.label()),
+                    Some(child.alg().to_owned()),
+                    &hash,
+                )
+            });
+            let ingredient = Ingredient::new_v3(Relationship::ComponentOf)
+                .set_active_manifests_and_signature_from_hashed_uri(Some(manifest), signature)
+                .set_validation_results(Some(ValidationResults::from_store(&store, &report)));
+            parent.add_assertion(&ingredient).unwrap();
+            let mut svi = StoreValidationInfo::default();
+            if redacted {
+                svi.redactions
+                    .push(to_assertion_uri(child.label(), labels::SCHEMA_ORG_INTERNAL));
+            }
+
+            for synchronous in [true, false] {
+                let mut validation_log =
+                    StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                let mut visited = HashSet::new();
+                let result = if synchronous {
+                    Store::ingredient_checks(
+                        &store,
+                        &parent,
+                        &svi,
+                        &mut validation_log,
+                        0,
+                        &context,
+                        &mut visited,
+                    )
+                } else {
+                    Store::ingredient_checks_async(
+                        &store,
+                        &parent,
+                        &svi,
+                        &mut validation_log,
+                        0,
+                        &context,
+                        &mut visited,
+                    )
+                    .await
+                };
+                assert!(
+                    validation_log.has_status(expected_status),
+                    "Claim-v{version}, redacted={redacted}, sync={synchronous}: \
+                     expected {expected_status}, got {result:?}"
+                );
+                let should_fail = matches!(
+                    expected_status,
+                    validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH
+                        | validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING
+                );
+                assert_eq!(
+                    result.is_err(),
+                    should_fail,
+                    "{expected_status}: {result:?}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn test_ingredient_conflict_with_current_manifest() {
     use crate::{
