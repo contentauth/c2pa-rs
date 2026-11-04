@@ -9,6 +9,26 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.11](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.10...c2pa-v0.91.11)
+_04 November 2026_
+
+### Fixed
+
+* Restore redacted V1/V2 ingredient compatibility (backport #3021) ([#3022](https://github.com/contentauth/c2pa-rs/pull/3022))
+* Require claimSignature check for redacted Claim-v1 ingredients (backport #3006) ([#3017](https://github.com/contentauth/c2pa-rs/pull/3017))
+* *(sdk)* Backport trust-purpose separation and unknown revocation to stable ([#3009](https://github.com/contentauth/c2pa-rs/pull/3009))
+* Backport initial metadata request guard to stable ([#2683](https://github.com/contentauth/c2pa-rs/pull/2683)) ([#3008](https://github.com/contentauth/c2pa-rs/pull/3008))
+* *(sdk)* Enforce certificate key usage rules (backport #2972) ([#2973](https://github.com/contentauth/c2pa-rs/pull/2973))
+* Backport explicit raw crypto serde support to stable ([#3001](https://github.com/contentauth/c2pa-rs/pull/3001)) ([#3002](https://github.com/contentauth/c2pa-rs/pull/3002))
+
+### Other
+
+* Verify truncated box-hash rejection through public `Reader` ([#3010](https://github.com/contentauth/c2pa-rs/pull/3010))
+
+### Updated dependencies
+
+* `zip` crate from 9.0.4 to 9.3.0 (backport #3011) ([#3016](https://github.com/contentauth/c2pa-rs/pull/3016))
+
 ## [0.91.10](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.9...c2pa-v0.91.10)
 _03 November 2026_
 
