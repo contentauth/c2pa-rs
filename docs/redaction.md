@@ -26,6 +26,20 @@ The C2PA specification imposes restrictions on what can be redacted:
 | **Cannot redact `c2pa.hash.*`** | Hash binding assertions are protected. |
 | **URI must match** | Every URI in the redactions list must resolve to an assertion in an ingredient, or signing fails with `AssertionRedactionNotFound`. |
 
+### Ingredient binding during validation
+
+Redaction changes an ingredient's manifest hash. Validation therefore checks the
+`claimSignature` hash in the referencing ingredient assertion against the
+ingredient's signature box, including when the ingredient contains a Claim-v1
+manifest. Verifying the ingredient's own signature alone does not establish this
+parent-to-ingredient binding.
+
+A missing signature hash is reported as `ingredient.claimSignature.missing`; a
+mismatch is reported as `ingredient.claimSignature.mismatch`. Legacy ingredient
+assertions without `claimSignature` cannot establish this binding after redaction
+and fail validation. Unredacted ingredients can still be validated by their
+manifest hash.
+
 ## JUMBF URI format
 
 Each redaction target is identified by its full JUMBF URI:
