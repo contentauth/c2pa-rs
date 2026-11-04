@@ -805,6 +805,58 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_add_file() -> Result<()> {
+        let jpg = PathBuf::from("tests/fixtures/C.jpg");
+        let zip = PathBuf::from("tests/fixtures/sample1.zip");
+
+        let mut collection = CollectionHash::new("sha256".to_owned());
+        collection.add_file(jpg.clone())?;
+        collection.add_file(zip)?;
+
+        assert_eq!(
+            collection.get("tests/fixtures/C.jpg"),
+            Some(&UriHashedDataMap {
+                uri: "tests/fixtures/C.jpg".into(),
+                hash: None,
+                size: Some(fs::metadata(&jpg)?.len()),
+                dc_format: Some("image/jpeg".into()),
+                data_types: None,
+            })
+        );
+        assert_eq!(
+            collection
+                .get("tests/fixtures/sample1.zip")
+                .and_then(|entry| entry.size),
+            Some(ZIP_SAMPLE1.len() as u64)
+        );
+
+        // re-adding the same file replaces the existing entry rather than duplicating it
+        collection.add_file(jpg)?;
+        assert_eq!(collection.uris.len(), 2);
+
+        collection.gen_hash(Path::new("."))?;
+        collection.verify_hash(Path::new("."))?;
+
+        // directories, absolute paths, and relative components are rejected
+        for bad in [
+            PathBuf::from("tests/fixtures"),
+            fs::canonicalize("tests/fixtures/C.jpg")?,
+            PathBuf::from("./tests/fixtures/C.jpg"),
+            PathBuf::from("tests/../tests/fixtures/C.jpg"),
+        ] {
+            assert!(
+                matches!(collection.add_file(bad.clone()), Err(Error::BadParam(_))),
+                "expected `{}` to be rejected",
+                bad.display()
+            );
+        }
+        assert_eq!(collection.uris.len(), 2);
+
+        Ok(())
+    }
+
     #[test]
     fn test_zip_hash() -> Result<()> {
         // With `unstable_plain_text` enabled, `.txt` resolves to a real MIME type (see
