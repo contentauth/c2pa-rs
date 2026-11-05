@@ -26,6 +26,10 @@
 //! use contentauth_signature_infrastructure::response;
 //! ```
 //!
+//! ```compile_fail
+//! use contentauth_signature_infrastructure::timestamp::response;
+//! ```
+//!
 //! Workflow APIs remain scoped to their modules:
 //!
 //! ```compile_fail
@@ -35,10 +39,9 @@
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-pub mod timestamp_acquisition;
+pub mod timestamp;
 
 mod asn1;
-mod response;
 
 #[cfg(feature = "sdk-compat")]
 pub mod sdk_compat;

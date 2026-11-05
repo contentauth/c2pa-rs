@@ -15,12 +15,10 @@ use bcder::{decode::Constructed, encode::Values, Integer};
 use rasn::prelude::*;
 use rasn_cms::SignedData;
 
-use crate::{
-    asn1::{
-        rfc3161::{PkiStatus, TimeStampResp, TstInfo},
-        rfc5652::OID_ID_SIGNED_DATA,
-    },
-    timestamp_acquisition::AcquisitionError,
+use super::acquisition::AcquisitionError;
+use crate::asn1::{
+    rfc3161::{PkiStatus, TimeStampResp, TstInfo},
+    rfc5652::OID_ID_SIGNED_DATA,
 };
 
 pub(crate) fn check_nonce(bytes: &[u8], nonce: Option<Integer>) -> Result<(), AcquisitionError> {
