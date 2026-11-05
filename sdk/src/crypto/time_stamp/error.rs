@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use contentauth_signature_infrastructure::timestamp_acquisition::AcquisitionError;
 use thiserror::Error;
 
 use crate::http::HttpResolverError;
@@ -80,10 +81,8 @@ pub enum TimeStampError {
     ResponseTooLarge,
 }
 
-impl From<contentauth_signature_infrastructure::AcquisitionError> for TimeStampError {
-    fn from(error: contentauth_signature_infrastructure::AcquisitionError) -> Self {
-        use contentauth_signature_infrastructure::AcquisitionError;
-
+impl From<AcquisitionError> for TimeStampError {
+    fn from(error: AcquisitionError) -> Self {
         match error {
             AcquisitionError::Protocol(error) => Self::InternalError(error.to_string()),
             AcquisitionError::InvalidRequest(error) => Self::InternalError(error),

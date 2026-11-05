@@ -13,9 +13,10 @@ effects. Native, browser WebAssembly and WASI hosts drive the same workflow.
 
 ## Current contract
 
-The `timestamp_acquisition` module contains the timestamp acquisition API,
-also re-exported at the crate root. Call `acquire` with a message and
-host-supplied nonce, or `acquire_with_body`
+The `timestamp_acquisition` module contains the timestamp acquisition API;
+workflow APIs are not re-exported at the crate root. Call
+`timestamp_acquisition::acquire` with a message and host-supplied nonce, or
+`timestamp_acquisition::acquire_with_body`
 with a customized DER request. Drive `Workflow::advance`, inspect its
 `outstanding_requests`, perform the `AcquisitionRequest::HttpPost`, and call
 `fulfill` with that operation's ID and an `AcquisitionReply::Http`. After
