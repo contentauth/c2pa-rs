@@ -112,6 +112,7 @@ fn interim_certificate_is_acceptable(
                     return Ok(false);
                 }
             }
+
             // Duplicate or malformed certificatePolicies must not grant trust.
             _ => return Err(CertificateTrustError::InvalidCertificate.into()),
         }
@@ -130,6 +131,7 @@ pub(crate) fn trusted_cawg_timestamp(
     validation_log: &mut StatusTracker,
 ) -> Option<TstInfo> {
     let mut timestamp_sign1 = sign1.clone();
+
     // A legacy header must not shadow a usable sigTst2 header.
     if timestamp_sign1
         .unprotected
@@ -176,6 +178,7 @@ fn checked_timestamp(
     // Some profile checks also report failure through the tracker. Do not
     // promote a timestamp whose certificate failed one of those checks.
     let profile_invalid = timestamp_log.has_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
     if result.is_none() || profile_invalid {
         timestamp_log.remove_status_since(0, validation_status::TIMESTAMP_TRUSTED);
         timestamp_log.remove_status_since(0, validation_status::TIMESTAMP_VALIDATED);
@@ -193,6 +196,7 @@ fn checked_timestamp(
             .informational(&mut timestamp_log);
         }
     }
+
     for item in timestamp_log.logged_items_mut() {
         if item.kind == crate::status_tracker::LogKind::Failure {
             item.kind = crate::status_tracker::LogKind::Informational;
@@ -202,30 +206,37 @@ fn checked_timestamp(
             Some(validation_status::TIMESTAMP_MALFORMED) => {
                 Some("cawg.x509.time_stamp.malformed".into())
             }
+
             Some(validation_status::TIMESTAMP_MISMATCH) => {
                 Some("cawg.x509.time_stamp.mismatch".into())
             }
+
             Some(validation_status::TIMESTAMP_UNTRUSTED)
             | Some(validation_status::SIGNING_CREDENTIAL_INVALID)
             | Some(validation_status::ALGORITHM_UNSUPPORTED) => {
                 Some("cawg.x509.time_stamp.untrusted".into())
             }
+
             Some(validation_status::TIMESTAMP_VALIDATED) => {
                 Some("cawg.x509.time_stamp.validated".into())
             }
+
             Some(validation_status::TIMESTAMP_TRUSTED) => {
                 Some("cawg.x509.time_stamp.trusted".into())
             }
+
             Some(validation_status::TIMESTAMP_OUTSIDE_VALIDITY)
             | Some(validation_status::SIGNING_CREDENTIAL_EXPIRED)
             | Some(validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY) => {
                 Some("cawg.x509.time_stamp.outside_validity".into())
             }
+
             _ => item.validation_status.clone(),
         };
     }
 
     validation_log.append(&timestamp_log);
+
     if profile_invalid {
         None
     } else {
@@ -243,6 +254,7 @@ impl Verifier<'_> {
         validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
         let sign1 = parse_cose_sign1(signature, data, validation_log)?;
+
         let timestamp = match self {
             Self::VerifyTrustPolicy(policy)
             | Self::VerifyTrustPolicyFor(policy, _)
@@ -251,6 +263,7 @@ impl Verifier<'_> {
             }
             Self::IgnoreProfileAndTrustPolicy => None,
         };
+
         if timestamp.is_none() && manifest_timestamp.is_some() {
             for status in [
                 "cawg.x509.time_stamp.trusted",
@@ -278,10 +291,12 @@ impl Verifier<'_> {
         if let Self::VerifyTrustPolicy(policy) | Self::VerifyTrustPolicyFor(policy, _) = self {
             let certificates = cert_chain_from_sign1(&sign1)?;
             let mut effective_policy = policy.clone();
+
             let anchor_type = match self {
                 Self::VerifyTrustPolicyFor(_, kind) => *kind,
                 _ => super::TrustAnchorType::Manifest,
             };
+
             if let Some(anchor) = validation_log.logged_items()[log_start..]
                 .iter()
                 .filter(|item| {
@@ -303,6 +318,7 @@ impl Verifier<'_> {
                 timestamp,
                 &effective_policy,
             );
+
             if !matches!(acceptable, Ok(true))
                 && validation_log.logged_items()[log_start..]
                     .iter()
@@ -356,7 +372,9 @@ mod tests {
         .next()
         .unwrap()
         .unwrap();
+
         let mut certificate: Certificate = rasn::der::decode(&pem.contents).unwrap();
+
         let extensions = certificate.tbs_certificate.extensions.as_mut().unwrap();
         extensions.retain(|ext| ext.extn_id != oid("2.5.29.32") && ext.extn_id != oid("2.5.29.37"));
         extensions.push(Extension {
@@ -423,6 +441,7 @@ mod tests {
             time: at(seconds).into(),
         })
         .unwrap();
+
         bcder::decode::Constructed::decode(bytes.as_slice(), bcder::Mode::Der, TstInfo::take_from)
             .unwrap()
     }
@@ -476,12 +495,14 @@ mod tests {
     fn malformed_and_duplicate_policies_fail_closed() {
         let mut cert = certificate(&[SMIME_POLICIES[0]], &[EMAIL]);
         let extensions = cert.tbs_certificate.extensions.as_mut().unwrap();
+
         let extension = extensions
             .iter()
             .find(|e| e.extn_id == oid("2.5.29.32"))
             .unwrap()
             .clone();
         extensions.push(extension);
+
         assert!(interim_certificate_is_acceptable(
             &rasn::der::encode(&cert).unwrap(),
             at(INTERIM_TRUST_END - 1),
@@ -489,6 +510,7 @@ mod tests {
             &CertificateTrustPolicy::default(),
         )
         .is_err());
+
         let extensions = cert.tbs_certificate.extensions.as_mut().unwrap();
         extensions.pop();
         extensions
@@ -496,6 +518,7 @@ mod tests {
             .find(|e| e.extn_id == oid("2.5.29.32"))
             .unwrap()
             .extn_value = vec![0x30, 0x01, 0].into();
+
         assert!(interim_certificate_is_acceptable(
             &rasn::der::encode(&cert).unwrap(),
             at(INTERIM_TRUST_END - 1),
@@ -566,9 +589,11 @@ mod tests {
         }
 
         let der = rasn::der::encode(&certificate(&[], &[EMAIL, DOCUMENT_SIGNING])).unwrap();
+        
         let mut policy = CertificateTrustPolicy::new();
         policy.clear_ekus();
         policy.add_valid_ekus(EMAIL.as_bytes());
+
         assert!(
             !interim_certificate_is_acceptable(&der, at(INTERIM_TRUST_END - 1), None, &policy,)
                 .unwrap()
@@ -589,11 +614,13 @@ mod tests {
 
     fn signed_cose_with_certificate(certificate: &Certificate, data: &[u8]) -> (Vec<u8>, Vec<u8>) {
         let der = rasn::der::encode(certificate).unwrap();
+
         let key = c2pa_raw_crypto::signer_from_private_key(
             include_bytes!("../../../tests/fixtures/certs/ed25519.pem"),
             c2pa_raw_crypto::SigningAlg::Ed25519,
         )
         .unwrap();
+
         let chain = vec![der.clone()];
         let signature = super::super::sign(
             &super::super::RawSignerCoseSigner::new(key.as_ref(), &chain),
@@ -603,6 +630,7 @@ mod tests {
             &crate::Context::new(),
         )
         .unwrap();
+
         (signature, pem(&der))
     }
 
@@ -612,14 +640,17 @@ mod tests {
 
         let mut cases: Vec<_> = SMIME_POLICIES.iter().map(|policy| vec![*policy]).collect();
         cases.extend([vec!["2.23.140.1.5.1.2"], vec![]]);
+
         for policies in cases {
             let (signature, certificate) = signed_cose(&policies, &[EMAIL], b"payload");
             let mut policy = CertificateTrustPolicy::default();
             policy.add_end_entity_credentials(&certificate).unwrap();
+            
             let verifier = Verifier::VerifyTrustPolicyFor(
                 Cow::Owned(policy),
                 super::super::TrustAnchorType::CAWG,
             );
+
             let timestamp = timestamp_at(1_767_225_600);
             for asynchronous in [false, true] {
                 let mut log = StatusTracker::default();
@@ -718,9 +749,11 @@ mod tests {
                 policy
                     .add_trust_anchors(&tsa, "test:tsa", kind, None)
                     .unwrap();
+
                 let mut log = StatusTracker::default();
                 let timestamp = trusted_cawg_timestamp(&sign1, b"payload", &policy, &mut log);
                 assert_eq!(timestamp.is_some(), kind == TrustAnchorType::TSA, "{log:?}");
+
                 for now in [
                     INTERIM_TRUST_END - 86_400,
                     INTERIM_TRUST_END - 1,
@@ -744,12 +777,15 @@ mod tests {
             policy
                 .add_trust_anchors(&tsa, "test:tsa", TrustAnchorType::TSA, None)
                 .unwrap();
+
             sign1.signature[0] ^= 1;
+
             let mut log = StatusTracker::default();
             assert!(trusted_cawg_timestamp(&sign1, b"payload", &policy, &mut log).is_none());
             assert!(log.has_status("cawg.x509.time_stamp.mismatch"), "{log:?}");
             sign1.signature[0] ^= 1;
             sign1.unprotected.rest.last_mut().unwrap().0 = coset::Label::Text("sigTst".into());
+
             assert!(trusted_cawg_timestamp(&sign1, b"payload", &policy, &mut log).is_none());
             assert!(log.has_status("cawg.x509.time_stamp.malformed"));
         }
@@ -767,29 +803,37 @@ mod tests {
             .add_assertion(&crate::assertions::Actions::new())
             .unwrap();
         claim.build().unwrap();
+
         let label = uri.url().rsplit('/').next().unwrap().to_string();
         let data = claim.data().unwrap();
+
         let (signature, _) = signed_cose(&[], &[DOCUMENT_SIGNING], &data);
         let mut sign1 = parse_cose_sign1(&signature, &data, &mut StatusTracker::default()).unwrap();
+
         let tsa = add_timestamp(&mut sign1, b"20270331235959Z");
         sign1.payload = None;
         claim.set_signature_val(sign1.to_tagged_vec().unwrap());
+
         let mut store = Store::new();
         store
             .add_trust_anchor(&tsa, "test:tsa", super::super::TrustAnchorType::TSA, None)
             .unwrap();
+
         let mut log = StatusTracker::default();
         let timestamp = store
             .trusted_cawg_timestamp_for_assertion(&claim, &label, &mut log)
             .unwrap()
             .unwrap();
+
         let time: DateTime<Utc> = timestamp.gen_time.into();
         assert_eq!(time.timestamp(), INTERIM_TRUST_END - 1);
         assert!(store
             .trusted_cawg_timestamp_for_assertion(&claim, "cawg.identity", &mut log)
             .unwrap()
             .is_none());
+
         claim.set_title(Some("tampered signed claim".into()));
+
         assert!(store
             .trusted_cawg_timestamp_for_assertion(&claim, &label, &mut log)
             .unwrap()
@@ -812,31 +856,40 @@ mod tests {
         };
 
         let mut claim = Claim::new("manifest timestamp test", None, 1);
+
         let binding = claim
             .add_assertion(&DataHash::new("asset", "sha256"))
             .unwrap();
+
         let signer_payload = SignerPayload {
             referenced_assertions: vec![binding],
             sig_type: "cawg.x509.cose".into(),
             roles: Vec::new(),
         };
+
         let mut payload_bytes = Vec::new();
         c2pa_cbor::to_writer(&mut payload_bytes, &signer_payload).unwrap();
+
         let mut identity_certificate = certificate(&[SMIME_POLICIES[0]], &[EMAIL]);
+
         // Expired at validation time, but valid at the manifest's attested time.
         identity_certificate.tbs_certificate.validity.not_before =
             rasn_pkix::Time::General(at(1_735_689_600).into());
         identity_certificate.tbs_certificate.validity.not_after =
             rasn_pkix::Time::General(at(1_767_312_000).into());
+
         let (identity_signature, identity_pem) =
             signed_cose_with_certificate(&identity_certificate, &payload_bytes);
+
         let identity_sign1 = parse_cose_sign1(
             &identity_signature,
             &payload_bytes,
             &mut StatusTracker::default(),
         )
         .unwrap();
+
         assert!(get_cose_tst_info(&identity_sign1).is_none());
+
         let identity = IdentityAssertion {
             signer_payload,
             signature: identity_signature,
@@ -844,16 +897,20 @@ mod tests {
             pad2: None,
             label: None,
         };
+
         let mut identity_bytes = Vec::new();
         c2pa_cbor::to_writer(&mut identity_bytes, &identity).unwrap();
+
         claim
             .add_assertion(&UserCbor::new("cawg.identity", identity_bytes))
             .unwrap();
+
         claim.build().unwrap();
 
         let data = claim.data().unwrap();
         let (signature, _) = signed_cose(&[], &[DOCUMENT_SIGNING], &data);
         let mut sign1 = parse_cose_sign1(&signature, &data, &mut StatusTracker::default()).unwrap();
+
         let tsa = add_timestamp(&mut sign1, b"20260101000000Z");
         sign1.payload = None;
         claim.set_signature_val(sign1.to_tagged_vec().unwrap());
@@ -861,6 +918,7 @@ mod tests {
         for trust_timestamp in [false, true] {
             let mut settings = Settings::default();
             settings.core.decode_identity_assertions = true;
+
             settings.trust.anchors = Some(vec![
                 TrustAnchor {
                     trust_anchors: String::new(),
@@ -883,9 +941,11 @@ mod tests {
                     trusted_ica_issuers: None,
                 },
             ]);
+
             let context = Context::new().with_settings(settings).unwrap();
             let mut store = Store::from_context(&context);
             store.commit_claim(claim.clone()).unwrap();
+            
             for asynchronous in [false, true] {
                 let mut log = StatusTracker::default();
                 if asynchronous {
@@ -943,9 +1003,12 @@ mod tests {
         let uri = claim
             .add_assertion(&crate::assertions::Actions::new())
             .unwrap();
+
         claim.build().unwrap();
+
         let label = uri.url().rsplit('/').next().unwrap().to_string();
         let data = claim.data().unwrap();
+
         let (signature, _) = signed_cose(&[], &[DOCUMENT_SIGNING], &data);
         let sign1 = parse_cose_sign1(&signature, &data, &mut StatusTracker::default()).unwrap();
         claim.set_signature_val(signature);
@@ -959,13 +1022,17 @@ mod tests {
                 },
                 b"20270331235959Z",
             );
+
             let cert = crate::crypto::time_stamp::tsa_signer_cert_der_from_token(&token)
                 .unwrap()
                 .unwrap();
+
             let mut assertion = TimeStamp::new();
             assertion.add_timestamp(claim.label(), &token);
+
             let mut source = Claim::new("timestamp", None, 1);
             source.add_assertion(&assertion).unwrap();
+
             let mut store = Store::new();
             store.commit_claim(source).unwrap();
             store
@@ -976,6 +1043,7 @@ mod tests {
                     None,
                 )
                 .unwrap();
+
             let mut log = StatusTracker::default();
             assert_eq!(
                 store
@@ -992,7 +1060,9 @@ mod tests {
     #[test]
     fn malformed_timestamp_containers_are_ignored_and_legacy_does_not_shadow_v2() {
         use coset::{cbor::value::Value, Label};
+
         let (sign1, tsa) = timestamped_sign1(b"20270331235959Z");
+
         let mut policy = CertificateTrustPolicy::default();
         policy
             .add_trust_anchors(&tsa, "test:tsa", super::super::TrustAnchorType::TSA, None)
@@ -1003,6 +1073,7 @@ mod tests {
             .unprotected
             .rest
             .insert(0, (Label::Text("sigTst".into()), Value::Null));
+
         assert!(trusted_cawg_timestamp(
             &with_legacy,
             b"payload",
@@ -1027,6 +1098,7 @@ mod tests {
         ] {
             let mut malformed = sign1.clone();
             malformed.unprotected.rest.last_mut().unwrap().1 = value;
+
             let mut log = StatusTracker::default();
             assert!(trusted_cawg_timestamp(&malformed, b"payload", &policy, &mut log).is_none());
             assert!(log.has_status("cawg.x509.time_stamp.malformed"), "{log:?}");
