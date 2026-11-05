@@ -6164,6 +6164,17 @@ mod tests {
             .unwrap();
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
+        // A.9.5: the exclusion covers the block, so the URL can move without breaking the binding.
+        let moved = source.replace("example.com", "example.org");
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(
+                &manifest,
+                "text/markdown",
+                Cursor::new(moved.into_bytes()),
+            )
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
         let tampered = source.replace("Example.", "Tampered");
         let reader = Reader::default()
             .with_manifest_data_and_stream(
