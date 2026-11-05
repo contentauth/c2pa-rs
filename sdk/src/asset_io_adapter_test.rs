@@ -257,7 +257,12 @@ fn xmp_locations_follow_item_extents() {
         {
             continue;
         }
-        let Ok(s) = registry.parse_detect(&mut Cursor::new(&bytes)) else {
+        let Some(handler) =
+            registry.detect(&bytes[..bytes.len().min(::asset_io::container_api::DETECT_LEN)])
+        else {
+            continue;
+        };
+        let Ok(s) = handler.clone().parse(&mut Cursor::new(&bytes)) else {
             continue;
         };
         if s.items_of(::asset_io::ItemKind::Jumbf).next().is_none() {
@@ -386,7 +391,12 @@ fn other_jumbf_is_left_alone() {
     let writer = new.get_writer("x").unwrap();
     let items = |data: &[u8]| {
         let reg = ::asset_io::HandlerRegistry::builtin();
-        let s = reg.parse("jpg", &mut Cursor::new(data.to_vec())).unwrap();
+        let s = reg
+            .handler("jpg")
+            .unwrap()
+            .clone()
+            .parse(&mut Cursor::new(data.to_vec()))
+            .unwrap();
         s.items_of(::asset_io::ItemKind::Jumbf)
             .map(|e| {
                 (
@@ -404,7 +414,12 @@ fn other_jumbf_is_left_alone() {
         .unwrap();
     let clean = clean.into_inner();
     let reg = ::asset_io::HandlerRegistry::builtin();
-    let s = reg.parse("jpg", &mut Cursor::new(clean.clone())).unwrap();
+    let s = reg
+        .handler("jpg")
+        .unwrap()
+        .clone()
+        .parse(&mut Cursor::new(clean.clone()))
+        .unwrap();
     let mut with_other = Cursor::new(Vec::new());
     s.write(
         &mut Cursor::new(clean.clone()),

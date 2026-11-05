@@ -9,7 +9,10 @@
 use std::{collections::HashSet, io::Read, sync::Arc};
 
 use ::asset_io as aio;
-use aio::{ByteRange, ContainerHandler, HandlerRegistry, ItemKind, Structure, Updates};
+use aio::{
+    container_api::{ContainerHandler, DETECT_LEN},
+    ByteRange, HandlerRegistry, ItemKind, Structure, Updates,
+};
 
 use crate::{
     asset_io::{
@@ -74,10 +77,10 @@ impl AssetIoAdapter {
     }
 
     fn looks_like(handler: &dyn ContainerHandler, input: &mut dyn ReadSeek) -> bool {
-        let mut header = Vec::with_capacity(aio::DETECT_LEN);
+        let mut header = Vec::with_capacity(DETECT_LEN);
         input.rewind().is_ok()
             && input
-                .take(aio::DETECT_LEN as u64)
+                .take(DETECT_LEN as u64)
                 .read_to_end(&mut header)
                 .is_ok()
             && handler.detect(&header)
@@ -335,7 +338,7 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
     let mut out: Vec<BoxMap> = Vec::new();
     let mut c2pa: Option<usize> = None;
     let mut last_owner: Option<aio::SegmentId> = None;
-    s.elements(&mut src, |id, e| {
+    s.elements(|id, e| {
         if after.is_some_and(|t| e.range().offset() >= t.offset()) {
             return Ok(());
         }

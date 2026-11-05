@@ -117,7 +117,7 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
     let mut out: Vec<BoxMap> = Vec::new();
     let mut c2pa: Option<usize> = None;
     let mut last_owner: Option<asset_io::SegmentId> = None;
-    s.elements(&mut src, |id, e| {
+    s.elements(|id, e| {
         let mut ext = e.range();
 
         // Compatibility with the existing c2pa-rs box maps (see PR #612): when a
@@ -178,9 +178,9 @@ impl AssetBoxHash for LayoutBoxHash {
     fn get_box_map(&self, mut input: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         let io = |e: asset_io::Error| Error::InvalidAsset(e.to_string());
         let s = if self.jpeg {
-            containers::jpeg::parse(&mut input)
+            containers::jpeg::handler().parse(&mut input)
         } else {
-            containers::png::parse(&mut input)
+            containers::png::handler().parse(&mut input)
         }
         .map_err(io)?;
         box_map_from_layout(&s, input)
@@ -274,9 +274,9 @@ fn box_hash_cross_generate_and_verify() {
         // Only assets that already carry a manifest: the C2PA box then has real
         // bytes in both implementations.
         let Ok(s) = (if jpeg {
-            containers::jpeg::parse(&mut Cursor::new(bytes.clone()))
+            containers::jpeg::handler().parse(&mut Cursor::new(bytes.clone()))
         } else {
-            containers::png::parse(&mut Cursor::new(bytes.clone()))
+            containers::png::handler().parse(&mut Cursor::new(bytes.clone()))
         }) else {
             continue;
         };
@@ -333,9 +333,9 @@ fn sign_flow_through_asset_io_validates() {
         let parse = |b: &[u8]| {
             let mut c = Cursor::new(b.to_vec());
             if jpeg {
-                containers::jpeg::parse(&mut c)
+                containers::jpeg::handler().parse(&mut c)
             } else {
-                containers::png::parse(&mut c)
+                containers::png::handler().parse(&mut c)
             }
         };
         let Ok(s) = parse(&src) else { continue };
@@ -492,9 +492,9 @@ fn derived_exclusions_reproduce_stored_data_hash() {
 
         let mut cur = Cursor::new(bytes.clone());
         let s = if jpeg {
-            containers::jpeg::parse(&mut cur)
+            containers::jpeg::handler().parse(&mut cur)
         } else {
-            containers::png::parse(&mut cur)
+            containers::png::handler().parse(&mut cur)
         }
         .unwrap();
 

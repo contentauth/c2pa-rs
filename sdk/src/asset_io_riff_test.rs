@@ -50,7 +50,7 @@ fn old_write(io: &RiffIO, bytes: &[u8], store: &[u8]) -> crate::Result<Vec<u8>> 
 }
 
 fn new_write(bytes: &[u8], u: &Updates) -> asset_io::Result<Vec<u8>> {
-    let s = riff::parse(&mut Cursor::new(bytes))?;
+    let s = riff::handler().parse(&mut Cursor::new(bytes))?;
     let mut out = Cursor::new(Vec::new());
     s.write(&mut Cursor::new(bytes), &mut out, u, &mut NullSink)?;
     Ok(out.into_inner())
@@ -82,7 +82,7 @@ fn riff_matches_existing_handler() {
         let bytes = fs::read(&path).unwrap();
         let io = RiffIO::new(&ext);
 
-        let new = riff::parse(&mut Cursor::new(&bytes));
+        let new = riff::handler().parse(&mut Cursor::new(&bytes));
         let old_read = io.get_reader().read_c2pa(&mut Cursor::new(&bytes));
 
         // 1. Which files are errors. A parse error on the new side must be matched
@@ -159,7 +159,7 @@ fn riff_matches_existing_handler() {
             };
             match probe {
                 Some(p) => {
-                    let ps = riff::parse(&mut Cursor::new(&p)).unwrap();
+                    let ps = riff::handler().parse(&mut Cursor::new(&p)).unwrap();
                     let new = locations(&ps, p.len() as u64);
                     if new.as_ref() != Some(&old) {
                         problems.push(format!(

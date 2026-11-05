@@ -306,8 +306,7 @@ fn describe(e: &Error) -> String {
 // ---------------------------------------------------------------------------
 
 fn check(bytes: &[u8]) -> Outcome {
-    let registry = HandlerRegistry::builtin();
-    let s = match registry.parse_detect(&mut Cursor::new(bytes)) {
+    let s = match parse_detect(bytes) {
         Ok(s) => s,
         Err(Error::UnsupportedFormat) => return Outcome::NotMedia,
         Err(e) => return Outcome::Rejected(describe(&e)),
@@ -325,6 +324,13 @@ fn check(bytes: &[u8]) -> Outcome {
     check_copy(&s, bytes, &mut r);
     check_edits(&s, bytes, &mut r);
     Outcome::Checked(r)
+}
+
+fn parse_detect(bytes: &[u8]) -> asset_io::Result<Structure> {
+    let registry = HandlerRegistry::builtin();
+    let header = &bytes[..bytes.len().min(asset_io::container_api::DETECT_LEN)];
+    let handler = registry.detect(header).ok_or(Error::UnsupportedFormat)?;
+    handler.clone().parse(&mut Cursor::new(bytes))
 }
 
 fn check_layout(s: &Structure, bytes: &[u8], r: &mut Report) {
@@ -495,7 +501,7 @@ fn check_edits(s: &Structure, bytes: &[u8], r: &mut Report) {
         }
         verify_output(name, s, bytes, updates, &out, &dest, r);
 
-        let Ok(re) = HandlerRegistry::builtin().parse_detect(&mut Cursor::new(&out[..])) else {
+        let Ok(re) = parse_detect(&out) else {
             continue;
         };
         match *name {
@@ -531,7 +537,7 @@ fn check_edits(s: &Structure, bytes: &[u8], r: &mut Report) {
     // Take the manifest back out. A file that had none is expected to return to
     // what it was; a difference is worth a look, not a failure.
     if let Some(edited) = with_manifest {
-        let Ok(re) = HandlerRegistry::builtin().parse_detect(&mut Cursor::new(&edited[..])) else {
+        let Ok(re) = parse_detect(&edited) else {
             return;
         };
         match write(&re, &edited, &Updates::new().remove_jumbf()) {
@@ -580,7 +586,7 @@ fn verify_output(
             out.len()
         ));
     }
-    let re = match HandlerRegistry::builtin().parse_detect(&mut Cursor::new(out)) {
+    let re = match parse_detect(out) {
         Ok(re) => re,
         Err(e) => {
             r.failures.push(format!(

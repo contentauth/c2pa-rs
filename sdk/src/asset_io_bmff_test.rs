@@ -43,7 +43,7 @@ fn fixtures() -> Vec<PathBuf> {
 type PathMap = BTreeMap<String, Vec<(u64, u64)>>;
 
 fn new_tree(bytes: &[u8]) -> asset_io::Result<(Structure, PathMap)> {
-    let s = bmff::parse(&mut Cursor::new(bytes))?;
+    let s = bmff::handler().parse(&mut Cursor::new(bytes))?;
     let mut m = PathMap::new();
     s.walk(&mut Cursor::new(bytes), |n| {
         m.entry(n.path.to_string())
@@ -376,7 +376,9 @@ fn xpath_exclusions_over_walk_match_existing_resolver() {
     for path in fixtures() {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let bytes = fs::read(&path).unwrap();
-        let tree = bmff::parse(&mut Cursor::new(&bytes)).and_then(|s| nodes(&s, &bytes));
+        let tree = bmff::handler()
+            .parse(&mut Cursor::new(&bytes))
+            .and_then(|s| nodes(&s, &bytes));
         for (label, list) in [("default", &default_list), ("extended", &extended)] {
             for v2 in [false, true] {
                 let old = bmff_to_jumbf_exclusions(&mut Cursor::new(&bytes), list, v2);
@@ -455,7 +457,7 @@ fn bmff_default_exclusions_from_items_reproduce_stored_hashes() {
         }
         checked += 1;
 
-        let s = bmff::parse(&mut Cursor::new(&bytes)).unwrap();
+        let s = bmff::handler().parse(&mut Cursor::new(&bytes)).unwrap();
         let n = nodes(&s, &bytes).unwrap();
         let walked = exclusions_from_walk(&n, &bytes, bh.exclusions(), v2).unwrap();
         let h = hash_stream_by_alg(&alg, &mut Cursor::new(&bytes), Some(walked), true).unwrap();
@@ -503,7 +505,7 @@ fn item_exclusions_equal_default_xpath_exclusions() {
     for path in fixtures() {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let bytes = fs::read(&path).unwrap();
-        let Ok(s) = bmff::parse(&mut Cursor::new(&bytes)) else {
+        let Ok(s) = bmff::handler().parse(&mut Cursor::new(&bytes)) else {
             continue;
         };
         for v2 in [false, true] {
@@ -535,7 +537,7 @@ fn bmff_sign_flow_through_asset_io_validates() {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let src = fs::read(&path).unwrap();
         let mime = mime_for(&path);
-        let Ok(s) = bmff::parse(&mut Cursor::new(&src)) else {
+        let Ok(s) = bmff::handler().parse(&mut Cursor::new(&src)) else {
             continue;
         };
         if s.items_of(ItemKind::Jumbf).next().is_some() || nodes(&s, &src).is_err() {
@@ -568,7 +570,7 @@ fn bmff_sign_flow_through_asset_io_validates() {
         };
 
         let out = new_write(&src, &Updates::new().set_jumbf(raw_ph.clone())).unwrap();
-        let dest = bmff::parse(&mut Cursor::new(&out)).unwrap();
+        let dest = bmff::handler().parse(&mut Cursor::new(&out)).unwrap();
         let item = dest
             .items_labelled(ItemKind::Jumbf, "manifest")
             .next()
@@ -642,10 +644,9 @@ fn bmff_sign_flow_through_asset_io_validates() {
 }
 
 fn new_write(bytes: &[u8], u: &Updates) -> asset_io::Result<Vec<u8>> {
-    let s = bmff::parse(&mut Cursor::new(bytes))?;
+    let s = bmff::handler().parse(&mut Cursor::new(bytes))?;
     let mut out = Cursor::new(Vec::new());
-    s.handler()
-        .write(&s, &mut Cursor::new(bytes), &mut out, u, &mut NullSink)?;
+    s.write(&mut Cursor::new(bytes), &mut out, u, &mut NullSink)?;
     Ok(out.into_inner())
 }
 
@@ -688,7 +689,7 @@ fn bmff_set_manifest_matches_existing_writer() {
                 } else {
                     failures.push(format!("{name}: {}", first_byte_diff(&o, &n)));
                 }
-                if bmff::parse(&mut Cursor::new(&n)).is_err() {
+                if bmff::handler().parse(&mut Cursor::new(&n)).is_err() {
                     failures.push(format!("{name}: asset-io output does not parse"));
                 }
             }
@@ -742,7 +743,7 @@ fn bmff_c2pa_boxes_match_existing_handler() {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let bytes = fs::read(&path).unwrap();
         let old = read_bmff_c2pa_boxes(&mut Cursor::new(&bytes));
-        let new = bmff::parse(&mut Cursor::new(&bytes));
+        let new = bmff::handler().parse(&mut Cursor::new(&bytes));
         let (o, s) = match (old, new) {
             (Ok(o), Ok(s)) => (o, s),
             (Err(_), Err(_)) => continue,
