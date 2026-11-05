@@ -74,4 +74,33 @@ pub enum TimeStampError {
     /// An error occurred while resolving the http request.
     #[error(transparent)]
     HttpResolverError(#[from] HttpResolverError),
+
+    /// The timestamp response exceeded the 1,000,000-byte acquisition limit.
+    #[error("timestamp response exceeds 1000000 bytes")]
+    ResponseTooLarge,
+}
+
+impl From<contentauth_signature_infrastructure::AcquisitionError> for TimeStampError {
+    fn from(error: contentauth_signature_infrastructure::AcquisitionError) -> Self {
+        use contentauth_signature_infrastructure::AcquisitionError;
+
+        match error {
+            AcquisitionError::Protocol(error) => Self::InternalError(error.to_string()),
+            AcquisitionError::InvalidRequest(error) => Self::InternalError(error),
+
+            AcquisitionError::HttpRequestError(error) => {
+                Self::HttpResolverError(HttpResolverError::Http(error))
+            }
+
+            AcquisitionError::DecodeError(error) => Self::DecodeError(error),
+
+            AcquisitionError::HttpErrorResponse(status, content_type) => {
+                Self::HttpErrorResponse(status, content_type)
+            }
+
+            AcquisitionError::Transport(error) => Self::HttpConnectionError(error),
+            AcquisitionError::NonceMismatch => Self::NonceMismatch,
+            AcquisitionError::ResponseTooLarge => Self::ResponseTooLarge,
+        }
+    }
 }
