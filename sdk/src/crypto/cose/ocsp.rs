@@ -2948,6 +2948,83 @@ mod tests {
     }
 
     #[test]
+    fn ocsp_responder_requires_ocsp_signing_eku() {
+        use rasn::types::ObjectIdentifier;
+
+        use crate::{
+            crypto::ocsp::test_responder::{encode_response, good_basic_response},
+            validation_status::SIGNING_CREDENTIAL_INVALID,
+        };
+
+        let timestamp = supplied_timestamp();
+        let context = Context::new();
+        let chain = ocsp_signing_chain();
+        let sign1 = sign1_with_x5chain(&chain);
+        for purpose in [
+            vec![1, 3, 6, 1, 4, 1, 62558, 2, 1],
+            vec![1, 3, 6, 1, 5, 5, 7, 3, 4],
+            vec![1, 3, 6, 1, 5, 5, 7, 3, 8],
+            vec![1, 3, 6, 1, 5, 5, 7, 3, 9],
+        ] {
+            let is_ocsp = purpose.last() == Some(&9);
+            let mut basic = good_basic_response();
+            let cert = &mut basic.certs.as_mut().unwrap()[0];
+            // The response signature covers ResponseData, not this certificate.
+            // Trust the edited certificate directly to isolate its role profile.
+            let eku = cert
+                .tbs_certificate
+                .extensions
+                .as_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|ext| ext.extn_id == ObjectIdentifier::new(vec![2, 5, 29, 37]).unwrap())
+                .unwrap();
+            eku.extn_value = rasn::der::encode(&vec![ObjectIdentifier::new(purpose).unwrap()])
+                .unwrap()
+                .into();
+            cert.tbs_certificate.validity.not_after =
+                rasn_pkix::Time::Utc(Utc::now() + chrono::Duration::days(1));
+            let pem = pem::encode(&pem::Pem::new(
+                "CERTIFICATE",
+                rasn::der::encode(cert).unwrap(),
+            ));
+            let mut ctp = CertificateTrustPolicy::default();
+            ctp.add_end_entity_credentials(pem.as_bytes()).unwrap();
+            let der = encode_response(&basic);
+
+            let mut log = StatusTracker::default();
+            let stapled = check_stapled_ocsp_response(
+                &sign1,
+                &der,
+                b"payload",
+                &ctp,
+                Some(&timestamp),
+                &mut log,
+                context.settings(),
+            )
+            .unwrap();
+            assert_eq!(!stapled.ocsp_der.is_empty(), is_ocsp);
+            assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), is_ocsp);
+            assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !is_ocsp);
+
+            let mut log = StatusTracker::default();
+            let fetched = validate_fetched_ocsp(
+                &der,
+                &chain,
+                &ctp,
+                Some(timestamp.gen_time.clone().into()),
+                &mut log,
+            );
+            assert_eq!(!fetched.ocsp_der.is_empty(), is_ocsp);
+            assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), is_ocsp);
+
+            if !is_ocsp {
+                assert!(log.logged_items().is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn invalid_responder_profile_and_untrusted_responder_do_not_assert_good_status() {
         let sign1 = sign1_with_x5chain(&ocsp_signing_chain());
         let der = response_without_responder_extensions();

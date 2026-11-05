@@ -462,6 +462,16 @@ Here's the `Settings` JSON with all default values:
 
 ### Production configuration
 
+By default, `trust.use_default_ekus` is `true`: the built-in EKUs, including
+`c2pa-kp-claimSigning`, remain enabled and `trust.trust_config` adds to them.
+To restrict claim signers to a configured set, set `trust.use_default_ekus` to
+`false` and supply the accepted OIDs in `trust.trust_config`. An empty or absent
+configuration with defaults disabled retains legacy emailProtection acceptance;
+it does not enable claimSigning or documentSigning. TSA and OCSP responder
+profiles require timeStamping and OCSPSigning, respectively, regardless of which
+claim-signer EKUs are accepted. Accepting an EKU does not install a trust anchor
+or make a certificate trusted.
+
 ```json
 {
   "version": 1,
