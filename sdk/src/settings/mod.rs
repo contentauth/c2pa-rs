@@ -132,6 +132,24 @@ pub struct TrustAnchor {
     /// sponsor-validated (2.23.140.1.5.3.2 / 2.23.140.1.5.3.3), or
     /// individual-validated (2.23.140.1.5.4.2 / 2.23.140.1.5.4.3). Mailbox-validated
     /// and legacy certificate purposes are not accepted.
+    ///
+    /// These six policy OIDs are enforced by CAWG X.509 validation, not parsed
+    /// from this EKU-only setting. An emailProtection certificate is trusted
+    /// under the interim model only through 31 March 2027 (inclusive, UTC), or
+    /// when a trusted, associated timestamp attests to issuance by that date.
+    /// Assertion-local timestamps must be v2 (`sigTst2`). Manifest timestamps
+    /// and timestamp assertions are accepted only after checking their binding
+    /// to the containing claim's signature and this assertion's signed hash.
+    /// Timestamp signature, imprint, TSA profile, and TSA trust are checked even
+    /// if claim timestamp trust checking is disabled.
+    ///
+    /// `id-kp-documentSigning` is a separate, non-interim acceptance path. If
+    /// that purpose is accepted by the effective EKU policy, a certificate
+    /// containing both documentSigning and emailProtection does not need an
+    /// interim S/MIME policy or cutoff check. Existing certificate-profile and
+    /// configured CAWG trust-anchor/allowed-list checks still apply. Claim
+    /// signers, TSA certificates, and OCSP responders do not acquire these CAWG
+    /// interim restrictions.
     pub trust_config: Option<String>,
 
     /// List of explicitly allowed CAWG identity or Singing certificates as a PEM bundle.
@@ -251,8 +269,11 @@ pub struct Trust {
     /// by the C2PA specification in addition to those listed in [`Trust::trust_config`].
     ///
     /// When false, only the EKUs listed in [`Trust::trust_config`] (and any
-    /// [`TrustAnchor::trust_config`]) are accepted. Note that `id-kp-emailProtection`,
-    /// `id-kp-timeStamping`, and `id-kp-OCSPSigning` are always accepted.
+    /// [`TrustAnchor::trust_config`]) are accepted for claim signing.
+    /// For legacy compatibility, `id-kp-emailProtection` is also accepted when
+    /// no valid EKUs are loaded. `id-kp-timeStamping` and `id-kp-OCSPSigning`
+    /// remain accepted by the general profile check; TSA and OCSP responder
+    /// profiles additionally require their respective EKU.
     ///
     /// The default value is true.
     pub use_default_ekus: bool,

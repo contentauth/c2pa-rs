@@ -1039,6 +1039,20 @@ impl Reader {
             for assertion in manifest.assertions().iter() {
                 let assertion_uri =
                     crate::jumbf::labels::to_assertion_uri(&current_label, assertion.label());
+                partial_claim.manifest_timestamp = None;
+                if assertion.label() == "cawg.identity"
+                    || assertion.label().starts_with("cawg.identity__")
+                {
+                    if let Some(claim) = self.store.get_claim(&current_label) {
+                        partial_claim.manifest_timestamp =
+                            self.store.trusted_cawg_timestamp_for_assertion(
+                                claim,
+                                assertion.label(),
+                                &mut StatusTracker::default(),
+                            )?;
+                    }
+                }
+
                 let result = if _sync {
                     validator.validate(
                         assertion.label(),

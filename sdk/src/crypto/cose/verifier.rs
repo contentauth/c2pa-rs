@@ -840,7 +840,7 @@ mod tests {
                 } else {
                     verifier.verify_profile(&sign1, None, None, &mut profile_log)
                 };
-                assert_eq!(profile.is_err(), !allow_eku);
+                assert_eq!(profile.is_err(), invalid);
                 assert_eq!(profile_log.has_status(SIGNING_CREDENTIAL_INVALID), invalid);
 
                 let mut log = StatusTracker::default();
