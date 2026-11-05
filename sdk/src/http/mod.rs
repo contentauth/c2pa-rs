@@ -420,7 +420,8 @@ pub enum HttpResolverError {
     #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
     UriDisallowed { uri: String },
 
-    /// The `Content-Length` response header exceeded the limit set via
+    /// The response body exceeded an SDK-enforced size limit, or its
+    /// `Content-Length` exceeded the limit set via
     /// [`AsyncGenericResolver::with_max_response_body_size`].
     #[error("response body exceeded maximum allowed size")]
     ResponseTooLarge,
