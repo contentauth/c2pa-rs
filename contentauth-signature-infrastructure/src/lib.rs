@@ -13,28 +13,38 @@
 
 //! Experimental sans-I/O signature infrastructure.
 //!
-//! The first layer implements RFC 3161 acquisition, not cryptographic
-//! verification, certificate-profile validation or trust evaluation.
+//! Currently provides host-driven RFC 3161 timestamp acquisition through
+//! [`timestamp::acquisition`]. Acquisition returns unverified response bytes;
+//! cryptographic verification, certificate-profile validation and trust
+//! evaluation remain in the host SDK.
 //!
-//! Codecs are private implementation details:
+//! Workflow APIs are scoped to their protocol modules, not re-exported at the
+//! crate root:
+//!
+//! ```
+//! use contentauth_signature_infrastructure::timestamp::acquisition::{
+//!     acquire, AcquisitionWorkflow,
+//! };
+//! ```
+//!
+//! ```compile_fail
+//! use contentauth_signature_infrastructure::{acquire, AcquisitionWorkflow};
+//! ```
+//!
+//! Shared ASN.1 codecs and timestamp response helpers are private implementation
+//! details:
 //!
 //! ```compile_fail
 //! use contentauth_signature_infrastructure::asn1;
 //! ```
 //!
 //! ```compile_fail
-//! use contentauth_signature_infrastructure::response;
-//! ```
-//!
-//! ```compile_fail
 //! use contentauth_signature_infrastructure::timestamp::response;
 //! ```
 //!
-//! Workflow APIs remain scoped to their modules:
-//!
-//! ```compile_fail
-//! use contentauth_signature_infrastructure::{acquire, AcquisitionWorkflow};
-//! ```
+//! The opt-in `sdk-compat` feature exposes a provisional bridge for legacy SDK
+//! codec consumers while they migrate. It is not a stable public codec API and
+//! does not confer cryptographic validity or trust on parsed values.
 
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
