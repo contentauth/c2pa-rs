@@ -18,6 +18,9 @@
 mod certificate_info;
 pub use certificate_info::CertificateInfo;
 
+mod cawg;
+pub(crate) use cawg::{trusted_cawg_timestamp, trusted_cawg_timestamp_token};
+
 mod certificate_trust;
 
 mod cose_signer;

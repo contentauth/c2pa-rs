@@ -57,6 +57,81 @@ pub(crate) struct StoreValidationInfo<'a> {
 }
 
 impl Store {
+    pub(crate) fn trusted_cawg_timestamp_for_assertion(
+        &self,
+        claim: &Claim,
+        assertion_label: &str,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Option<TstInfo>> {
+        use crate::crypto::cose::{trusted_cawg_timestamp, trusted_cawg_timestamp_token, Verifier};
+
+        let Some((signed_uri, _)) = claim.assertion_hashed_uri_from_label(assertion_label) else {
+            return Ok(None);
+        };
+        let local_reference = crate::jumbf::labels::manifest_label_from_uri(&signed_uri.url())
+            .is_none_or(|label| label == claim.label());
+        if !local_reference
+            || claim.get_claim_assertion_hash(assertion_label).as_deref()
+                != Some(signed_uri.hash().as_slice())
+        {
+            // Claim validation already reports the assertion hash mismatch.
+            return Ok(None);
+        }
+
+        let data = claim.data()?;
+        // The timestamp attests to the claim signature, not directly to the
+        // identity assertion. Verify that signature before reusing its time.
+        let mut signature_log = StatusTracker::default();
+        if Verifier::IgnoreProfileAndTrustPolicy
+            .verify_signature(claim.signature_val(), &data, &[], None, &mut signature_log)
+            .is_err()
+        {
+            log_item!(
+                "",
+                "manifest signature cannot establish the CAWG signing time",
+                "trusted_cawg_timestamp_for_claim"
+            )
+            .validation_status("cawg.x509.time_stamp.mismatch")
+            .informational(validation_log);
+            return Ok(None);
+        }
+
+        let sign1 = claim.cose_sign1()?;
+        if let Some(timestamp) = trusted_cawg_timestamp(&sign1, &data, &self.ctp, validation_log) {
+            return Ok(Some(timestamp));
+        }
+
+        for source_claim in self.claims() {
+            for assertion in source_claim.timestamp_assertions() {
+                let timestamps = match TimeStamp::from_assertion(assertion.assertion()) {
+                    Ok(timestamps) => timestamps,
+                    Err(_) => {
+                        log_item!(
+                            assertion.label(),
+                            "timestamp assertion malformed",
+                            "trusted_cawg_timestamp_for_claim"
+                        )
+                        .validation_status("cawg.x509.time_stamp.malformed")
+                        .informational(validation_log);
+                        continue;
+                    }
+                };
+                if let Some(token) = timestamps.as_ref().get(claim.label()) {
+                    if let Some(timestamp) = trusted_cawg_timestamp_token(
+                        token,
+                        &sign1.signature,
+                        &self.ctp,
+                        validation_log,
+                    ) {
+                        return Ok(Some(timestamp));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     // Returns the timestamp info only if the token validates for the claim's signature.
     pub(crate) fn verified_timestamp_for_claim(
         claim: &Claim,

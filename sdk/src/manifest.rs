@@ -643,6 +643,11 @@ impl Manifest {
                     let uri = to_assertion_uri(manifest_label, label);
                     validation_log.push_current_uri(&uri);
                     let identity_assertion: IdentityAssertion = ma.to_assertion()?;
+                    partial_claim.manifest_timestamp = store.trusted_cawg_timestamp_for_assertion(
+                        claim,
+                        &claim_assertion.label(),
+                        &mut StatusTracker::default(),
+                    )?;
                     let value: Option<serde_json::Value> = if _sync {
                         identity_assertion
                             .validate_partial_claim(&partial_claim, validation_log, context)
