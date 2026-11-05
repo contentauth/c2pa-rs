@@ -264,7 +264,10 @@ pub fn verify_time_stamp(
     for signer_info in sd.signer_infos.to_vec().iter() {
         current_validation_log = StatusTracker::default(); // reset for latest results
 
-        // Find signer's cert.
+        // Preserve the existing first-match lookup for this SignerInfo. Unrelated
+        // certificates cannot win; only a matching issuer/serial or SKI can.
+        // If distinct certificates share that identifier, decoded SET OF order
+        // selects the candidate; this loop does not try every matching certificate.
         let cert_pos = match certs_vec
             .iter()
             .position(|cc| signer_certificate_matches(cc, &signer_info.sid))
@@ -762,6 +765,19 @@ const RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
 const RSA_PSS: &str = "1.2.840.113549.1.1.10";
 const MGF1: &str = "1.2.840.113549.1.1.8";
 const EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
+const ED25519_SIGNATURE: &str = "1.3.101.112";
+const SHA1_DIGEST: &str = "1.3.14.3.2.26";
+const SHA256_DIGEST: &str = "2.16.840.1.101.3.4.2.1";
+const SHA384_DIGEST: &str = "2.16.840.1.101.3.4.2.2";
+const SHA512_DIGEST: &str = "2.16.840.1.101.3.4.2.3";
+const RSA_PKCS1_SHA1: &str = "1.2.840.113549.1.1.5";
+const RSA_PKCS1_SHA256: &str = "1.2.840.113549.1.1.11";
+const RSA_PKCS1_SHA384: &str = "1.2.840.113549.1.1.12";
+const RSA_PKCS1_SHA512: &str = "1.2.840.113549.1.1.13";
+const ECDSA_SHA1: &str = "1.2.840.10045.4.1";
+const ECDSA_SHA256: &str = "1.2.840.10045.4.3.2";
+const ECDSA_SHA384: &str = "1.2.840.10045.4.3.3";
+const ECDSA_SHA512: &str = "1.2.840.10045.4.3.4";
 
 struct PssParameters {
     hash: String,
@@ -787,8 +803,8 @@ fn pss_parameters(parameters: &types::Any) -> Result<PssParameters, TimeStampErr
 
     // RFC 4055 defaults apply to fields omitted within the required sequence.
     let mut result = PssParameters {
-        hash: "1.3.14.3.2.26".into(),
-        mgf_hash: "1.3.14.3.2.26".into(),
+        hash: SHA1_DIGEST.into(),
+        mgf_hash: SHA1_DIGEST.into(),
         salt_length: 20,
         trailer: 1,
     };
@@ -907,9 +923,9 @@ fn timestamp_signature_algorithm(
             })?;
         let pss = pss_parameters(parameters)?;
         let salt_length = match pss.hash.as_str() {
-            "2.16.840.1.101.3.4.2.1" => 32,
-            "2.16.840.1.101.3.4.2.2" => 48,
-            "2.16.840.1.101.3.4.2.3" => 64,
+            SHA256_DIGEST => 32,
+            SHA384_DIGEST => 48,
+            SHA512_DIGEST => 64,
             _ => return Err(TimeStampError::UnsupportedAlgorithm),
         };
 
@@ -938,27 +954,15 @@ fn timestamp_signature_algorithm(
     } else {
         let compatible = match signature.as_str() {
             RSA_ENCRYPTION => key_algorithm == RSA_ENCRYPTION,
-            "1.2.840.113549.1.1.5" => key_algorithm == RSA_ENCRYPTION && digest == "1.3.14.3.2.26",
-            "1.2.840.113549.1.1.11" => {
-                key_algorithm == RSA_ENCRYPTION && digest == "2.16.840.1.101.3.4.2.1"
-            }
-            "1.2.840.113549.1.1.12" => {
-                key_algorithm == RSA_ENCRYPTION && digest == "2.16.840.1.101.3.4.2.2"
-            }
-            "1.2.840.113549.1.1.13" => {
-                key_algorithm == RSA_ENCRYPTION && digest == "2.16.840.1.101.3.4.2.3"
-            }
-            "1.2.840.10045.4.1" => key_algorithm == EC_PUBLIC_KEY && digest == "1.3.14.3.2.26",
-            "1.2.840.10045.4.3.2" => {
-                key_algorithm == EC_PUBLIC_KEY && digest == "2.16.840.1.101.3.4.2.1"
-            }
-            "1.2.840.10045.4.3.3" => {
-                key_algorithm == EC_PUBLIC_KEY && digest == "2.16.840.1.101.3.4.2.2"
-            }
-            "1.2.840.10045.4.3.4" => {
-                key_algorithm == EC_PUBLIC_KEY && digest == "2.16.840.1.101.3.4.2.3"
-            }
-            "1.3.101.112" => key_algorithm == signature,
+            RSA_PKCS1_SHA1 => key_algorithm == RSA_ENCRYPTION && digest == SHA1_DIGEST,
+            RSA_PKCS1_SHA256 => key_algorithm == RSA_ENCRYPTION && digest == SHA256_DIGEST,
+            RSA_PKCS1_SHA384 => key_algorithm == RSA_ENCRYPTION && digest == SHA384_DIGEST,
+            RSA_PKCS1_SHA512 => key_algorithm == RSA_ENCRYPTION && digest == SHA512_DIGEST,
+            ECDSA_SHA1 => key_algorithm == EC_PUBLIC_KEY && digest == SHA1_DIGEST,
+            ECDSA_SHA256 => key_algorithm == EC_PUBLIC_KEY && digest == SHA256_DIGEST,
+            ECDSA_SHA384 => key_algorithm == EC_PUBLIC_KEY && digest == SHA384_DIGEST,
+            ECDSA_SHA512 => key_algorithm == EC_PUBLIC_KEY && digest == SHA512_DIGEST,
+            ED25519_SIGNATURE => key_algorithm == signature,
             _ => false,
         };
 
@@ -1219,8 +1223,8 @@ fn validate_timestamp_sig(
 }
 
 #[cfg(test)]
-#[path = "verify_regression.rs"]
-mod signature_regression;
+#[path = "rsa_pss_ski_regression.rs"]
+mod rsa_pss_ski_regression;
 
 #[cfg(test)]
 #[allow(clippy::expect_used)]

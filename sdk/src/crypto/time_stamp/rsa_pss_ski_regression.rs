@@ -8,6 +8,8 @@
 // LICENSE-APACHE files for the specific language governing permissions
 // and limitations under each license.
 
+//! Regression coverage for timestamp RSA-PSS profiles and SKI signer lookup.
+
 #![allow(clippy::unwrap_used)]
 
 use super::*;
