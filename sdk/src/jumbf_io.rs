@@ -24,11 +24,13 @@ use crate::asset_handlers::plain_text_io::PlainTextIO;
 #[cfg(feature = "unstable_structured_text")]
 use crate::asset_handlers::structured_text_io::StructuredTextIO;
 #[cfg(not(feature = "asset_io"))]
+use crate::asset_handlers::tiff_io::TiffIO;
+#[cfg(not(feature = "asset_io"))]
 use crate::asset_handlers::{jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO};
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpegxl_io::JpegXlIO,
-        mp3_io::Mp3IO, tiff_io::TiffIO, zip_io::ZipIO,
+        mp3_io::Mp3IO, zip_io::ZipIO,
     },
     asset_io::{AssetIO, C2paReader, C2paWriter, HandlerRegistry, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
@@ -62,9 +64,8 @@ lazy_static! {
         Box::new(SvgIO::new("")),
         #[cfg(feature = "asset_io")]
         Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("svg")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(TiffIO::new("")),
-        // Registered after TiffIO so it takes TIFF and DNG; TiffIO keeps the read-only
-        // ARW and NEF types, which asset-io does not declare.
         #[cfg(feature = "asset_io")]
         Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("tif")),
         Box::new(Mp3IO::new("")),
@@ -264,6 +265,8 @@ pub mod tests {
     #[cfg(all(feature = "pdf", feature = "asset_io"))]
     use crate::asset_handlers::pdf_io::PdfIO;
     #[cfg(feature = "asset_io")]
+    use crate::asset_handlers::tiff_io::TiffIO;
+    #[cfg(feature = "asset_io")]
     use crate::asset_handlers::{jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO};
     use crate::{
         utils::{test::create_test_store, test_signer::test_signer},
@@ -401,6 +404,8 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "tif"));
         assert!(supported.iter().any(|s| s == "tiff"));
         assert!(supported.iter().any(|s| s == "dng"));
+        assert!(supported.iter().any(|s| s == "arw"));
+        assert!(supported.iter().any(|s| s == "nef"));
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
         assert!(supported.iter().any(|s| s == "jxl"));

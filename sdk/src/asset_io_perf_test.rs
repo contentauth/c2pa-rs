@@ -13,6 +13,13 @@
 //                           IDAT chunks, to tell per-byte cost from per-chunk cost
 //   ASSET_IO_SYNTH_ONLY=1   skip the fixtures
 //
+// The separate `asset_io_update_workflow_perf` test measures removing an XMP remote
+// manifest URL and replacing an existing embedded manifest. `ASSET_IO_PERF_FILE=1`
+// uses temporary files for its input and intermediate/output streams; otherwise it
+// uses memory-backed streams. `ASSET_IO_PERF_CASE=<filename>` limits it to one fixture.
+// RSS is sampled every 250 us during a separate, repeated memory pass and includes the
+// test process and input buffers, not just allocations made by the handler.
+//
 // Rows prefixed `floor` are not handlers: a plain memcpy, and `io::copy` through `dyn`
 // streams. They bound what any handler can do for the same bytes.
 //
@@ -20,7 +27,7 @@
 // of several runs is kept, which filters out scheduling noise. Parsing in memory
 // isolates the parsers; reading from disk adds the cost of their I/O pattern.
 
-#![cfg(all(test, feature = "asset_io"))]
+#![cfg(all(test, feature = "asset_io", not(target_arch = "wasm32")))]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::{
@@ -28,8 +35,13 @@ use std::{
     collections::BTreeMap,
     fs,
     hint::black_box,
-    io::{self, Cursor},
+    io::{self, Cursor, Seek, Write},
     path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    thread,
     time::{Duration, Instant},
 };
 
@@ -142,6 +154,202 @@ const OPS: [(&str, Op); 6] = [
     ("write_c2pa", op_write_c2pa),
     ("remove_c2pa", op_remove_c2pa),
 ];
+
+#[derive(Clone, Copy)]
+enum WorkflowInput<'a> {
+    Memory(&'a [u8]),
+    File(&'a std::path::Path),
+}
+
+fn verify_workflow_output(
+    h: &dyn AssetIO,
+    output: &mut dyn ReadSeek,
+    updated_store: &[u8],
+) -> anyhow::Result<()> {
+    let remote = h
+        .remote_manifest_url_ref()
+        .ok_or_else(|| anyhow::anyhow!("handler has no remote manifest URL support"))?;
+    output.rewind()?;
+    let manifest = h.get_reader().read_c2pa(output)?;
+    anyhow::ensure!(
+        manifest == updated_store,
+        "embedded manifest was not updated"
+    );
+    output.rewind()?;
+    anyhow::ensure!(
+        remote.read_manifest_url(output).is_none(),
+        "remote manifest URL remains in XMP"
+    );
+    output.rewind()?;
+    anyhow::ensure!(
+        h.get_reader().read_xmp(output).is_some(),
+        "XMP was lost while updating the manifest"
+    );
+    Ok(())
+}
+
+fn update_workflow(
+    h: &dyn AssetIO,
+    input: WorkflowInput<'_>,
+    updated_store: &[u8],
+    validate: bool,
+) -> anyhow::Result<()> {
+    let remote = h
+        .remote_manifest_url_ref()
+        .ok_or_else(|| anyhow::anyhow!("handler has no remote manifest URL support"))?;
+    let writer = h
+        .get_writer("x")
+        .ok_or_else(|| anyhow::anyhow!("handler has no writer"))?;
+
+    match input {
+        WorkflowInput::Memory(bytes) => {
+            let mut source = Cursor::new(bytes);
+            let mut without_remote = Cursor::new(Vec::new());
+            remote.remove_remote_manifest_url(&mut source, &mut without_remote)?;
+            without_remote.rewind()?;
+
+            let mut output = Cursor::new(Vec::new());
+            writer.write_c2pa(&mut without_remote, &mut output, updated_store)?;
+            if validate {
+                output.rewind()?;
+                verify_workflow_output(h, &mut output, updated_store)?;
+            }
+        }
+        WorkflowInput::File(path) => {
+            let mut source = fs::File::open(path)?;
+            let mut without_remote = tempfile::tempfile()?;
+            remote.remove_remote_manifest_url(&mut source, &mut without_remote)?;
+            without_remote.rewind()?;
+
+            let mut output = tempfile::tempfile()?;
+            writer.write_c2pa(&mut without_remote, &mut output, updated_store)?;
+            if validate {
+                output.rewind()?;
+                verify_workflow_output(h, &mut output, updated_store)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+struct MemoryMeasurement {
+    baseline_rss: Option<usize>,
+    peak_rss: Option<usize>,
+}
+
+fn measure_workflow_memory(
+    f: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<MemoryMeasurement> {
+    let baseline_rss = memory_stats::memory_stats().map(|stats| stats.physical_mem);
+    let peak = Arc::new(AtomicUsize::new(baseline_rss.unwrap_or_default()));
+    let sampled = Arc::new(AtomicBool::new(baseline_rss.is_some()));
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let (thread_peak, thread_sampled, thread_stop) =
+        (Arc::clone(&peak), Arc::clone(&sampled), Arc::clone(&stop));
+    let monitor = thread::spawn(move || {
+        while !thread_stop.load(Ordering::Relaxed) {
+            if let Some(stats) = memory_stats::memory_stats() {
+                thread_sampled.store(true, Ordering::Relaxed);
+                thread_peak.fetch_max(stats.physical_mem, Ordering::Relaxed);
+            }
+            thread::sleep(Duration::from_micros(250));
+        }
+    });
+
+    let result = f();
+    stop.store(true, Ordering::Relaxed);
+    monitor
+        .join()
+        .map_err(|_| anyhow::anyhow!("RSS sampling thread panicked"))?;
+    result?;
+
+    Ok(MemoryMeasurement {
+        baseline_rss,
+        peak_rss: sampled
+            .load(Ordering::Relaxed)
+            .then(|| peak.load(Ordering::Relaxed)),
+    })
+}
+
+fn workflow_extension(path: &std::path::Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("jpg" | "jpeg" | "mpo") => Some("jpg"),
+        Some("png") => Some("png"),
+        Some("svg") => Some("svg"),
+        Some("wav") => Some("wav"),
+        Some("webp") => Some("webp"),
+        Some("avi") => Some("avi"),
+        Some("tif" | "tiff") => Some("tif"),
+        Some("dng") => Some("dng"),
+        #[cfg(feature = "pdf")]
+        Some("pdf") => Some("pdf"),
+        _ => None,
+    }
+}
+
+fn prepare_workflow_seed(
+    h: &dyn AssetIO,
+    original: &[u8],
+    initial_store: &[u8],
+) -> anyhow::Result<Option<Vec<u8>>> {
+    if h.get_reader()
+        .read_xmp(&mut Cursor::new(original))
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let (Some(remote), Some(writer)) = (h.remote_manifest_url_ref(), h.get_writer("x")) else {
+        return Ok(None);
+    };
+
+    let mut embedded = Cursor::new(Vec::new());
+    writer.write_c2pa(&mut Cursor::new(original), &mut embedded, initial_store)?;
+    embedded.rewind()?;
+
+    let mut seeded = Cursor::new(Vec::new());
+    remote.write_remote_manifest_url(
+        &mut embedded,
+        &mut seeded,
+        "https://example.invalid/manifest.c2pa",
+    )?;
+    let seeded = seeded.into_inner();
+    anyhow::ensure!(
+        h.get_reader().read_c2pa(&mut Cursor::new(&seeded))? == initial_store,
+        "failed to seed embedded manifest"
+    );
+    anyhow::ensure!(
+        remote
+            .read_manifest_url(&mut Cursor::new(&seeded))
+            .as_deref()
+            == Some("https://example.invalid/manifest.c2pa"),
+        "failed to seed remote manifest URL"
+    );
+    Ok(Some(seeded))
+}
+
+fn median_duration(mut samples: Vec<Duration>) -> Duration {
+    samples.sort_unstable();
+    samples[samples.len() / 2]
+}
+
+fn rss_mib(bytes: Option<usize>) -> String {
+    bytes
+        .map(|n| format!("{:.1}", n as f64 / (1024.0 * 1024.0)))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn rss_kib(bytes: Option<usize>) -> String {
+    bytes
+        .map(|n| format!("{:.1}", n as f64 / 1024.0))
+        .unwrap_or_else(|| "n/a".to_string())
+}
 
 fn handlers(ext: &str) -> (Box<dyn AssetIO>, Box<dyn AssetIO>) {
     match ext {
@@ -333,6 +541,135 @@ struct Row {
     size: usize,
     old: Duration,
     new: Duration,
+}
+
+#[test]
+#[ignore = "reports end-to-end update timings and sampled RSS; run with --release --ignored --nocapture"]
+fn asset_io_update_workflow_perf() {
+    let file_backed = std::env::var_os("ASSET_IO_PERF_FILE").is_some();
+    let requested_case = std::env::var_os("ASSET_IO_PERF_CASE");
+    let initial_store = store(&[0x5a; 10_000]);
+    let updated_store = store(&[0xa5; 20_000]);
+    let reps = 3;
+    let mut compared = 0;
+
+    println!(
+        "update workflow: {}, RSS sampling interval: 250 us",
+        if file_backed {
+            "file-backed streams using temporary files"
+        } else {
+            "in-memory streams"
+        }
+    );
+    println!(
+        "{:<8} {:<32} {:>9} {:>10} {:>10} {:>12} {:>12} {:>11} {:>11}",
+        "format",
+        "file",
+        "asset MiB",
+        "old ms",
+        "new ms",
+        "old peak RSS",
+        "new peak RSS",
+        "old inc KiB",
+        "new inc KiB"
+    );
+
+    for path in fixture_paths() {
+        if requested_case.as_ref().is_some_and(|requested| {
+            path.file_name()
+                .map_or(true, |name| name != requested.as_os_str())
+        }) {
+            continue;
+        }
+        let Some(ext) = workflow_extension(&path) else {
+            continue;
+        };
+        let Ok(original) = fs::read(&path) else {
+            continue;
+        };
+        let (old, new) = handlers(ext);
+        let Some(seed) = prepare_workflow_seed(&*old, &original, &initial_store)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        else {
+            continue;
+        };
+        let asset_size = seed.len();
+        let (memory_seed, seed_file) = if file_backed {
+            let mut file = tempfile::NamedTempFile::new().unwrap();
+            file.write_all(&seed).unwrap();
+            file.flush().unwrap();
+            (None, Some(file))
+        } else {
+            (Some(seed), None)
+        };
+        drop(original);
+
+        let input = if let Some(file) = &seed_file {
+            WorkflowInput::File(file.path())
+        } else {
+            WorkflowInput::Memory(memory_seed.as_deref().unwrap())
+        };
+
+        update_workflow(&*old, input, &updated_store, true)
+            .unwrap_or_else(|e| panic!("{} legacy workflow: {e}", path.display()));
+        update_workflow(&*new, input, &updated_store, true)
+            .unwrap_or_else(|e| panic!("{} asset-io workflow: {e}", path.display()));
+
+        let time_one = |handler: &dyn AssetIO| {
+            (0..reps)
+                .map(|_| {
+                    let start = Instant::now();
+                    update_workflow(handler, input, &updated_store, false)
+                        .unwrap_or_else(|e| panic!("{} workflow: {e}", path.display()));
+                    start.elapsed()
+                })
+                .collect::<Vec<_>>()
+        };
+        let old_time = median_duration(time_one(&*old));
+        let new_time = median_duration(time_one(&*new));
+
+        let memory_reps = (Duration::from_millis(30).as_secs_f64()
+            / old_time.max(new_time).as_secs_f64())
+        .ceil()
+        .clamp(1.0, 100.0) as usize;
+        let old_memory = measure_workflow_memory(|| {
+            for _ in 0..memory_reps {
+                update_workflow(&*old, input, &updated_store, false)?;
+            }
+            Ok(())
+        })
+        .unwrap_or_else(|e| panic!("{} legacy memory pass: {e}", path.display()));
+        let new_memory = measure_workflow_memory(|| {
+            for _ in 0..memory_reps {
+                update_workflow(&*new, input, &updated_store, false)?;
+            }
+            Ok(())
+        })
+        .unwrap_or_else(|e| panic!("{} asset-io memory pass: {e}", path.display()));
+        let delta = |m: &MemoryMeasurement| {
+            m.peak_rss
+                .zip(m.baseline_rss)
+                .map(|(peak, baseline)| peak.saturating_sub(baseline))
+        };
+
+        println!(
+            "{ext:<8} {:<32} {:>9.2} {:>10.3} {:>10.3} {:>12} {:>12} {:>11} {:>11}",
+            path.file_name().unwrap().to_string_lossy(),
+            asset_size as f64 / (1024.0 * 1024.0),
+            old_time.as_secs_f64() * 1_000.0,
+            new_time.as_secs_f64() * 1_000.0,
+            rss_mib(old_memory.peak_rss),
+            rss_mib(new_memory.peak_rss),
+            rss_kib(delta(&old_memory)),
+            rss_kib(delta(&new_memory)),
+        );
+        compared += 1;
+    }
+
+    assert!(
+        compared > 0,
+        "no fixture had both existing XMP and writer support"
+    );
 }
 
 #[test]

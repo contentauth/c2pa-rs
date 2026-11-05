@@ -540,9 +540,10 @@ fn box_maps_agree_apart_from_the_placeholder() {
     let mut problems = Vec::new();
     let mut compared = 0;
     for (name, bytes, old, new) in fixtures() {
-        let (Some(o), Some(n)) = (old.asset_box_hash_ref(), new.asset_box_hash_ref()) else {
-            // Formats with no box hash (SVG) are the same for both.
-            if old.asset_box_hash_ref().is_none() && new.asset_box_hash_ref().is_none() {
+        let (old_hash, new_hash) = (old.asset_box_hash_ref(), new.asset_box_hash_ref());
+        let (Some(o), Some(n)) = (old_hash, new_hash) else {
+            // asset-io can provide box maps for formats whose legacy handler did not.
+            if old_hash.is_none() {
                 continue;
             }
             problems.push(format!("{name}: box hash support differs"));

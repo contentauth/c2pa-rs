@@ -31,6 +31,15 @@ const C2PA_STORE_UUID: [u8; 16] = [
 /// The smallest JUMBF asset-io accepts, used to learn where a manifest would go.
 const PLACEHOLDER: [u8; 8] = [0, 0, 0, 8, b'j', b'u', b'm', b'b'];
 
+const TIFF_READ_ONLY_TYPES: [&str; 4] = ["arw", "image/x-sony-arw", "nef", "image/x-nikon-nef"];
+
+fn is_tiff_read_only_type(asset_type: &str) -> bool {
+    matches!(
+        asset_type.trim().to_ascii_lowercase().as_str(),
+        "arw" | "image/x-sony-arw" | "nef" | "image/x-nikon-nef"
+    )
+}
+
 fn err(e: aio::Error) -> Error {
     match e {
         aio::Error::Io(e) => Error::IoError(e),
@@ -438,13 +447,27 @@ impl AssetIO for AssetIoAdapter {
     where
         Self: Sized,
     {
-        let handler = HandlerRegistry::builtin().handler(asset_type).cloned();
-        let types = handler.as_ref().map_or_else(Vec::new, |h| {
+        let registry = HandlerRegistry::builtin();
+        let handler = registry
+            .handler(asset_type)
+            .or_else(|| {
+                is_tiff_read_only_type(asset_type)
+                    .then(|| registry.handler("tif"))
+                    .flatten()
+            })
+            .cloned();
+        let mut types = handler.as_ref().map_or_else(Vec::new, |h| {
             h.formats()
                 .iter()
                 .flat_map(|spec| spec.format_strings())
                 .collect()
         });
+        if handler
+            .as_ref()
+            .is_some_and(|h| h.id() == aio::containers::tiff::ID)
+        {
+            types.extend(TIFF_READ_ONLY_TYPES);
+        }
         AssetIoAdapter { handler, types }
     }
 
@@ -456,8 +479,8 @@ impl AssetIO for AssetIoAdapter {
         self
     }
 
-    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn C2paWriter>> {
-        Some(Box::new(self.clone()))
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
+        (!is_tiff_read_only_type(asset_type)).then(|| Box::new(self.clone()) as Box<dyn C2paWriter>)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -466,13 +489,21 @@ impl AssetIO for AssetIoAdapter {
 
     fn mime_type_map(&self) -> Vec<(String, String)> {
         self.handler.as_ref().map_or_else(Vec::new, |h| {
-            h.formats()
+            let mut types: Vec<_> = h
+                .formats()
                 .iter()
                 .flat_map(|spec| {
                     spec.extensions()
                         .map(|ext| (ext.to_owned(), spec.media_type.to_owned()))
                 })
-                .collect()
+                .collect();
+            if h.id() == aio::containers::tiff::ID {
+                types.extend([
+                    ("arw".to_owned(), "image/x-sony-arw".to_owned()),
+                    ("nef".to_owned(), "image/x-nikon-nef".to_owned()),
+                ]);
+            }
+            types
         })
     }
 
@@ -498,6 +529,19 @@ impl AssetIO for AssetIoAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tiff_camera_raw_formats_are_read_only() {
+        let adapter = AssetIoAdapter::new("tif");
+        assert!(adapter.get_writer("tif").is_some());
+
+        for asset_type in TIFF_READ_ONLY_TYPES {
+            let handler = AssetIoAdapter::new(asset_type);
+            assert!(handler.handler.is_some(), "{asset_type}");
+            assert!(handler.supported_types().contains(&asset_type));
+            assert!(handler.get_writer(asset_type).is_none(), "{asset_type}");
+        }
+    }
 
     #[test]
     fn box_hash_is_available_for_registered_handlers() {
