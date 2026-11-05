@@ -4,6 +4,11 @@
 
 //! ASN.1 types defined by [RFC 3161].
 //!
+//! Public visibility in this private module supports the provisional
+//! `sdk-compat` bridge, not a stable codec API. Make these types and their public
+//! members crate-private as SDK verification, COSE packaging and codec regression
+//! tests migrate into this crate and no longer require the bridge.
+//!
 //! [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 
 use bcder::{
@@ -16,6 +21,9 @@ use super::{AlgorithmIdentifier, Extensions, GeneralName, GeneralizedTime};
 use crate::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
 
 /// A time-stamp request.
+///
+/// Public members temporarily support the `sdk-compat` bridge; make them
+/// crate-private when the remaining SDK codec consumers migrate into this crate.
 ///
 /// ```ASN.1
 /// TimeStampReq ::= SEQUENCE  {
@@ -97,6 +105,9 @@ impl TimeStampReq {
 
 /// Message imprint.
 ///
+/// Public members temporarily support the `sdk-compat` bridge; make them
+/// crate-private when the remaining SDK codec consumers migrate into this crate.
+///
 /// ```ASN.1
 /// MessageImprint ::= SEQUENCE  {
 ///      hashAlgorithm                AlgorithmIdentifier,
@@ -138,6 +149,9 @@ pub(crate) type TsaPolicyId = Oid;
 
 /// Timestamp response.
 ///
+/// Public members temporarily support the `sdk-compat` bridge; make them
+/// crate-private when the remaining SDK codec consumers migrate into this crate.
+///
 /// ```ASN.1
 /// TimeStampResp ::= SEQUENCE  {
 ///      status                  PKIStatusInfo,
@@ -168,6 +182,9 @@ impl TimeStampResp {
 }
 
 /// PKI status information.
+///
+/// The public status member temporarily supports the `sdk-compat` bridge; make
+/// it crate-private when the remaining SDK codec consumers migrate into this crate.
 ///
 /// ```ASN.1
 /// PKIStatusInfo ::= SEQUENCE {
@@ -399,6 +416,9 @@ pub type TimeStampToken = ContentInfo;
 
 /// Timestamp token information.
 ///
+/// Public members temporarily support the `sdk-compat` bridge; make them
+/// crate-private when the remaining SDK codec consumers migrate into this crate.
+///
 /// ```ASN.1
 /// TSTInfo ::= SEQUENCE  {
 ///     version                      INTEGER  { v1(1) },
@@ -509,6 +529,9 @@ impl TstInfo {
 }
 
 /// Timestamp accuracy.
+///
+/// Public members temporarily support the `sdk-compat` bridge; make them
+/// crate-private when the remaining SDK codec consumers migrate into this crate.
 ///
 /// ```ASN.1
 /// Accuracy ::= SEQUENCE {
