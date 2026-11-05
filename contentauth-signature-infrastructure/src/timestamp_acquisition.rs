@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Host-driven RFC 3161 acquisition.
+//! Host-driven RFC 3161 timestamp acquisition.
 //!
 //! Checks the HTTP envelope, DER structure and reflected nonce only. The host
 //! supplies entropy, bounds response reads, performs HTTP, and drives the workflow.
