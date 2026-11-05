@@ -16,7 +16,7 @@ use std::time::Duration;
 use async_generic::async_generic;
 use bcder::{decode::Constructed, encode::Values};
 use contentauth_sans_io_core::{Step, Workflow};
-use contentauth_signature_infrastructure::{
+use contentauth_signature_infrastructure::timestamp_acquisition::{
     acquire_with_body, AcquisitionReply, AcquisitionRequest, MAX_RESPONSE_BYTES,
 };
 use http::header;

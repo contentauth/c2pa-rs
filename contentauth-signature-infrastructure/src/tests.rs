@@ -18,8 +18,11 @@ use rasn::prelude::*;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    acquire, acquire_with_body, asn1::rfc3161::TimeStampReq, request_body, AcquisitionError,
-    AcquisitionReply, AcquisitionRequest, AcquisitionWorkflow, MAX_RESPONSE_BYTES,
+    asn1::rfc3161::TimeStampReq,
+    timestamp_acquisition::{
+        acquire, acquire_with_body, request_body, AcquisitionError, AcquisitionReply,
+        AcquisitionRequest, AcquisitionWorkflow, MAX_RESPONSE_BYTES,
+    },
 };
 
 #[derive(AsnType, Encode)]

@@ -20,7 +20,7 @@ use crate::{
         rfc3161::{PkiStatus, TimeStampResp, TstInfo},
         rfc5652::OID_ID_SIGNED_DATA,
     },
-    AcquisitionError,
+    timestamp_acquisition::AcquisitionError,
 };
 
 pub(crate) fn check_nonce(bytes: &[u8], nonce: Option<Integer>) -> Result<(), AcquisitionError> {
