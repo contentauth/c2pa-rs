@@ -500,6 +500,15 @@ profiles require timeStamping and OCSPSigning, respectively, regardless of which
 claim-signer EKUs are accepted. Accepting an EKU does not install a trust anchor
 or make a certificate trusted.
 
+When `verify.verify_timestamp_trust` is enabled, a TSA certificate that fails its
+profile checks (including a missing or incorrect timeStamping EKU) causes the
+timestamp to be rejected with informational `timeStamp.untrusted` diagnostics.
+It does not produce claim-signer `signingCredential.invalid` failures. The claim
+signer is evaluated independently at the current time if no other valid timestamp
+is available; a rejected timestamp cannot rescue an expired signer or establish
+a trusted signing time for CAWG identity assertions. Claim-signature, certificate,
+revocation, and trust failures are still reported independently.
+
 ```json
 {
   "version": 1,
