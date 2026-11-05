@@ -129,7 +129,7 @@ impl ManifestReport {
             },
             None => SignatureReport::default(),
         };
-        let mut claim_value = serde_json::to_value(claim)?; // todo:  this will lose tagging info
+        let mut claim_value = crate::utils::json_b64::to_json_b64(claim)?;
         if let Value::Object(map) = &mut claim_value {
             map.insert(
                 "claim_version".to_string(),

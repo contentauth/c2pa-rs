@@ -135,6 +135,7 @@ pub trait AsyncDynamicAssertion: MaybeSync + MaybeSend {
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct PartialClaim {
     assertion_uris: Vec<HashedUri>,
+    pub(crate) manifest_timestamp: Option<crate::crypto::asn1::rfc3161::TstInfo>,
 }
 
 impl PartialClaim {

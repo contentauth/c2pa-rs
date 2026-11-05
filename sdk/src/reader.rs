@@ -43,7 +43,6 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     status_tracker::StatusTracker,
     store::Store,
-    utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING},
     Ingredient, Manifest, ManifestAssertion, ManifestAssertionKind,
@@ -518,7 +517,7 @@ impl Reader {
     /// # Returns
     /// The updated reader json
     fn to_json_formatted(&self) -> Result<Value> {
-        let mut json = serde_json::to_value(self).map_err(Error::JsonError)?;
+        let mut json = crate::utils::json_b64::to_json_b64(self)?;
 
         // If we ran post-validation, we need to update the assertion values in the report
         if !self.assertion_values.is_empty() {
@@ -546,8 +545,7 @@ impl Reader {
                 }
             }
         }
-        // Convert hash values to base64 strings
-        Ok(hash_to_b64(json))
+        Ok(json)
     }
 
     /// Convert the reader to a JSON value with detailed formatting.
@@ -558,7 +556,7 @@ impl Reader {
             None => ManifestStoreReport::from_store(&self.store),
         }?;
 
-        let mut json = serde_json::to_value(report).map_err(Error::JsonError)?;
+        let mut json = crate::utils::json_b64::to_json_b64(report)?;
 
         // If we ran post-validation, we need to update the assertion values in the report
         if !self.assertion_values.is_empty() {
@@ -578,13 +576,14 @@ impl Reader {
                 }
             }
         }
-        // Convert hash values to base64 strings
-        json = hash_to_b64(json);
         Ok(json)
     }
 
     /// Get the Reader as a JSON string
     /// This just calls to_json_formatted
+    ///
+    /// CBOR byte strings use the json_b64 `b64'<base64>'` representation.
+    /// Numeric arrays remain JSON arrays.
     pub fn json(&self) -> String {
         self.json_checked().unwrap_or_else(|_| "{}".to_string())
     }
@@ -624,6 +623,9 @@ impl Reader {
 
     /// Get the Reader as a detailed JSON string
     /// This just calls to_json_detailed_formatted
+    ///
+    /// CBOR byte strings use the json_b64 `b64'<base64>'` representation.
+    /// Numeric arrays remain JSON arrays.
     pub fn detailed_json(&self) -> String {
         self.detailed_json_checked()
             .unwrap_or_else(|_| "{}".to_string())
@@ -1037,6 +1039,20 @@ impl Reader {
             for assertion in manifest.assertions().iter() {
                 let assertion_uri =
                     crate::jumbf::labels::to_assertion_uri(&current_label, assertion.label());
+                partial_claim.manifest_timestamp = None;
+                if assertion.label() == "cawg.identity"
+                    || assertion.label().starts_with("cawg.identity__")
+                {
+                    if let Some(claim) = self.store.get_claim(&current_label) {
+                        partial_claim.manifest_timestamp =
+                            self.store.trusted_cawg_timestamp_for_assertion(
+                                claim,
+                                assertion.label(),
+                                &mut StatusTracker::default(),
+                            )?;
+                    }
+                }
+
                 let result = if _sync {
                     validator.validate(
                         assertion.label(),

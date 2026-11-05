@@ -24,7 +24,9 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     context::Context,
-    crypto::cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
+    crypto::cose::{
+        parse_cose_sign1, CertificateTrustPolicy, CoseError, TrustAnchorType, Verifier,
+    },
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -335,7 +337,23 @@ impl IdentityAssertion {
                     }
                 }
             }
-            let cose_verifier = Verifier::VerifyTrustPolicy(Cow::Owned(ctp));
+
+            if let Some(anchors) = &settings.trust.anchors_for_trust_kind(TrustListKind::TSA) {
+                for anchor in anchors {
+                    ctp.add_trust_anchors(
+                        anchor.trust_anchors.as_bytes(),
+                        anchor.trust_uri.as_deref().unwrap_or(""),
+                        TrustAnchorType::TSA,
+                        anchor.trust_config.clone(),
+                    )
+                    .map_err(|e| ValidationError::SignatureError(e.to_string()))?;
+                }
+            }
+
+            // The identity signer must chain to a CAWG anchor; a C2PA manifest
+            // anchor does not make it trusted.
+            let cose_verifier =
+                Verifier::VerifyTrustPolicyFor(Cow::Owned(ctp), TrustAnchorType::CAWG);
 
             let mut signer_payload_cbor: Vec<u8> = vec![];
             c2pa_cbor::to_writer(&mut signer_payload_cbor, &self.signer_payload).map_err(|_| {
@@ -349,20 +367,18 @@ impl IdentityAssertion {
                 match parse_cose_sign1(&self.signature, &signer_payload_cbor, status_tracker) {
                     Ok(cose_sign1) => {
                         let verify_result = if _sync {
-                            cose_verifier.verify_signature(
+                            cose_verifier.verify_cawg_signature(
                                 &self.signature,
                                 &signer_payload_cbor,
-                                &[],
-                                None,
+                                partial_claim.manifest_timestamp.as_ref(),
                                 status_tracker,
                             )
                         } else {
                             cose_verifier
-                                .verify_signature_async(
+                                .verify_cawg_signature_async(
                                     &self.signature,
                                     &signer_payload_cbor,
-                                    &[],
-                                    None,
+                                    partial_claim.manifest_timestamp.as_ref(),
                                     status_tracker,
                                 )
                                 .await
