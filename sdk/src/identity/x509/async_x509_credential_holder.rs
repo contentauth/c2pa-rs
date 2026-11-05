@@ -51,6 +51,10 @@ impl AsyncX509CredentialHolder {
     /// [`RawSigner`] together with its signing certificate chain (each
     /// certificate in DER form, end-entity first).
     ///
+    /// Like [`super::X509CredentialHolder`], this holder does not acquire
+    /// timestamps. The enclosing manifest generator must arrange the valid
+    /// timestamp required by the interim emailProtection trust model.
+    ///
     /// [`RawSigner`]: crate::RawSigner
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_async_raw_signer(

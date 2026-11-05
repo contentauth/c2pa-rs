@@ -1202,6 +1202,20 @@ pub(crate) mod message_imprint_regression {
         build_token_with(imprint_oid, imprint_md, data, TokenOptions::default())
     }
 
+    pub(crate) fn build_token_at(data: &[u8], gen_time: &[u8]) -> Vec<u8> {
+        build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            data,
+            TokenOptions {
+                gen_time: Some(gen_time),
+                profile_extensions: true,
+                signed_attrs: true,
+                ..Default::default()
+            },
+        )
+    }
+
     #[derive(Default)]
     struct TokenOptions<'a> {
         gen_time: Option<&'a [u8]>,
