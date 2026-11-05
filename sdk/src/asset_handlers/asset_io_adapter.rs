@@ -91,14 +91,6 @@ impl AssetIoAdapter {
     fn excludes_payload_only(&self) -> bool {
         self.container() == Some(aio::containers::svg::ID)
     }
-
-    /// Whether this container reports `c2pa.hash.boxes` boxes. A decision about
-    /// C2PA, not about the container.
-    fn supports_box_hash(&self) -> bool {
-        use aio::containers::{jpeg, png};
-        self.container()
-            .is_some_and(|id| id == jpeg::ID || id == png::ID)
-    }
 }
 
 /// The JUMBF items that are C2PA Manifest Stores.
@@ -493,13 +485,29 @@ impl AssetIO for AssetIoAdapter {
     }
 
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
-        self.supports_box_hash()
-            .then_some(self as &dyn AssetBoxHash)
+        self.handler.as_ref().map(|_| self as &dyn AssetBoxHash)
     }
 
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         // An SVG manifest is excluded from hashes by its payload, which a composed
         // placeholder (the whole element) cannot say, so SVG does not offer one.
         (!self.excludes_payload_only()).then_some(self as &dyn ComposedManifestRef)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn box_hash_is_available_for_registered_handlers() {
+        let adapter = AssetIoAdapter::new("tiff");
+        assert!(adapter.asset_box_hash_ref().is_some());
+    }
+
+    #[test]
+    fn box_hash_is_unavailable_without_a_handler() {
+        let adapter = AssetIoAdapter::new("unsupported-format");
+        assert!(adapter.asset_box_hash_ref().is_none());
     }
 }
