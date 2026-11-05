@@ -508,33 +508,36 @@ fn check_stapled_ocsp_response(
             return Ok(OcspResponse::default());
         };
 
-        // make sure this is an OCSP signing EKU
-        let mut new_ctp = CertificateTrustPolicy::default();
-        new_ctp.clear_ekus();
-        new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
-        if check_end_entity_certificate_profile(
-            first_cert,
-            &new_ctp,
-            validation_log,
-            tst_info.as_ref(),
-        )
-        .is_err()
-        {
-            return Ok(OcspResponse::default());
-        }
-
-        // validate the trust; complete the responder's path from the signer's
-        // x5chain if the response does not embed the responder's issuing CA
-        let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, &signing_cert_chain);
-        if ctp
-            .check_certificate_trust(
-                &ocsp_cert_chain,
+        if signing_cert_chain.get(1) == Some(first_cert) {
+            if !issuer_response_authorized(&signing_cert_chain, ctp, signing_time, signing_time) {
+                return Ok(OcspResponse::default());
+            }
+        } else {
+            // Only delegated responders require the OCSP signing EKU.
+            let mut new_ctp = CertificateTrustPolicy::default();
+            new_ctp.clear_ekus();
+            new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes());
+            if check_end_entity_certificate_profile(
                 first_cert,
-                signing_time.map(|t| t.timestamp()),
+                &new_ctp,
+                validation_log,
+                tst_info.as_ref(),
             )
             .is_err()
-        {
-            return Ok(OcspResponse::default());
+            {
+                return Ok(OcspResponse::default());
+            }
+
+            // Complete a delegated responder's path from the signer's x5chain.
+            let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, &signing_cert_chain);
+            if !delegated_response_authorized(
+                &ocsp_cert_chain,
+                &signing_cert_chain,
+                ctp,
+                signing_time,
+            ) {
+                return Ok(OcspResponse::default());
+            }
         }
     } else {
         // we cannot validate the OCSP response was signed by a valid authorized responder so treat as unknown
@@ -543,6 +546,68 @@ fn check_stapled_ocsp_response(
     // only append usable OCSP responses to validation_log
     validation_log.append(&current_validation_log);
     Ok(ocsp_data)
+}
+
+/// Direct CA responses inherit authorization from the credential's issuing
+/// path, not an end-entity OCSP EKU (C2PA 2.5 sections 13.5.1 and 14.9.1).
+/// Fetched responses authorize the CA now without changing the historical
+/// signing time used to validate the credential's path.
+fn issuer_response_authorized(
+    signing_chain: &[Vec<u8>],
+    ctp: &CertificateTrustPolicy,
+    signing_time: Option<DateTime<Utc>>,
+    responder_time: Option<DateTime<Utc>>,
+) -> bool {
+    let (Some(leaf), Some(issuer_der)) = (signing_chain.first(), signing_chain.get(1)) else {
+        return false;
+    };
+
+    let Ok((_, issuer)) = X509Certificate::from_der(issuer_der) else {
+        return false;
+    };
+
+    let Ok(check_time) = x509_parser::time::ASN1Time::from_timestamp(
+        responder_time
+            .unwrap_or_else(crate::crypto::internal::time::utc_now)
+            .timestamp(),
+    ) else {
+        return false;
+    };
+
+    issuer.validity().is_valid_at(check_time)
+        && ctp
+            .check_certificate_trust(signing_chain, leaf, signing_time.map(|t| t.timestamp()))
+            .is_ok()
+}
+
+fn delegated_response_authorized(
+    responder_chain: &[Vec<u8>],
+    signing_chain: &[Vec<u8>],
+    ctp: &CertificateTrustPolicy,
+    signing_time: Option<DateTime<Utc>>,
+) -> bool {
+    use crate::crypto::cose::TrustAnchorType;
+
+    let Some(responder) = responder_chain.first() else {
+        return false;
+    };
+
+    let Ok((trust_type, _)) = ctp.check_certificate_trust(
+        responder_chain,
+        responder,
+        signing_time.map(|t| t.timestamp()),
+    ) else {
+        return false;
+    };
+
+    // An explicitly trusted responder is RFC 6960 case 2. Otherwise case 3
+    // requires delegation by the same CA that issued the signing credential.
+    matches!(
+        trust_type,
+        TrustAnchorType::EndEntity | TrustAnchorType::NoCheck
+    ) || signing_chain
+        .get(1)
+        .is_some_and(|issuer| crate::crypto::ocsp::certificate_issued_by(responder, issuer))
 }
 
 /// Extends the certificates embedded in an OCSP response with the signer's
@@ -753,42 +818,44 @@ fn validate_fetched_ocsp(
             return OcspResponse::default();
         };
 
-        // make sure this is an OCSP signing EKU
-        let mut new_ctp = CertificateTrustPolicy::default();
-        new_ctp.clear_ekus();
-        new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
-        if check_end_entity_certificate_profile(
-            first_cert,
-            &new_ctp,
-            &mut current_validation_log,
-            None,
-        )
-        .is_err()
-        {
-            return OcspResponse::default();
-        }
-
-        // Validate the trust; complete the responder's path from the signer's
-        // x5chain if the response does not embed the responder's issuing CA.
-        //
-        // This is RFC 6960 section 3.2 requirement 4, "the signer is currently
-        // authorized to provide a response for the certificate in question". The
-        // EKU check above does not establish it: `check_certificate_profile`
-        // inspects a single certificate and builds no path, so a self-signed
-        // certificate carrying id-kp-OCSPSigning satisfies it.
-        let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, subject_chain);
-
-        // Live-fetched OCSP responses are signed by short-lived responder
-        // certificates that rotate frequently. While `from_der_checked` above
-        // evaluates `revocationTime` against the historical `signing_time`,
-        // the responder's own certificate validity and authorization (RFC 6960
-        // section 3.2 requirement 4) must be evaluated at current time (`None`),
-        // matching `check_end_entity_certificate_profile` above.
-        if ctp
-            .check_certificate_trust(&ocsp_cert_chain, first_cert, None)
+        if subject_chain.get(1) == Some(first_cert) {
+            if !issuer_response_authorized(subject_chain, ctp, signing_time, None) {
+                return OcspResponse::default();
+            }
+        } else {
+            let mut new_ctp = CertificateTrustPolicy::default();
+            new_ctp.clear_ekus();
+            new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes());
+            if check_end_entity_certificate_profile(
+                first_cert,
+                &new_ctp,
+                &mut current_validation_log,
+                None,
+            )
             .is_err()
-        {
-            return OcspResponse::default();
+            {
+                return OcspResponse::default();
+            }
+
+            // Validate the trust; complete the responder's path from the signer's
+            // x5chain if the response does not embed the responder's issuing CA.
+            //
+            // This is RFC 6960 section 3.2 requirement 4, "the signer is currently
+            // authorized to provide a response for the certificate in question". The
+            // EKU check above does not establish it: `check_certificate_profile`
+            // inspects a single certificate and builds no path, so a self-signed
+            // certificate carrying id-kp-OCSPSigning satisfies it.
+            let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, subject_chain);
+
+            // Live-fetched OCSP responses are signed by short-lived responder
+            // certificates that rotate frequently. While `from_der_checked` above
+            // evaluates `revocationTime` against the historical `signing_time`,
+            // the responder's own certificate validity and authorization (RFC 6960
+            // section 3.2 requirement 4) must be evaluated at current time (`None`),
+            // matching `check_end_entity_certificate_profile` above.
+            if !delegated_response_authorized(&ocsp_cert_chain, subject_chain, ctp, None) {
+                return OcspResponse::default();
+            }
         }
     } else {
         // OCSP response must be signed by and the cert chain provided.
@@ -2593,7 +2660,6 @@ mod tests {
     }
 
     /// The fixture's "good" response data, re-dated to be valid at the current time.
-    #[cfg(feature = "openssl")]
     fn fresh_basic_response() -> rasn_ocsp::BasicOcspResponse {
         use crate::crypto::ocsp::test_responder::good_basic_response;
 
@@ -2604,6 +2670,336 @@ mod tests {
         single.this_update = (now - chrono::Duration::hours(1)).fixed_offset();
         single.next_update = Some((now + chrono::Duration::hours(24)).fixed_offset());
         basic
+    }
+
+    fn issuer_response_fixture() -> (
+        crate::crypto::ocsp::test_responder::IssuerResponder,
+        CertificateTrustPolicy,
+        Vec<u8>,
+    ) {
+        use crate::crypto::ocsp::test_responder::IssuerResponder;
+
+        let responder = IssuerResponder::new();
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            &pem::encode(&pem::Pem::new("CERTIFICATE", responder.chain[1].clone())).into_bytes(),
+            "https://c2pa-rs/test",
+            crate::crypto::cose::TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let fresh = fresh_basic_response();
+        let mut basic = responder.basic_response(false);
+        basic.tbs_response_data.produced_at = fresh.tbs_response_data.produced_at;
+        basic.tbs_response_data.responses[0].this_update =
+            fresh.tbs_response_data.responses[0].this_update;
+
+        basic.tbs_response_data.responses[0].next_update =
+            fresh.tbs_response_data.responses[0].next_update;
+
+        let der = responder.sign(basic);
+        (responder, ctp, der)
+    }
+
+    #[test]
+    fn issuer_signed_ocsp_is_accepted_from_staple_assertion_and_fetch() {
+        let (responder, ctp, der) = issuer_response_fixture();
+        let context = Context::new();
+        // The issuer has no OCSP-signing EKU; its authority is the signed
+        // credential's issuing path, including when resolved from an anchor.
+        for chain in [&responder.chain[..], &responder.chain[..1]] {
+            let sign1 = sign1_with_x5chain(chain);
+            let mut log = StatusTracker::default();
+            let parsed = check_stapled_ocsp_response(
+                &sign1,
+                &der,
+                b"payload",
+                &ctp,
+                None,
+                &mut log,
+                context.settings(),
+            )
+            .unwrap();
+
+            assert_eq!(parsed.ocsp_der, der);
+            assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+
+            let mut log = StatusTracker::default();
+            let parsed = process_ocsp_responses(
+                &sign1,
+                b"payload",
+                &ctp,
+                std::slice::from_ref(&der),
+                None,
+                &mut log,
+                context.settings(),
+            )
+            .unwrap();
+
+            assert_eq!(parsed.ocsp_der, der);
+            assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        }
+
+        let mut log = StatusTracker::default();
+        let parsed = validate_fetched_ocsp(&der, &responder.chain, &ctp, None, &mut log);
+        assert_eq!(parsed.ocsp_der, der);
+        assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+
+        let mut log = StatusTracker::default();
+        let parsed = validate_fetched_ocsp(
+            &der,
+            &responder.chain,
+            &CertificateTrustPolicy::new(),
+            None,
+            &mut log,
+        );
+        assert!(parsed.ocsp_der.is_empty());
+        assert!(log.logged_items().is_empty());
+    }
+
+    #[test]
+    fn issuer_signed_ocsp_jpg_ingredient_staple_is_accepted() {
+        use std::io::Cursor;
+
+        use crate::{crypto::cose::parse_cose_sign1, store::Store};
+
+        let context = Context::new();
+        let (manifest, _) = Store::load_jumbf_from_stream(
+            "image/jpeg",
+            &mut Cursor::new(include_bytes!("../../../tests/fixtures/ocsp.jpg")),
+            &context,
+        )
+        .unwrap();
+
+        let store =
+            Store::from_jumbf_with_context(&manifest, &mut StatusTracker::default(), &context)
+                .unwrap();
+
+        let mut issuer_signed_count = 0;
+
+        for claim in store.claims() {
+            let data = claim.data().unwrap();
+            let sign1 =
+                parse_cose_sign1(claim.signature_val(), &data, &mut StatusTracker::default())
+                    .unwrap();
+
+            let der = get_ocsp_der(&sign1).unwrap();
+            let outer: rasn_ocsp::OcspResponse = rasn::der::decode(&der).unwrap();
+            let basic: rasn_ocsp::BasicOcspResponse =
+                rasn::der::decode(&outer.bytes.unwrap().response).unwrap();
+
+            if basic.certs.is_some() {
+                continue;
+            }
+
+            issuer_signed_count += 1;
+            let chain = cert_chain_from_sign1(&sign1).unwrap();
+            let issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+            assert!(matches!(
+                basic.tbs_response_data.responder_id,
+                rasn_ocsp::ResponderId::ByKey(_)
+            ));
+
+            let mut ctp = CertificateTrustPolicy::new();
+            ctp.add_trust_anchors(
+                pem::encode(&pem::Pem::new("CERTIFICATE", chain[1].clone())).as_bytes(),
+                "https://c2pa-rs/test",
+                crate::crypto::cose::TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+
+            let mut timestamp = supplied_timestamp();
+            timestamp.gen_time = crate::crypto::asn1::GeneralizedTime::from_der_bytes(
+                &rasn::der::encode(&basic.tbs_response_data.responses[0].this_update).unwrap(),
+            )
+            .unwrap();
+
+            let mut log = StatusTracker::default();
+            let parsed = check_stapled_ocsp_response(
+                &sign1,
+                &der,
+                &data,
+                &ctp,
+                Some(&timestamp),
+                &mut log,
+                context.settings(),
+            )
+            .unwrap();
+
+            assert_eq!(parsed.ocsp_der, der);
+            assert_eq!(
+                parsed.ocsp_certs.as_ref().unwrap()[0],
+                rasn::der::encode(&issuer).unwrap(),
+            );
+
+            assert_eq!(
+                parsed.certificate_serial_num,
+                basic.tbs_response_data.responses[0]
+                    .cert_id
+                    .serial_number
+                    .to_string(),
+            );
+
+            assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+            assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        }
+
+        assert_eq!(
+            issuer_signed_count, 1,
+            "exercise the issue #2722 ingredient"
+        );
+    }
+
+    #[test]
+    fn fetched_issuer_response_keeps_historical_leaf_validation_time() {
+        use ed25519_dalek::Signer;
+
+        let (mut responder, _, _) = issuer_response_fixture();
+        let mut leaf: rasn_pkix::Certificate = rasn::der::decode(&responder.chain[0]).unwrap();
+        let issuer: rasn_pkix::Certificate = rasn::der::decode(&responder.chain[1]).unwrap();
+        leaf.tbs_certificate.validity.not_after = rasn_pkix::Time::General(
+            Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0)
+                .unwrap()
+                .fixed_offset(),
+        );
+
+        leaf.signature_value = rasn::types::BitString::from_vec(
+            ed25519_dalek::SigningKey::from_bytes(&[42; 32])
+                .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
+                .to_bytes()
+                .to_vec(),
+        );
+
+        responder.chain[0] = rasn::der::encode(&leaf).unwrap();
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            pem::encode(&pem::Pem::new(
+                "CERTIFICATE",
+                rasn::der::encode(&issuer).unwrap(),
+            ))
+            .as_bytes(),
+            "https://c2pa-rs/test",
+            crate::crypto::cose::TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        let parsed = validate_fetched_ocsp(
+            &responder.sign(responder.basic_response(false)),
+            &responder.chain,
+            &ctp,
+            Some(Utc.with_ymd_and_hms(2025, 3, 7, 15, 0, 0).unwrap()),
+            &mut log,
+        );
+        assert!(!parsed.ocsp_der.is_empty());
+        assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn issuer_signed_ocsp_async_uses_resolved_issuer() {
+        let (responder, ctp, der) = issuer_response_fixture();
+        let context = Context::new();
+        let sign1 = sign1_with_x5chain(&responder.chain[..1]);
+        let mut log = StatusTracker::default();
+        let parsed = check_stapled_ocsp_response_async(
+            &sign1,
+            &der,
+            b"payload",
+            &ctp,
+            None,
+            &mut log,
+            context.settings(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(parsed.ocsp_der, der);
+        assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+    }
+
+    #[test]
+    fn issuer_response_rejects_ca_outside_validity_even_with_pinned_leaf() {
+        let (responder, mut ctp, der) = issuer_response_fixture();
+        ctp.add_end_entity_credentials(
+            pem::encode(&pem::Pem::new("CERTIFICATE", responder.chain[0].clone())).as_bytes(),
+        )
+        .unwrap();
+
+        for future in [false, true] {
+            let mut chain = responder.chain.clone();
+            let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+            if future {
+                issuer.tbs_certificate.validity.not_before =
+                    issuer.tbs_certificate.validity.not_after;
+            } else {
+                issuer.tbs_certificate.validity.not_after =
+                    issuer.tbs_certificate.validity.not_before;
+            }
+
+            chain[1] = rasn::der::encode(&issuer).unwrap();
+            let mut log = StatusTracker::default();
+            let parsed = validate_fetched_ocsp(&der, &chain, &ctp, None, &mut log);
+            assert!(parsed.ocsp_der.is_empty());
+            assert!(log.logged_items().is_empty());
+        }
+    }
+
+    #[test]
+    fn delegated_response_requires_issuing_ca_or_explicit_responder_trust() {
+        let (responder, ctp, der) = issuer_response_fixture();
+        let outer: rasn_ocsp::OcspResponse = rasn::der::decode(&der).unwrap();
+        let basic = rasn::der::decode(&outer.bytes.unwrap().response).unwrap();
+        let der = responder.delegated_response(basic);
+        let mut log = StatusTracker::default();
+        let parsed = validate_fetched_ocsp(&der, &responder.chain, &ctp, None, &mut log);
+        assert_eq!(parsed.ocsp_der, der);
+        assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        let responder_chain =
+            extend_ocsp_cert_chain(parsed.ocsp_certs.as_ref().unwrap(), &responder.chain);
+        let wrong_chain = ocsp_signing_chain();
+        assert!(!super::delegated_response_authorized(
+            &responder_chain,
+            &wrong_chain,
+            &ctp,
+            None,
+        ));
+
+        let mut pinned = CertificateTrustPolicy::new();
+        pinned
+            .add_end_entity_credentials(
+                pem::encode(&pem::Pem::new("CERTIFICATE", responder_chain[0].clone())).as_bytes(),
+            )
+            .unwrap();
+
+        assert!(super::delegated_response_authorized(
+            &responder_chain,
+            &wrong_chain,
+            &pinned,
+            None,
+        ));
+    }
+
+    #[test]
+    fn responder_authorization_rejects_incomplete_and_malformed_chains() {
+        let (responder, ctp, _) = issuer_response_fixture();
+        for chain in [
+            vec![],
+            responder.chain[..1].to_vec(),
+            vec![responder.chain[0].clone(), vec![0xde, 0xad]],
+        ] {
+            assert!(!super::issuer_response_authorized(&chain, &ctp, None, None));
+        }
+
+        assert!(!super::delegated_response_authorized(
+            &[],
+            &responder.chain,
+            &ctp,
+            None,
+        ));
     }
 
     /// Trusts a new ephemeral test responder in `ctp` and returns a currently valid
