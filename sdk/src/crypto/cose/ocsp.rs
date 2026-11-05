@@ -2224,26 +2224,29 @@ mod tests {
 
         let test_settings = include_str!("../../../tests/fixtures/test_settings.toml");
         let ocsp_jpg = include_bytes!("../../../tests/fixtures/ocsp.jpg");
-        let counter_b = Arc::new(AtomicUsize::new(0));
-        let resolver_b = CountingSyncResolver {
-            counter: counter_b.clone(),
-            status: 404,
-            body: vec![],
-        };
-        let settings_b = Settings::new()
-            .with_toml(test_settings)
-            .unwrap()
-            .with_json(r#"{"verify": {"verify_trust": false, "ocsp_fetch": false, "ocsp_fetch_should_override": true}}"#)
-            .unwrap();
-        let context_b = Context::new()
-            .with_settings(settings_b)
-            .unwrap()
-            .with_resolver(resolver_b);
-        let reader = Reader::from_context(context_b)
-            .with_stream("image/jpeg", Cursor::new(ocsp_jpg))
-            .unwrap();
-        assert!(counter_b.load(Ordering::SeqCst) > 0);
-        assert_eq!(reader.validation_state(), ValidationState::Valid);
+
+        for (status, body) in [(404, vec![]), (200, vec![42; 1_000_001])] {
+            let counter_b = Arc::new(AtomicUsize::new(0));
+            let resolver_b = CountingSyncResolver {
+                counter: counter_b.clone(),
+                status,
+                body,
+            };
+            let settings_b = Settings::new()
+                .with_toml(test_settings)
+                .unwrap()
+                .with_json(r#"{"verify": {"verify_trust": false, "ocsp_fetch": false, "ocsp_fetch_should_override": true}}"#)
+                .unwrap();
+            let context_b = Context::new()
+                .with_settings(settings_b)
+                .unwrap()
+                .with_resolver(resolver_b);
+            let reader = Reader::from_context(context_b)
+                .with_stream("image/jpeg", Cursor::new(ocsp_jpg))
+                .unwrap();
+            assert!(counter_b.load(Ordering::SeqCst) > 0);
+            assert_eq!(reader.validation_state(), ValidationState::Valid);
+        }
     }
 
     fn staple(sign1: &mut CoseSign1, value: Value) {

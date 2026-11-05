@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Read;
+use std::io::{self, Read};
 
 use async_generic::async_generic;
 use http::header;
@@ -26,10 +26,48 @@ use x509_parser::{
 use crate::{
     context::{Context, ProgressPhase},
     crypto::base64,
+    http::HttpResolverError,
 };
 
 const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
 const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);
+
+// Preserve the existing fetch budget; verification-side budgets are tracked in #3026.
+const MAX_OCSP_RESPONSE_SIZE: usize = 1_000_000;
+const OCSP_READ_BUFFER_SIZE: usize = 8192;
+
+fn read_ocsp_response(body: impl Read) -> Result<Vec<u8>, HttpResolverError> {
+    let mut body = body.take(MAX_OCSP_RESPONSE_SIZE as u64 + 1);
+    let mut response = Vec::new();
+    let mut chunk = [0; OCSP_READ_BUFFER_SIZE];
+
+    loop {
+        let count = match body.read(&mut chunk) {
+            Ok(0) => return Ok(response),
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        let needed = response.len() + count;
+
+        if needed > MAX_OCSP_RESPONSE_SIZE {
+            return Err(HttpResolverError::ResponseTooLarge);
+        }
+
+        if needed > response.capacity() {
+            // Explicit growth avoids read_to_end's speculative allocation past the budget.
+            let capacity = response
+                .capacity()
+                .saturating_mul(2)
+                .max(needed)
+                .min(MAX_OCSP_RESPONSE_SIZE);
+            response.reserve_exact(capacity - response.len());
+        }
+
+        response.extend_from_slice(&chunk[..count]);
+    }
+}
 
 // Common types and structures used across all targets
 struct OcspRequestData {
@@ -155,6 +193,12 @@ fn process_ocsp_responders(
 ///
 /// Checks for an OCSP responder in that certificate's AIA extension. If found,
 /// it will attempt to retrieve the raw DER-encoded OCSP response.
+///
+/// Both fetch APIs accept at most 1,000,000 body bytes, ignoring `Content-Length`.
+/// They consume at most one extra byte to detect overflow and try the next AIA
+/// responder on overflow. SDK response-vector capacity requests are bounded by
+/// that budget, plus an 8192-byte stack read buffer. This does not bound buffering
+/// performed by the HTTP resolver before it returns the body.
 #[async_generic]
 pub(crate) fn fetch_ocsp_response(
     certs: &[Vec<u8>],
@@ -187,22 +231,18 @@ pub(crate) fn fetch_ocsp_response(
         };
 
         if response.status() == 200 {
-            let len = response
-                .headers()
-                .get(header::CONTENT_LENGTH)
-                .and_then(|content_length| content_length.to_str().ok())
-                .and_then(|content_length| content_length.parse().ok())
-                .unwrap_or(10000);
-
-            let mut ocsp_rsp: Vec<u8> = Vec::with_capacity(len);
-
-            response
-                .into_body()
-                .take(1000000)
-                .read_to_end(&mut ocsp_rsp)
-                .ok()?;
-
-            return Some(ocsp_rsp);
+            match read_ocsp_response(response.into_body()) {
+                Ok(response) => return Some(response),
+                Err(HttpResolverError::ResponseTooLarge) => {
+                    log::warn!(
+                        "OCSP response exceeds the {MAX_OCSP_RESPONSE_SIZE}-byte fetch limit"
+                    );
+                }
+                Err(error) => {
+                    log::debug!("Could not read OCSP response: {error}");
+                    return None;
+                }
+            }
         }
     }
     None
@@ -300,17 +340,82 @@ mod tests {
         Bytes,
         NoLength,
         InvalidLength,
+        NonTextLength,
+        CombinedLength,
+        ConflictingLength,
+        ZeroLength,
+        ShortLength,
+        LongLength,
+        HugeLength,
+        Chunked,
         NonSuccess,
         TransportError,
         ReadError,
+        AtLimit,
+        ChunkedAtLimit,
         Oversize,
+        ChunkedOversize,
+        Infinite,
     }
 
+    const REPLIES: &[Reply] = &[
+        Reply::Bytes,
+        Reply::NoLength,
+        Reply::InvalidLength,
+        Reply::NonTextLength,
+        Reply::CombinedLength,
+        Reply::ConflictingLength,
+        Reply::ZeroLength,
+        Reply::ShortLength,
+        Reply::LongLength,
+        Reply::HugeLength,
+        Reply::Chunked,
+        Reply::NonSuccess,
+        Reply::TransportError,
+        Reply::ReadError,
+        Reply::AtLimit,
+        Reply::ChunkedAtLimit,
+        Reply::Oversize,
+        Reply::ChunkedOversize,
+        Reply::Infinite,
+    ];
+
     type RecordedRequests = Arc<Mutex<Vec<Request<Vec<u8>>>>>;
+
+    #[derive(Default)]
+    struct ReadStats {
+        bytes: usize,
+        calls: usize,
+        max_buffer: usize,
+    }
 
     struct TestResolver {
         reply: Reply,
         requests: RecordedRequests,
+        reads: Arc<Mutex<ReadStats>>,
+        later_reply: Option<Reply>,
+    }
+
+    struct RecordingReader {
+        body: Box<dyn Read>,
+        reads: Arc<Mutex<ReadStats>>,
+        chunk_size: usize,
+        consumed: usize,
+    }
+
+    impl Read for RecordingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let mut reads = self.reads.lock().unwrap();
+            reads.calls += 1;
+            reads.max_buffer = reads.max_buffer.max(buffer.len());
+            assert!(buffer.len() <= OCSP_READ_BUFFER_SIZE);
+            let count = buffer.len().min(self.chunk_size);
+            let count = self.body.read(&mut buffer[..count])?;
+            reads.bytes += count;
+            self.consumed += count;
+            assert!(self.consumed <= MAX_OCSP_RESPONSE_SIZE + 1);
+            Ok(count)
+        }
     }
 
     struct BrokenReader;
@@ -325,28 +430,74 @@ mod tests {
             &self,
             request: Request<Vec<u8>>,
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-            self.requests.lock().unwrap().push(request);
-            if matches!(self.reply, Reply::TransportError) {
+            let reply = {
+                let mut requests = self.requests.lock().unwrap();
+                let reply = if requests.is_empty() {
+                    self.reply
+                } else {
+                    self.later_reply.unwrap_or(self.reply)
+                };
+
+                requests.push(request);
+                reply
+            };
+
+            if matches!(reply, Reply::TransportError) {
                 return Err(HttpResolverError::Other("fixture transport failure".into()));
             }
 
-            let mut response =
-                Response::builder().status(if matches!(self.reply, Reply::NonSuccess) {
-                    503
-                } else {
-                    200
-                });
-            response = match self.reply {
+            let mut response = Response::builder().status(if matches!(reply, Reply::NonSuccess) {
+                503
+            } else {
+                200
+            });
+            response = match reply {
                 Reply::Bytes => response.header(header::CONTENT_LENGTH, "3"),
                 Reply::InvalidLength => response.header(header::CONTENT_LENGTH, "not-a-number"),
+                Reply::NonTextLength => response.header(
+                    header::CONTENT_LENGTH,
+                    http::HeaderValue::from_bytes(&[0xff]).unwrap(),
+                ),
+                Reply::CombinedLength => response.header(header::CONTENT_LENGTH, "3, 999999999"),
+                Reply::ConflictingLength => response
+                    .header(header::CONTENT_LENGTH, "3")
+                    .header(header::CONTENT_LENGTH, "999999999"),
+                Reply::ZeroLength => response.header(header::CONTENT_LENGTH, "0"),
+                Reply::ShortLength => response.header(header::CONTENT_LENGTH, "1"),
+                Reply::LongLength => response.header(header::CONTENT_LENGTH, "1000001"),
+                Reply::HugeLength => {
+                    response.header(header::CONTENT_LENGTH, "18446744073709551615")
+                }
+                Reply::Chunked | Reply::ChunkedAtLimit | Reply::ChunkedOversize => {
+                    response.header(header::TRANSFER_ENCODING, "chunked")
+                }
+                Reply::Oversize => response.header(header::CONTENT_LENGTH, "3"),
                 _ => response,
             };
 
-            let body: Box<dyn Read> = match self.reply {
+            let body: Box<dyn Read> = match reply {
                 Reply::ReadError => Box::new(BrokenReader),
-                Reply::Oversize => Box::new(io::repeat(42).take(1_000_001)),
+                Reply::AtLimit | Reply::ChunkedAtLimit => {
+                    Box::new(io::repeat(42).take(MAX_OCSP_RESPONSE_SIZE as u64))
+                }
+                Reply::Oversize | Reply::ChunkedOversize => {
+                    Box::new(io::repeat(42).take(MAX_OCSP_RESPONSE_SIZE as u64 + 1))
+                }
+                Reply::Infinite => Box::new(io::repeat(42)),
                 _ => Box::new(Cursor::new(vec![1, 2, 3])),
             };
+
+            let body: Box<dyn Read> = Box::new(RecordingReader {
+                body,
+                reads: self.reads.clone(),
+                chunk_size: match reply {
+                    Reply::Chunked => 1,
+                    Reply::ChunkedAtLimit | Reply::ChunkedOversize => 1023,
+                    _ => OCSP_READ_BUFFER_SIZE,
+                },
+                consumed: 0,
+            });
+
             Ok(response.body(body).unwrap())
         }
     }
@@ -357,32 +508,53 @@ mod tests {
             TestResolver {
                 reply,
                 requests: requests.clone(),
+                reads: Arc::new(Mutex::new(ReadStats::default())),
+                later_reply: None,
             },
             requests,
         )
     }
 
+    fn assert_fetch_result(reply: Reply, result: Option<Vec<u8>>, reads: &ReadStats) {
+        match reply {
+            Reply::NonSuccess | Reply::TransportError | Reply::ReadError => {
+                assert!(result.is_none());
+                assert_eq!(reads.bytes, 0);
+            }
+            Reply::Oversize | Reply::ChunkedOversize | Reply::Infinite => {
+                assert!(result.is_none());
+                assert_eq!(reads.bytes, MAX_OCSP_RESPONSE_SIZE + 1);
+            }
+            Reply::AtLimit | Reply::ChunkedAtLimit => {
+                let result = result.unwrap();
+                assert_eq!(result.len(), MAX_OCSP_RESPONSE_SIZE);
+                assert!(result.iter().all(|byte| *byte == 42));
+                assert!(result.capacity() <= MAX_OCSP_RESPONSE_SIZE);
+                assert_eq!(reads.bytes, MAX_OCSP_RESPONSE_SIZE);
+            }
+            _ => {
+                let result = result.unwrap();
+                assert_eq!(result, [1, 2, 3]);
+                assert!(result.capacity() <= OCSP_READ_BUFFER_SIZE);
+                assert_eq!(reads.bytes, 3);
+
+                if matches!(reply, Reply::Chunked) {
+                    assert_eq!(reads.calls, 4);
+                }
+            }
+        }
+
+        assert!(reads.max_buffer <= OCSP_READ_BUFFER_SIZE);
+    }
+
     #[test]
     fn fetch_transport_status_body_limits_and_request_shape() {
-        for reply in [
-            Reply::Bytes,
-            Reply::NoLength,
-            Reply::InvalidLength,
-            Reply::NonSuccess,
-            Reply::TransportError,
-            Reply::ReadError,
-            Reply::Oversize,
-        ] {
+        for &reply in REPLIES {
             let (resolver, requests) = resolver(reply);
+            let reads = resolver.reads.clone();
             let context = Context::new().with_resolver(resolver);
             let result = fetch_ocsp_response(&ca_chain(), 0, &context);
-            match reply {
-                Reply::NonSuccess | Reply::TransportError | Reply::ReadError => {
-                    assert!(result.is_none());
-                }
-                Reply::Oversize => assert_eq!(result.unwrap(), vec![42; 1_000_000]),
-                _ => assert_eq!(result.unwrap(), vec![1, 2, 3]),
-            }
+            assert_fetch_result(reply, result, &reads.lock().unwrap());
 
             let requests = requests.lock().unwrap();
             assert_eq!(requests.len(), 1);
@@ -429,20 +601,12 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn async_fetch_obeys_transport_failures_and_cancellation() {
-        for reply in [
-            Reply::Bytes,
-            Reply::NonSuccess,
-            Reply::TransportError,
-            Reply::ReadError,
-        ] {
+        for &reply in REPLIES {
             let (resolver, requests) = resolver(reply);
+            let reads = resolver.reads.clone();
             let context = Context::new().with_resolver_async(resolver);
             let result = fetch_ocsp_response_async(&ca_chain(), 1, &context).await;
-            if matches!(reply, Reply::Bytes) {
-                assert_eq!(result.unwrap(), vec![1, 2, 3]);
-            } else {
-                assert!(result.is_none());
-            }
+            assert_fetch_result(reply, result, &reads.lock().unwrap());
 
             assert_eq!(
                 requests.lock().unwrap()[0].headers()[header::HOST],
@@ -458,5 +622,123 @@ mod tests {
             .await
             .is_none());
         assert!(requests.lock().unwrap().is_empty());
+    }
+
+    fn chain_with_two_responders() -> Vec<Vec<u8>> {
+        let mut certs = ca_chain();
+        let mut leaf: Certificate = rasn::der::decode(&certs[0]).unwrap();
+        let extension = leaf
+            .tbs_certificate
+            .extensions
+            .as_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|extension| extension.extn_id.to_string() == "1.3.6.1.5.5.7.1.1")
+            .unwrap();
+
+        // Fetching parses AIA without checking the certificate's signature.
+        let mut responders: Vec<Any> = rasn::der::decode(&extension.extn_value).unwrap();
+        responders.push(responders[0].clone());
+        extension.extn_value = rasn::der::encode(&responders).unwrap().into();
+        certs[0] = rasn::der::encode(&leaf).unwrap();
+        assert_eq!(process_ocsp_responders(&certs, 0).unwrap().len(), 2);
+        certs
+    }
+
+    #[test]
+    fn oversize_response_falls_back_to_next_responder_and_honors_cancellation() {
+        let certs = chain_with_two_responders();
+
+        for cancel in [false, true] {
+            let (mut resolver, requests) = resolver(Reply::Oversize);
+            resolver.later_reply = Some(Reply::Bytes);
+            let context = Context::new()
+                .with_resolver(resolver)
+                .with_progress_callback(move |_, step, total| {
+                    assert_eq!(total, 2);
+                    !cancel || step == 1
+                });
+
+            let result = fetch_ocsp_response(&certs, 0, &context);
+            assert_eq!(result, if cancel { None } else { Some(vec![1, 2, 3]) });
+            assert_eq!(requests.lock().unwrap().len(), if cancel { 1 } else { 2 });
+        }
+    }
+
+    #[test]
+    fn first_usable_responder_keeps_precedence() {
+        let (mut resolver, requests) = resolver(Reply::Bytes);
+        resolver.later_reply = Some(Reply::Oversize);
+        let context = Context::new().with_resolver(resolver);
+        assert_eq!(
+            fetch_ocsp_response(&chain_with_two_responders(), 0, &context),
+            Some(vec![1, 2, 3])
+        );
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn async_oversize_response_falls_back_and_honors_cancellation() {
+        let certs = chain_with_two_responders();
+
+        for cancel in [false, true] {
+            let (mut resolver, requests) = resolver(Reply::Oversize);
+            resolver.later_reply = Some(Reply::Bytes);
+            let context = Context::new()
+                .with_resolver_async(resolver)
+                .with_progress_callback(move |_, step, total| {
+                    assert_eq!(total, 2);
+                    !cancel || step == 1
+                });
+
+            let result = fetch_ocsp_response_async(&certs, 0, &context).await;
+            assert_eq!(result, if cancel { None } else { Some(vec![1, 2, 3]) });
+            assert_eq!(requests.lock().unwrap().len(), if cancel { 1 } else { 2 });
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn async_first_usable_responder_keeps_precedence() {
+        let (mut resolver, requests) = resolver(Reply::Bytes);
+        resolver.later_reply = Some(Reply::Oversize);
+        let context = Context::new().with_resolver_async(resolver);
+        assert_eq!(
+            fetch_ocsp_response_async(&chain_with_two_responders(), 0, &context).await,
+            Some(vec![1, 2, 3])
+        );
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn bounded_reader_reports_typed_overflow_and_retries_interrupted_reads() {
+        assert_eq!(MAX_OCSP_RESPONSE_SIZE, 1_000_000);
+        assert_eq!(OCSP_READ_BUFFER_SIZE, 8192);
+        assert!(matches!(
+            read_ocsp_response(io::repeat(42)),
+            Err(HttpResolverError::ResponseTooLarge)
+        ));
+
+        struct InterruptedReader(bool);
+
+        impl Read for InterruptedReader {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if !self.0 {
+                    self.0 = true;
+                    Err(io::ErrorKind::Interrupted.into())
+                } else {
+                    io::empty().read(buffer)
+                }
+            }
+        }
+
+        assert!(read_ocsp_response(InterruptedReader(false))
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            read_ocsp_response(BrokenReader),
+            Err(HttpResolverError::Io(_))
+        ));
     }
 }

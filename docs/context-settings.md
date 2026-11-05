@@ -369,6 +369,34 @@ Here's the `Settings` JSON with all default values:
 }
 ```
 
+### OCSP fetch response budget
+
+Sync and async OCSP fetching accept at most **1,000,000 response-body bytes**
+per responder, preserving the existing fetch-byte budget. The SDK ignores
+`Content-Length` when allocating and reading OCSP bodies, including missing,
+malformed, conflicting, or inaccurate lengths. A small body is not rejected
+merely because its advertised length exceeds the budget.
+
+The SDK reads at most **1,000,001 bytes** from each successful HTTP response body
+to detect overflow. It never returns a truncated prefix as a successful response.
+An oversized body is discarded and logged, and fetching can try the next AIA
+responder in order, honoring the progress/cancellation callback before each
+request. If no response can be fetched, existing OCSP-inaccessible reporting and
+fallback to other usable OCSP sources remain in effect; an oversized response
+does not establish certificate status.
+
+Response-vector capacity requests grow only with bytes actually read and never
+exceed **1,000,000 bytes**; the reader also uses an **8192-byte stack buffer**.
+These are per-response SDK bounds, not a bound on allocator overhead or transient
+memory during reallocation. They do not bound buffering performed inside a
+built-in or custom HTTP resolver before returning its body, network framing
+bytes, request count, elapsed time, or OCSP verification work. Resolvers remain
+responsible for their own buffering and may enforce stricter limits.
+
+This is a fixed fetch-side budget, not a new setting or a verification-side
+limit on stapled or certificate-status assertion responses. Verification-side
+resource budgeting is tracked separately in [#3026](https://github.com/contentauth/c2pa-rs/issues/3026).
+
 ## Configuration examples
 
 ### Minimal configuration
