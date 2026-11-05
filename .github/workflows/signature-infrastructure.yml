@@ -50,6 +50,7 @@ jobs:
           cargo check -p contentauth-signature-infrastructure --target wasm32-wasip2
           cargo check -p c2pa --no-default-features --features rust_native_crypto --target wasm32-unknown-unknown
       - name: Test SDK crypto compatibility
-        run: cargo test -p c2pa --lib crypto::
+        run: |
+          cargo test -p c2pa --lib crypto::
       - name: Test SDK acquisition with Rust-native cryptography
         run: cargo test -p c2pa --no-default-features --features rust_native_crypto --lib crypto::time_stamp
