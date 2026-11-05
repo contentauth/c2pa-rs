@@ -183,6 +183,10 @@ fn received_signed_attributes(
 }
 
 /// Decode the TimeStampToken info and verify it against the supplied data and trust policy
+///
+/// RSA-PSS signatures must use PS256, PS384, or PS512 parameters. Legacy RSA
+/// PKCS#1 v1.5 timestamps remain supported. The CMS signature algorithm selects
+/// the scheme independently of the TSA certificate's public key algorithm.
 #[async_generic]
 pub fn verify_time_stamp(
     ts: &[u8],
@@ -260,33 +264,14 @@ pub fn verify_time_stamp(
     for signer_info in sd.signer_infos.to_vec().iter() {
         current_validation_log = StatusTracker::default(); // reset for latest results
 
-        // Find signer's cert.
-        let cert_pos = match certs_vec.iter().position(|cc| {
-            let c = match cc {
-                CertificateChoices::Certificate(c) => c,
-                _ => return false,
-            };
-
-            match &signer_info.sid {
-                SignerIdentifier::IssuerAndSerialNumber(sn) => {
-                    sn.issuer == c.tbs_certificate.issuer
-                        && sn.serial_number == c.tbs_certificate.serial_number
-                }
-
-                SignerIdentifier::SubjectKeyIdentifier(ski) => {
-                    if let Some(extensions) = &c.tbs_certificate.extensions {
-                        extensions.iter().any(|e| {
-                            if e.extn_id == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER {
-                                return *ski == e.extn_value;
-                            }
-                            false
-                        })
-                    } else {
-                        false
-                    }
-                }
-            }
-        }) {
+        // Preserve the existing first-match lookup for this SignerInfo. Unrelated
+        // certificates cannot win; only a matching issuer/serial or SKI can.
+        // If distinct certificates share that identifier, decoded SET OF order
+        // selects the candidate; this loop does not try every matching certificate.
+        let cert_pos = match certs_vec
+            .iter()
+            .position(|cc| signer_certificate_matches(cc, &signer_info.sid))
+        {
             Some(c) => c,
             None => continue,
         };
@@ -512,21 +497,23 @@ pub fn verify_time_stamp(
             continue;
         };
 
-        // algorithm used to sign the certificate
-        let Ok(sig_alg) = bcder::Oid::from_str(
-            &cert
-                .tbs_certificate
-                .subject_public_key_info
-                .algorithm
-                .algorithm
-                .to_string(),
-        ) else {
-            log_item!("", "timestamp bad tbs certificate alg", "verify_time_stamp")
+        let sig_alg = match timestamp_signature_algorithm(
+            signer_info,
+            &cert.tbs_certificate.subject_public_key_info.algorithm,
+        ) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                log_item!(
+                    "",
+                    "timestamp invalid signature algorithm or parameters",
+                    "verify_time_stamp"
+                )
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
 
-            last_err = TimeStampError::DecodeError("timestamp bad tbs certificate".to_string());
-            continue;
+                last_err = error;
+                continue;
+            }
         };
 
         // Verify signature of time stamp signature.
@@ -701,6 +688,7 @@ pub fn verify_time_stamp(
 
 /// Extract the TSA signer certificate (DER) from an RFC 3161 timestamp token.
 /// Does not verify the token; only parses it and returns the first signer's certificate.
+/// Supports both issuer-and-serial-number and subject-key-identifier signer IDs.
 pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, TimeStampError> {
     let Some(sd) = signed_data_from_time_stamp_response(ts)? else {
         return Ok(None);
@@ -727,35 +715,267 @@ pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, Time
     let Some(signer_info) = sd.signer_infos.to_vec().into_iter().next() else {
         return Ok(None);
     };
-    let Some(cert_pos) = certs_vec.iter().position(|cc| {
-        let c = match cc {
-            CertificateChoices::Certificate(c) => c,
-            _ => return false,
-        };
-        match &signer_info.sid {
-            SignerIdentifier::IssuerAndSerialNumber(sn) => {
-                sn.issuer == c.tbs_certificate.issuer
-                    && sn.serial_number == c.tbs_certificate.serial_number
-            }
-            SignerIdentifier::SubjectKeyIdentifier(ski) => {
-                if let Some(extensions) = &c.tbs_certificate.extensions {
-                    extensions.iter().any(|e| {
-                        if e.extn_id
-                            == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
-                        {
-                            return *ski == e.extn_value;
-                        }
-                        false
-                    })
-                } else {
-                    false
-                }
-            }
-        }
-    }) else {
+    let Some(cert_pos) = certs_vec
+        .iter()
+        .position(|cc| signer_certificate_matches(cc, &signer_info.sid))
+    else {
         return Ok(None);
     };
     Ok(Some(cert_ders[cert_pos].clone()))
+}
+
+fn signer_certificate_matches(choice: &CertificateChoices, sid: &SignerIdentifier) -> bool {
+    let CertificateChoices::Certificate(cert) = choice else {
+        return false;
+    };
+
+    match sid {
+        SignerIdentifier::IssuerAndSerialNumber(sn) => {
+            sn.issuer == cert.tbs_certificate.issuer
+                && sn.serial_number == cert.tbs_certificate.serial_number
+        }
+
+        SignerIdentifier::SubjectKeyIdentifier(ski) => cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .is_some_and(|extensions| {
+                extensions.iter().any(|extension| {
+                    extension.extn_id
+                        == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
+                        && subject_key_identifier_matches(&extension.extn_value, ski)
+                })
+            }),
+    }
+}
+
+fn subject_key_identifier_matches(encoded: &[u8], identifier: &[u8]) -> bool {
+    use asn1_rs::{Class, Tag};
+
+    asn1_rs::Any::from_der(encoded).is_ok_and(|(rest, value)| {
+        rest.is_empty()
+            && value.class() == Class::Universal
+            && value.tag() == Tag::OctetString
+            && !value.header.is_constructed()
+            && value.data == identifier
+    })
+}
+
+const RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
+const RSA_PSS: &str = "1.2.840.113549.1.1.10";
+const MGF1: &str = "1.2.840.113549.1.1.8";
+const EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
+const ED25519_SIGNATURE: &str = "1.3.101.112";
+const SHA1_DIGEST: &str = "1.3.14.3.2.26";
+const SHA256_DIGEST: &str = "2.16.840.1.101.3.4.2.1";
+const SHA384_DIGEST: &str = "2.16.840.1.101.3.4.2.2";
+const SHA512_DIGEST: &str = "2.16.840.1.101.3.4.2.3";
+const RSA_PKCS1_SHA1: &str = "1.2.840.113549.1.1.5";
+const RSA_PKCS1_SHA256: &str = "1.2.840.113549.1.1.11";
+const RSA_PKCS1_SHA384: &str = "1.2.840.113549.1.1.12";
+const RSA_PKCS1_SHA512: &str = "1.2.840.113549.1.1.13";
+const ECDSA_SHA1: &str = "1.2.840.10045.4.1";
+const ECDSA_SHA256: &str = "1.2.840.10045.4.3.2";
+const ECDSA_SHA384: &str = "1.2.840.10045.4.3.3";
+const ECDSA_SHA512: &str = "1.2.840.10045.4.3.4";
+
+struct PssParameters {
+    hash: String,
+    mgf_hash: String,
+    salt_length: u64,
+    trailer: u64,
+}
+
+fn pss_parameters(parameters: &types::Any) -> Result<PssParameters, TimeStampError> {
+    use asn1_rs::{Class, Tag};
+
+    let invalid = || TimeStampError::DecodeError("invalid timestamp RSA-PSS parameters".into());
+    let bytes = parameters.as_bytes();
+    let (rest, sequence) = asn1_rs::Any::from_der(bytes).map_err(|_| invalid())?;
+
+    if !rest.is_empty()
+        || sequence.class() != Class::Universal
+        || sequence.tag() != Tag::Sequence
+        || !sequence.header.is_constructed()
+    {
+        return Err(invalid());
+    }
+
+    // RFC 4055 defaults apply to fields omitted within the required sequence.
+    let mut result = PssParameters {
+        hash: SHA1_DIGEST.into(),
+        mgf_hash: SHA1_DIGEST.into(),
+        salt_length: 20,
+        trailer: 1,
+    };
+    let fields = timestamp_asn1_children(sequence.data).ok_or_else(invalid)?;
+    let mut previous = None;
+
+    for field in fields {
+        let tag = field.tag().0;
+
+        if field.class() != Class::ContextSpecific
+            || !field.header.is_constructed()
+            || tag > 3
+            || previous.is_some_and(|previous| tag <= previous)
+        {
+            return Err(invalid());
+        }
+
+        previous = Some(tag);
+        let (rest, _) = asn1_rs::Any::from_der(field.data).map_err(|_| invalid())?;
+
+        if !rest.is_empty() {
+            return Err(invalid());
+        }
+
+        match tag {
+            0 => result.hash = pss_hash_algorithm(field.data)?,
+            1 => {
+                let mgf: rasn_pkix::AlgorithmIdentifier =
+                    rasn::der::decode(field.data).map_err(|_| invalid())?;
+
+                if mgf.algorithm.to_string() != MGF1 {
+                    return Err(TimeStampError::UnsupportedAlgorithm);
+                }
+
+                let hash = mgf.parameters.ok_or_else(invalid)?;
+                result.mgf_hash = pss_hash_algorithm(hash.as_bytes())?;
+            }
+            2 => {
+                result.salt_length = pss_unsigned_integer(field.data)?;
+            }
+            3 => result.trailer = pss_unsigned_integer(field.data)?,
+            _ => return Err(invalid()),
+        }
+    }
+
+    Ok(result)
+}
+
+fn pss_unsigned_integer(bytes: &[u8]) -> Result<u64, TimeStampError> {
+    use asn1_rs::{Class, Tag};
+
+    let invalid = || TimeStampError::DecodeError("invalid timestamp RSA-PSS integer".into());
+    let (rest, value) = asn1_rs::Any::from_der(bytes).map_err(|_| invalid())?;
+
+    if !rest.is_empty()
+        || value.class() != Class::Universal
+        || value.tag() != Tag::Integer
+        || value.header.is_constructed()
+        || value.data.is_empty()
+        || value.data[0] & 0x80 != 0
+        || (value.data.len() > 1 && value.data[0] == 0 && value.data[1] & 0x80 == 0)
+    {
+        return Err(invalid());
+    }
+
+    value.data.iter().try_fold(0_u64, |integer, byte| {
+        integer
+            .checked_mul(256)
+            .and_then(|integer| integer.checked_add(u64::from(*byte)))
+            .ok_or_else(invalid)
+    })
+}
+
+fn pss_hash_algorithm(bytes: &[u8]) -> Result<String, TimeStampError> {
+    let invalid =
+        || TimeStampError::DecodeError("invalid timestamp RSA-PSS hash parameters".into());
+    let (rest, _) = asn1_rs::Any::from_der(bytes).map_err(|_| invalid())?;
+
+    if !rest.is_empty() {
+        return Err(invalid());
+    }
+
+    let algorithm: rasn_pkix::AlgorithmIdentifier =
+        rasn::der::decode(bytes).map_err(|_| invalid())?;
+
+    if algorithm
+        .parameters
+        .is_some_and(|parameters| parameters.as_bytes() != [0x05, 0x00])
+    {
+        return Err(invalid());
+    }
+
+    Ok(algorithm.algorithm.to_string())
+}
+
+fn timestamp_signature_algorithm(
+    signer: &rasn_cms::SignerInfo,
+    key: &rasn_pkix::AlgorithmIdentifier,
+) -> Result<bcder::Oid, TimeStampError> {
+    let signature = signer.signature_algorithm.algorithm.to_string();
+    let digest = signer.digest_algorithm.algorithm.to_string();
+    let key_algorithm = key.algorithm.to_string();
+    let mut validator_algorithm = signature.as_str();
+
+    if signature == RSA_PSS {
+        if key_algorithm != RSA_ENCRYPTION && key_algorithm != RSA_PSS {
+            return Err(TimeStampError::UnsupportedAlgorithm);
+        }
+
+        let parameters = signer
+            .signature_algorithm
+            .parameters
+            .as_ref()
+            .ok_or_else(|| {
+                TimeStampError::DecodeError("missing timestamp RSA-PSS parameters".into())
+            })?;
+        let pss = pss_parameters(parameters)?;
+        let salt_length = match pss.hash.as_str() {
+            SHA256_DIGEST => 32,
+            SHA384_DIGEST => 48,
+            SHA512_DIGEST => 64,
+            _ => return Err(TimeStampError::UnsupportedAlgorithm),
+        };
+
+        if pss.hash != digest
+            || pss.mgf_hash != digest
+            || pss.salt_length != salt_length
+            || pss.trailer != 1
+        {
+            return Err(TimeStampError::UnsupportedAlgorithm);
+        }
+
+        if key_algorithm == RSA_PSS {
+            if let Some(parameters) = &key.parameters {
+                let restrictions = pss_parameters(parameters)?;
+
+                // A PSS key's saltLength is a minimum, not an exact signature salt length.
+                if restrictions.hash != pss.hash
+                    || restrictions.mgf_hash != pss.mgf_hash
+                    || restrictions.salt_length > pss.salt_length
+                    || restrictions.trailer != pss.trailer
+                {
+                    return Err(TimeStampError::UnsupportedAlgorithm);
+                }
+            }
+        }
+    } else {
+        let compatible = match signature.as_str() {
+            RSA_ENCRYPTION => key_algorithm == RSA_ENCRYPTION,
+            RSA_PKCS1_SHA1 => key_algorithm == RSA_ENCRYPTION && digest == SHA1_DIGEST,
+            RSA_PKCS1_SHA256 => key_algorithm == RSA_ENCRYPTION && digest == SHA256_DIGEST,
+            RSA_PKCS1_SHA384 => key_algorithm == RSA_ENCRYPTION && digest == SHA384_DIGEST,
+            RSA_PKCS1_SHA512 => key_algorithm == RSA_ENCRYPTION && digest == SHA512_DIGEST,
+            ECDSA_SHA1 => key_algorithm == EC_PUBLIC_KEY && digest == SHA1_DIGEST,
+            ECDSA_SHA256 => key_algorithm == EC_PUBLIC_KEY && digest == SHA256_DIGEST,
+            ECDSA_SHA384 => key_algorithm == EC_PUBLIC_KEY && digest == SHA384_DIGEST,
+            ECDSA_SHA512 => key_algorithm == EC_PUBLIC_KEY && digest == SHA512_DIGEST,
+            ED25519_SIGNATURE => key_algorithm == signature,
+            _ => false,
+        };
+
+        if !compatible {
+            return Err(TimeStampError::UnsupportedAlgorithm);
+        }
+
+        if key_algorithm == RSA_ENCRYPTION {
+            validator_algorithm = RSA_ENCRYPTION;
+        }
+    }
+
+    bcder::Oid::from_str(validator_algorithm).map_err(|_| TimeStampError::UnsupportedAlgorithm)
 }
 
 fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> {
@@ -1001,6 +1221,10 @@ fn validate_timestamp_sig(
         .validate(&sig_val.to_bytes(), tbs, signing_key_der)
         .map_err(|_| TimeStampError::InvalidData)
 }
+
+#[cfg(test)]
+#[path = "rsa_pss_ski_regression.rs"]
+mod rsa_pss_ski_regression;
 
 #[cfg(test)]
 #[allow(clippy::expect_used)]
@@ -1875,7 +2099,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
-    fn signer_lookup_matches_issuer_serial_and_current_raw_ski_convention() {
+    fn signer_lookup_matches_issuer_serial_and_decoded_ski() {
         use rasn_cms::{CertificateChoices, SignerIdentifier};
         let token = build_token_with(
             OID_SHA256,
@@ -1901,21 +2125,20 @@ pub(crate) mod message_imprint_regression {
                 .expect("test token contains a certificate");
             let ski = cert.tbs_certificate.extensions.as_ref().unwrap().iter().find(|e| e.extn_id == rasn::types::Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER).unwrap().extn_value.clone();
             let mut signer = sd.signer_infos.to_vec().remove(0).clone();
-            // Current lookup compares the DER-wrapped extension value rather
-            // than the decoded key identifier required by CMS.
             signer.sid = SignerIdentifier::SubjectKeyIdentifier(if raw_extension {
                 ski
             } else {
                 rasn::der::decode::<rasn::types::OctetString>(&ski).unwrap()
             });
+            signer.version = 3.into();
             sd.signer_infos = vec![signer].into();
             let token = encode_token(&sd);
             assert_eq!(
                 super::tsa_signer_cert_der_from_token(&token).unwrap(),
                 if raw_extension {
-                    Some(expected.clone())
-                } else {
                     None
+                } else {
+                    Some(expected.clone())
                 }
             );
             let result = verify_time_stamp(
@@ -1925,7 +2148,7 @@ pub(crate) mod message_imprint_regression {
                 &mut StatusTracker::default(),
                 false,
             );
-            assert_eq!(result.is_ok(), raw_extension);
+            assert_eq!(result.is_ok(), !raw_extension);
         }
     }
 
@@ -2567,6 +2790,22 @@ mod signed_attrs_tests {
             encoded,
             rasn::der::encode(si.signed_attrs.as_ref().unwrap()).unwrap()
         );
+
+        let expected = tsa_signer_cert_der_from_token(TOKEN).unwrap().unwrap();
+        assert_eq!(
+            tsa_signer_cert_der_from_token(&token).unwrap(),
+            Some(expected)
+        );
+        let mut log = StatusTracker::default();
+        verify_time_stamp(
+            &token,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
     }
 
     // Duplicate signatures must be detected from the decoded SignerInfos even
