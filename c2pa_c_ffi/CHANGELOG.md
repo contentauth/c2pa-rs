@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+* Byte-returning C APIs use cimpl's allocation handoff to avoid an intermediate
+  payload copy for even-addressed Rust byte vectors. Original length and
+  capacity are retained until `c2pa_free`; odd-addressed allocations retain
+  the even-buffer copy fallback. C signatures and release conventions are
+  unchanged.
+* HTTP resolver response bodies retain the callback's `malloc` allocation
+  instead of copying it into an intermediate Rust vector. Rust now calls
+  `free` when the response body reader is dropped. Callbacks must not access
+  the transferred allocation after returning.
+* Document read-only ownership and `c2pa_free` requirements for returned byte
+  arrays, and callback-only lifetimes for borrowed stream buffers.
+
+### Fixed
+
+* Release non-null HTTP response-body allocations even when their length is
+  zero, including response-construction failures.
+
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
 _11 June 2026_
 
