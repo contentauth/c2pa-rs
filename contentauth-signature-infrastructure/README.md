@@ -13,10 +13,10 @@ effects. Native, browser WebAssembly and WASI hosts drive the same workflow.
 
 ## Current contract
 
-The `timestamp_acquisition` module contains the timestamp acquisition API;
+The `timestamp::acquisition` module contains the timestamp acquisition API;
 workflow APIs are not re-exported at the crate root. Call
-`timestamp_acquisition::acquire` with a message and host-supplied nonce, or
-`timestamp_acquisition::acquire_with_body`
+`timestamp::acquisition::acquire` with a message and host-supplied nonce, or
+`timestamp::acquisition::acquire_with_body`
 with a customized DER request. Drive `Workflow::advance`, inspect its
 `outstanding_requests`, perform the `AcquisitionRequest::HttpPost`, and call
 `fulfill` with that operation's ID and an `AcquisitionReply::Http`. After
@@ -77,7 +77,9 @@ documented codec visibility and feature-gating refinements were reused from
 were reconstructed against current main. Codec test certificates travel with
 this crate and do not depend on the SDK fixture directory.
 
-`asn1` and `response` are private. The opt-in `sdk-compat` bridge exposes only
+`asn1` and `timestamp::response` are private. Timestamp response interpretation
+lives alongside acquisition, rather than in the shared ASN.1 codec layer.
+The opt-in `sdk-compat` bridge exposes only
 the legacy timestamp/CMS types still required by SDK verification, COSE
 packaging and regression tests. It is provisional, not a supported codec API,
 and should shrink as verification moves. Legacy CMS decoding is compiled only
