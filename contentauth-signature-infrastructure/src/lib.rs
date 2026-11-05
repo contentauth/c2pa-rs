@@ -25,6 +25,12 @@
 //! ```compile_fail
 //! use contentauth_signature_infrastructure::response;
 //! ```
+//!
+//! Workflow APIs remain scoped to their modules:
+//!
+//! ```compile_fail
+//! use contentauth_signature_infrastructure::{acquire, AcquisitionWorkflow};
+//! ```
 
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
@@ -36,11 +42,6 @@ mod response;
 
 #[cfg(feature = "sdk-compat")]
 pub mod sdk_compat;
-
-pub use timestamp_acquisition::{
-    acquire, acquire_with_body, request_body, AcquisitionError, AcquisitionReply,
-    AcquisitionRequest, AcquisitionWorkflow, UnverifiedTimeStampResponse, MAX_RESPONSE_BYTES,
-};
 
 #[cfg(test)]
 mod tests;
