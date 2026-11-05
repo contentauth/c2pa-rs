@@ -20,7 +20,10 @@ use crate::{
         self, encode_data_uri, parse_manifest_reference, ManifestReference, BEGIN_DELIMITER,
         END_DELIMITER,
     },
-    asset_io::{AssetIO, C2paReader, C2paWriter, ObjectLocations, ReadSeek, ReadWriteSeek},
+    asset_io::{
+        AssetIO, C2paReader, C2paWriter, ObjectLocations, ReadSeek, ReadWriteSeek,
+        RemoteManifestUrl,
+    },
     error::{Error, Result},
 };
 
@@ -94,6 +97,10 @@ pub struct StructuredTextIO {
 struct BlockInfo {
     start: usize,
     end: usize,
+    /// Offset of the `BEGIN` delimiter, so the text before it on the line can be kept.
+    begin: usize,
+    /// Offset just past the `END` delimiter, so the text after it on the line can be kept.
+    past_end: usize,
     reference: String,
     /// A.9.3.2 multi-line form (delimiters on separate lines), as used in front matter.
     multiline: bool,
@@ -126,6 +133,8 @@ fn find_blocks(text: &str) -> Vec<BlockInfo> {
             blocks.push(BlockInfo {
                 start: line_start,
                 end: line_end,
+                begin,
+                past_end,
                 reference: reference.to_string(),
                 multiline: text[after_begin..end_delim_start].contains('\n'),
             });
@@ -250,6 +259,56 @@ fn insert_block(cleaned: &str, reference: &str, style: CommentStyle, asset_type:
     format!("{block_line}{le}{cleaned}")
 }
 
+/// Writes `reference` into `text`. An existing block is replaced in place, which preserves its
+/// offset for update manifests and keeps the form the file already uses. Otherwise the block is
+/// inserted at the A.9 position.
+fn write_reference(
+    text: &str,
+    reference: &str,
+    style: CommentStyle,
+    asset_type: &str,
+) -> Result<String> {
+    if count_blocks(text) != 1 {
+        return Ok(insert_block(
+            &strip_blocks(text),
+            reference,
+            style,
+            asset_type,
+        ));
+    }
+
+    let b = locate_block(text).ok_or(Error::EmbeddingError)?;
+    let bytes = text.as_bytes();
+    let terminator = if b.end >= 2 && &bytes[b.end - 2..b.end] == b"\r\n" {
+        "\r\n"
+    } else if b.end >= 1 && bytes[b.end - 1] == b'\n' {
+        "\n"
+    } else {
+        ""
+    };
+    let replacement = if b.multiline {
+        let le = if terminator.is_empty() {
+            "\n"
+        } else {
+            terminator
+        };
+        build_multiline_block(reference, le)
+    } else {
+        // Keep the line's own comment syntax. It isn't always the format's default: a `#` comment
+        // inside Markdown's YAML front matter has to stay a `#` comment.
+        let prefix = &text[b.start..b.begin];
+        let suffix = &text[b.past_end..b.end - terminator.len()];
+        format!("{prefix}{BEGIN_DELIMITER} {reference} {END_DELIMITER}{suffix}")
+    };
+
+    let mut out = String::with_capacity(text.len() + replacement.len());
+    out.push_str(&text[..b.start]);
+    out.push_str(&replacement);
+    out.push_str(terminator);
+    out.push_str(&text[b.end..]);
+    Ok(out)
+}
+
 impl C2paReader for StructuredTextIO {
     fn read_c2pa(&self, reader: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let text = text_common::read_text_stream(reader)?;
@@ -283,39 +342,7 @@ impl C2paWriter for StructuredTextIO {
 
         let text = text_common::read_text_stream(input_stream)?;
         let reference = encode_data_uri(store_bytes);
-
-        // Replace an existing block in place (preserves offset for update
-        // manifests); otherwise insert at the A.9 position.
-        let result = if count_blocks(&text) == 1 {
-            let b = locate_block(&text).ok_or(Error::EmbeddingError)?;
-            let bytes = text.as_bytes();
-            let terminator = if b.end >= 2 && &bytes[b.end - 2..b.end] == b"\r\n" {
-                "\r\n"
-            } else if b.end >= 1 && bytes[b.end - 1] == b'\n' {
-                "\n"
-            } else {
-                ""
-            };
-            // Keep the form the file already uses, so a front matter block stays multi-line.
-            let replacement = if b.multiline {
-                let le = if terminator.is_empty() {
-                    "\n"
-                } else {
-                    terminator
-                };
-                build_multiline_block(&reference, le)
-            } else {
-                build_block_line(style, &reference)
-            };
-            let mut out = String::with_capacity(text.len() + replacement.len());
-            out.push_str(&text[..b.start]);
-            out.push_str(&replacement);
-            out.push_str(terminator);
-            out.push_str(&text[b.end..]);
-            out
-        } else {
-            insert_block(&strip_blocks(&text), &reference, style, &self.asset_type)
-        };
+        let result = write_reference(&text, &reference, style, &self.asset_type)?;
 
         output_stream.rewind()?;
         output_stream.write_all(result.as_bytes())?;
@@ -364,6 +391,71 @@ impl C2paWriter for StructuredTextIO {
     }
 }
 
+impl RemoteManifestUrl for StructuredTextIO {
+    fn write_remote_manifest_url(
+        &self,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+        remote_manifest_url: &str,
+    ) -> Result<()> {
+        let style = comment_style(&self.asset_type).ok_or(Error::UnsupportedType)?;
+        if !text_common::is_manifest_reference(remote_manifest_url)
+            || !matches!(
+                parse_manifest_reference(remote_manifest_url)?,
+                ManifestReference::External
+            )
+        {
+            return Err(Error::BadParam(format!(
+                "not a remote manifest URL: {remote_manifest_url}"
+            )));
+        }
+
+        let text = text_common::read_text_stream(input_stream)?;
+        let result = write_reference(&text, remote_manifest_url, style, &self.asset_type)?;
+
+        output_stream.rewind()?;
+        output_stream.write_all(result.as_bytes())?;
+        Ok(())
+    }
+
+    /// More than one block is treated as no manifest, and an embedded `data:` URI isn't a remote
+    /// reference.
+    fn read_manifest_url(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
+        let text = text_common::read_text_stream(input_stream).ok()?;
+        if count_blocks(&text) != 1 {
+            return None;
+        }
+        let block = locate_block(&text)?;
+        match parse_manifest_reference(&block.reference).ok()? {
+            ManifestReference::External => Some(block.reference),
+            ManifestReference::Embedded(_) => None,
+        }
+    }
+
+    fn remove_remote_manifest_url(
+        &self,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+    ) -> Result<()> {
+        let text = text_common::read_text_stream(input_stream)?;
+        let has_url = find_blocks(&text).iter().any(|b| {
+            matches!(
+                parse_manifest_reference(&b.reference),
+                Ok(ManifestReference::External)
+            )
+        });
+        let result = if has_url { strip_blocks(&text) } else { text };
+
+        output_stream.rewind()?;
+        output_stream.write_all(result.as_bytes())?;
+        Ok(())
+    }
+
+    fn url_shares_manifest_slot(&self) -> bool {
+        true
+    }
+}
+
 impl AssetIO for StructuredTextIO {
     fn new(asset_type: &str) -> Self {
         StructuredTextIO {
@@ -381,6 +473,10 @@ impl AssetIO for StructuredTextIO {
 
     fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(StructuredTextIO::new(asset_type)))
+    }
+
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -409,6 +505,109 @@ mod tests {
         let io = StructuredTextIO::new(asset_type);
         let mut input = Cursor::new(text.as_bytes().to_vec());
         io.read_c2pa(&mut input)
+    }
+
+    fn write_url(asset_type: &str, source: &str, url: &str) -> String {
+        let io = StructuredTextIO::new(asset_type);
+        let mut input = Cursor::new(source.as_bytes().to_vec());
+        let mut output = Cursor::new(Vec::new());
+        io.write_remote_manifest_url(&mut input, &mut output, url)
+            .unwrap();
+        String::from_utf8(output.into_inner()).unwrap()
+    }
+
+    fn read_url(asset_type: &str, text: &str) -> Option<String> {
+        StructuredTextIO::new(asset_type)
+            .read_manifest_url(&mut Cursor::new(text.as_bytes().to_vec()))
+    }
+
+    const URL: &str = "https://example.com/manifests/a1b2c3.c2pa";
+
+    #[test]
+    fn remote_url_round_trips() {
+        let out = write_url("md", "# Title\n", URL);
+        assert_eq!(
+            out,
+            format!("<!-- {BEGIN_DELIMITER} {URL} {END_DELIMITER} -->\n# Title\n")
+        );
+        assert_eq!(read_url("md", &out).as_deref(), Some(URL));
+        assert!(matches!(read_back("md", &out), Err(Error::JumbfNotFound)));
+    }
+
+    #[test]
+    fn remote_url_uses_the_multiline_form_in_new_front_matter_blocks() {
+        let out = write_url("md", "---\ntitle: Doc\n---\nBody\n", URL);
+        assert_eq!(
+            out,
+            format!("---\n{BEGIN_DELIMITER}\n{URL}\n{END_DELIMITER}\ntitle: Doc\n---\nBody\n")
+        );
+        assert_eq!(read_url("md", &out).as_deref(), Some(URL));
+    }
+
+    /// A `#` line inside YAML front matter must stay a `#` line. The multi-line form and the
+    /// Markdown `<!-- -->` form would both make the front matter invalid YAML.
+    #[test]
+    fn replacing_keeps_the_comment_syntax_of_the_existing_line() {
+        let source = format!(
+            "---\n# {BEGIN_DELIMITER} https://old.example/m.c2pa {END_DELIMITER}\nname: x\n---\nBody\n"
+        );
+        let expected =
+            format!("---\n# {BEGIN_DELIMITER} {URL} {END_DELIMITER}\nname: x\n---\nBody\n");
+        assert_eq!(write_url("md", &source, URL), expected);
+
+        let embedded = embed("md", &source, b"store");
+        assert!(embedded.starts_with(&format!("---\n# {BEGIN_DELIMITER} data:application/c2pa")));
+        assert_eq!(read_back("md", &embedded).unwrap(), b"store");
+    }
+
+    #[test]
+    fn replacing_keeps_a_comment_suffix_and_crlf() {
+        let source = format!("/* {BEGIN_DELIMITER} {URL} {END_DELIMITER} */\r\nbody {{}}\r\n");
+        let out = write_url("css", &source, "https://new.example/m.c2pa");
+        assert_eq!(
+            out,
+            format!(
+                "/* {BEGIN_DELIMITER} https://new.example/m.c2pa {END_DELIMITER} */\r\nbody {{}}\r\n"
+            )
+        );
+    }
+
+    #[test]
+    fn reading_a_url_ignores_embedded_and_ambiguous_blocks() {
+        assert_eq!(read_url("md", "# No block\n"), None);
+        assert_eq!(read_url("md", &embed("md", "# Doc\n", b"store")), None);
+
+        let line = format!("<!-- {BEGIN_DELIMITER} {URL} {END_DELIMITER} -->\n");
+        assert_eq!(read_url("md", &format!("{line}{line}")), None);
+    }
+
+    #[test]
+    fn writing_rejects_a_data_uri_or_non_url_as_the_remote_url() {
+        let io = StructuredTextIO::new("md");
+        for bad in ["data:application/c2pa;base64,AAAA", "not a url", ""] {
+            let mut input = Cursor::new(b"# Doc\n".to_vec());
+            let mut output = Cursor::new(Vec::new());
+            assert!(matches!(
+                io.write_remote_manifest_url(&mut input, &mut output, bad),
+                Err(Error::BadParam(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn removing_a_url_leaves_an_embedded_manifest_alone() {
+        let io = StructuredTextIO::new("md");
+        let remove = |text: &str| {
+            let mut input = Cursor::new(text.as_bytes().to_vec());
+            let mut output = Cursor::new(Vec::new());
+            io.remove_remote_manifest_url(&mut input, &mut output)
+                .unwrap();
+            String::from_utf8(output.into_inner()).unwrap()
+        };
+
+        assert_eq!(remove(&write_url("md", "# Doc\n", URL)), "# Doc\n");
+        let embedded = embed("md", "# Doc\n", b"store");
+        assert_eq!(remove(&embedded), embedded);
     }
 
     #[test]

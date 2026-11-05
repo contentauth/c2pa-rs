@@ -628,8 +628,17 @@ impl Store {
                 let external_ref_writer = io_handler
                     .remote_manifest_url_ref()
                     .ok_or(Error::XmpNotSupported)?;
+                let shares_slot = external_ref_writer.url_shares_manifest_slot();
 
-                if remove_manifests {
+                // Writing the embedded manifest later would silently overwrite the URL.
+                if shares_slot && !remove_manifests {
+                    return Err(Error::BadParam(
+                        "this format can't hold both a remote manifest URL and an embedded manifest; set no_embed"
+                            .to_string(),
+                    ));
+                }
+
+                if remove_manifests && !shares_slot {
                     let manifest_writer = io_handler
                         .get_writer(format)
                         .ok_or(Error::UnsupportedType)?;
@@ -1180,10 +1189,22 @@ impl Store {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
-                if let Some(ext_ref) =
+                let xmp_ref =
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
-                        .provenance
-                {
+                        .provenance;
+                let ext_ref = match xmp_ref {
+                    Some(xmp_ref) => Some(xmp_ref),
+                    // Formats such as structured text keep the URL outside XMP.
+                    None => {
+                        stream.rewind()?;
+                        context.io().handler(asset_type).and_then(|handler| {
+                            handler
+                                .remote_manifest_url_ref()
+                                .and_then(|writer| writer.read_manifest_url(stream))
+                        })
+                    }
+                };
+                if let Some(ext_ref) = ext_ref {
                     let jumbf = if _sync {
                         Store::handle_remote_manifest(&ext_ref, context)?
                     } else {
