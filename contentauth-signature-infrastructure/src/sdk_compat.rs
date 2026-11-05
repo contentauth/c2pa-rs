@@ -18,7 +18,7 @@
 
 pub use crate::{
     asn1::{AlgorithmIdentifier, GeneralizedTime},
-    response::TimeStampResponse,
+    timestamp::response::TimeStampResponse,
 };
 
 /// Timestamp structures still consumed by SDK verification and COSE packaging.
