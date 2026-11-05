@@ -124,19 +124,26 @@ fn find_blocks(text: &str) -> Vec<BlockInfo> {
         let past_end = end_delim_start + END_DELIMITER.len();
         let reference = text[after_begin..end_delim_start].trim();
 
-        if text_common::is_manifest_reference(reference) {
-            let line_start = text[..begin].rfind('\n').map(|i| i + 1).unwrap_or(0);
-            let line_end = text[past_end..]
-                .find('\n')
-                .map(|i| past_end + i + 1)
-                .unwrap_or(text.len());
+        let line_start = text[..begin].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let line_end = text[past_end..]
+            .find('\n')
+            .map(|i| past_end + i + 1)
+            .unwrap_or(text.len());
+        let multiline = text[after_begin..end_delim_start].contains('\n');
+        let delimiters_on_own_lines = line_start == begin
+            && text[past_end..line_end]
+                .trim_end_matches(['\r', '\n'])
+                .is_empty();
+
+        if text_common::is_manifest_reference(reference) && (!multiline || delimiters_on_own_lines)
+        {
             blocks.push(BlockInfo {
                 start: line_start,
                 end: line_end,
                 begin,
                 past_end,
                 reference: reference.to_string(),
-                multiline: text[after_begin..end_delim_start].contains('\n'),
+                multiline,
             });
         }
 
@@ -169,19 +176,10 @@ fn strip_blocks(text: &str) -> String {
     out
 }
 
-/// The A.9 exclusion span; an end-of-file block also excludes the preceding newline.
-fn exclusion_span(text: &str, block: &BlockInfo) -> (usize, usize) {
-    let mut start = block.start;
-    if block.end == text.len() && start > 0 {
-        let bytes = text.as_bytes();
-        if bytes[start - 1] == b'\n' {
-            start -= 1;
-            if start > 0 && bytes[start - 1] == b'\r' {
-                start -= 1;
-            }
-        }
-    }
-    (start, block.end - start)
+/// The hard binding exclusion: only the bytes from the `BEGIN` delimiter through the `END`
+/// delimiter. Comment syntax and line terminators around them are hashed.
+fn exclusion_span(block: &BlockInfo) -> (usize, usize) {
+    (block.begin, block.past_end - block.begin)
 }
 
 fn build_block_line(style: CommentStyle, reference: &str) -> String {
@@ -195,7 +193,7 @@ fn build_block_line(style: CommentStyle, reference: &str) -> String {
     }
 }
 
-/// The A.9.3.2 multi-line form used inside front matter: delimiters on their own lines,
+/// The multi-line form, which validators still accept and replacement keeps: delimiters on their own lines,
 /// with no comment prefix, and the reference between them.
 fn build_multiline_block(reference: &str, le: &str) -> String {
     format!("{BEGIN_DELIMITER}{le}{reference}{le}{END_DELIMITER}")
@@ -233,9 +231,10 @@ fn insert_block(cleaned: &str, reference: &str, style: CommentStyle, asset_type:
     };
     let lower = asset_type.to_lowercase();
 
+    // YAML and TOML both use `#`, and a comment keeps the front matter parseable by its host format.
     if supports_front_matter(&lower) {
         if let Some(at) = front_matter_insert_point(cleaned) {
-            let block = build_multiline_block(reference, le);
+            let block = build_block_line(CommentStyle::Line("#"), reference);
             return format!("{}{block}{le}{}", &cleaned[..at], &cleaned[at..]);
         }
     }
@@ -357,7 +356,7 @@ impl C2paWriter for StructuredTextIO {
 
         let (full_len, block_start, block_len) = match locate_block(&text) {
             Some(b) => {
-                let (start, len) = exclusion_span(&text, &b);
+                let (start, len) = exclusion_span(&b);
                 (text.len(), start, len)
             }
             None => {
@@ -366,7 +365,7 @@ impl C2paWriter for StructuredTextIO {
                 let reference = encode_data_uri(PLACEHOLDER_STORE);
                 let with_block = insert_block(&text, &reference, style, &self.asset_type);
                 let b = locate_block(&with_block).ok_or(Error::EmbeddingError)?;
-                let (start, len) = exclusion_span(&with_block, &b);
+                let (start, len) = exclusion_span(&b);
                 (with_block.len(), start, len)
             }
         };
@@ -535,13 +534,53 @@ mod tests {
     }
 
     #[test]
-    fn remote_url_uses_the_multiline_form_in_new_front_matter_blocks() {
+    fn remote_url_uses_a_comment_line_in_new_front_matter_blocks() {
         let out = write_url("md", "---\ntitle: Doc\n---\nBody\n", URL);
         assert_eq!(
             out,
-            format!("---\n{BEGIN_DELIMITER}\n{URL}\n{END_DELIMITER}\ntitle: Doc\n---\nBody\n")
+            format!("---\n# {BEGIN_DELIMITER} {URL} {END_DELIMITER}\ntitle: Doc\n---\nBody\n")
         );
         assert_eq!(read_url("md", &out).as_deref(), Some(URL));
+
+        let toml = write_url("md", "+++\ntitle = \"Doc\"\n+++\nBody\n", URL);
+        assert!(toml.starts_with(&format!("+++\n# {BEGIN_DELIMITER} {URL} {END_DELIMITER}\n")));
+    }
+
+    /// Validators still accept the multi-line form, and replacing a block keeps it.
+    #[test]
+    fn existing_multiline_block_is_read_and_kept() {
+        let source =
+            format!("---\n{BEGIN_DELIMITER}\n{URL}\n{END_DELIMITER}\ntitle: Doc\n---\nBody\n");
+        assert_eq!(read_url("md", &source).as_deref(), Some(URL));
+
+        let new_url = "https://new.example/m.c2pa";
+        assert_eq!(
+            write_url("md", &source, new_url),
+            format!("---\n{BEGIN_DELIMITER}\n{new_url}\n{END_DELIMITER}\ntitle: Doc\n---\nBody\n")
+        );
+    }
+
+    /// A line terminator between the delimiters is only allowed when each delimiter has its own
+    /// line.
+    #[test]
+    fn multiline_reference_needs_delimiters_on_their_own_lines() {
+        for text in [
+            format!("# {BEGIN_DELIMITER}\n{URL}\n{END_DELIMITER}\nbody\n"),
+            format!("{BEGIN_DELIMITER}\n{URL}\n# {END_DELIMITER}\nbody\n"),
+            format!("{BEGIN_DELIMITER}\n{URL}\n{END_DELIMITER} # note\nbody\n"),
+        ] {
+            assert_eq!(count_blocks(&text), 0, "{text:?}");
+            assert_eq!(read_url("md", &text), None);
+        }
+
+        let crlf = format!("{BEGIN_DELIMITER}\r\n{URL}\r\n{END_DELIMITER}\r\nbody\r\n");
+        assert_eq!(read_url("md", &crlf).as_deref(), Some(URL));
+    }
+
+    #[test]
+    fn a_reference_containing_whitespace_is_not_a_block() {
+        let text = format!("# {BEGIN_DELIMITER} {URL} extra {END_DELIMITER}\nbody\n");
+        assert_eq!(count_blocks(&text), 0);
     }
 
     /// A `#` line inside YAML front matter must stay a `#` line. The multi-line form and the
@@ -650,7 +689,7 @@ mod tests {
     }
 
     #[test]
-    fn end_placed_block_exclusion_starts_at_preceding_newline() {
+    fn end_placed_block_exclusion_covers_only_the_delimited_bytes() {
         let out = embed("py", "#!/usr/bin/env python\nprint('hi')\n", b"store");
         let io = StructuredTextIO::new("py");
         let mut cursor = Cursor::new(out.clone().into_bytes());
@@ -659,19 +698,12 @@ mod tests {
             .iter()
             .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
-        let excluded =
-            &out.as_bytes()[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
-        assert_eq!(
-            excluded[0], b'\n',
-            "exclusion must begin at the preceding newline"
+        let excluded = &out[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
+        assert!(excluded.starts_with(BEGIN_DELIMITER) && excluded.ends_with(END_DELIMITER));
+        assert!(
+            out[..cai.offset as usize].ends_with("\n# "),
+            "the newline and comment prefix are hashed"
         );
-        assert_eq!(
-            (cai.offset as usize) + (cai.length as usize),
-            out.len(),
-            "exclusion runs to EOF"
-        );
-        let excluded = std::str::from_utf8(excluded).unwrap();
-        assert!(excluded.contains(BEGIN_DELIMITER) && excluded.contains(END_DELIMITER));
     }
 
     #[test]
@@ -754,10 +786,10 @@ mod tests {
             .iter()
             .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
-        let excluded =
-            &out.as_bytes()[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
-        let excluded = std::str::from_utf8(excluded).unwrap();
-        assert!(excluded.contains(BEGIN_DELIMITER) && excluded.contains(END_DELIMITER));
+        let excluded = &out[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
+        assert!(excluded.starts_with(BEGIN_DELIMITER) && excluded.ends_with(END_DELIMITER));
+        assert_eq!(&out[..cai.offset as usize], "<!-- ");
+        assert!(out[(cai.offset as usize) + (cai.length as usize)..].starts_with(" -->\n"));
     }
 
     /// An unterminated `BEGIN` is not a block (A.9.5 step 4), so a file whose prose
@@ -817,24 +849,21 @@ mod tests {
         );
     }
 
-    /// A.9.3: a Markdown file with front matter carries the block inside it, in the
-    /// multi-line form, leaving the fences and existing keys intact.
     #[test]
     fn markdown_front_matter_holds_the_block() {
         let src = "---\ntitle: My Document\n---\n\n# Body\n";
         let out = embed("md", src, b"front matter store");
 
-        assert!(out.starts_with("---\n"), "opening fence must stay first");
+        assert!(
+            out.starts_with("---\n# "),
+            "the block is the first front matter line"
+        );
         assert!(out.contains("title: My Document"));
         assert!(out.contains("# Body"));
         assert_eq!(read_back("md", &out).unwrap(), b"front matter store");
-
-        // Multi-line form: no comment prefix, delimiters on their own lines.
-        assert!(out.contains(&format!("\n{BEGIN_DELIMITER}\n")));
-        assert!(out.contains(&format!("\n{END_DELIMITER}\n")));
         assert!(
             !out.contains("<!--"),
-            "front matter form takes no comment prefix"
+            "front matter uses its own comment syntax"
         );
 
         // The block must sit between the fences, not before the opening one.
@@ -843,8 +872,6 @@ mod tests {
         assert!(block_at > 3 && block_at < closing_fence);
     }
 
-    /// A.9.4 NOTE: the front matter delimiters are not part of the exclusion range —
-    /// only the lines from BEGIN through END.
     #[test]
     fn front_matter_exclusion_omits_the_fences() {
         let out = embed("md", "---\ntitle: T\n---\n\nbody\n", b"store");
@@ -858,17 +885,15 @@ mod tests {
 
         let excluded = &out[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
         assert!(excluded.starts_with(BEGIN_DELIMITER), "got {excluded:?}");
-        assert!(excluded.trim_end().ends_with(END_DELIMITER));
-        // The fences and the front matter keys stay outside the excluded range.
-        assert!(
-            out[..(cai.offset as usize)].starts_with("---\n"),
-            "opening fence precedes the exclusion"
+        assert!(excluded.ends_with(END_DELIMITER));
+        assert_eq!(
+            &out[..cai.offset as usize],
+            "---\n# ",
+            "the opening fence and comment prefix are hashed"
         );
-        assert!(out[(cai.offset as usize) + (cai.length as usize)..].contains("---"));
-        assert!(!excluded.contains("title: T"));
+        assert!(out[(cai.offset as usize) + (cai.length as usize)..].starts_with("\ntitle: T"));
     }
 
-    /// Replacing a front matter block keeps the multi-line form and the fences.
     #[test]
     fn front_matter_replace_keeps_form() {
         let first = embed("md", "---\ntitle: T\n---\n\nbody\n", b"AAAA");
@@ -880,7 +905,7 @@ mod tests {
 
         assert_eq!(count_blocks(&replaced), 1);
         assert_eq!(read_back("md", &replaced).unwrap(), b"BBBB");
-        assert!(replaced.contains(&format!("\n{BEGIN_DELIMITER}\n")));
+        assert!(replaced.contains(&format!("\n# {BEGIN_DELIMITER} ")));
         assert!(!replaced.contains("<!--"));
         assert!(replaced.contains("title: T"));
         assert_eq!(

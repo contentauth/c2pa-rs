@@ -6186,6 +6186,105 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Invalid);
     }
 
+    /// Only the delimited bytes are excluded, so everything else on the line is hashed.
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_builder_structured_text_hashes_the_rest_of_the_line() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let line = format!("# -----BEGIN C2PA MANIFEST----- {url} -----END C2PA MANIFEST-----");
+        let source = format!("{line}\nbody\n");
+        let (output, manifest) = sign_structured_text_with_remote_url(source.as_bytes(), url);
+        assert_eq!(String::from_utf8(output).unwrap(), source);
+
+        let edited = source.replace("# -----BEGIN", "x# -----BEGIN").replace(
+            "https://example.com/manifests/doc.c2pa",
+            "https://example.com/manifests/do.c2pa",
+        );
+        assert_eq!(edited.len(), source.len());
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(
+                &manifest,
+                "text/markdown",
+                Cursor::new(edited.into_bytes()),
+            )
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Invalid);
+    }
+
+    /// A new block in Markdown front matter is a comment line, so the YAML stays parseable.
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_builder_structured_text_front_matter_uses_a_comment_line() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let source = "---\nname: skill\n---\n\nBody.\n";
+        let (output, manifest) = sign_structured_text_with_remote_url(source.as_bytes(), url);
+        let text = String::from_utf8(output.clone()).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "---\n# -----BEGIN C2PA MANIFEST----- {url} -----END C2PA MANIFEST-----\nname: skill\n---\n\nBody.\n"
+            )
+        );
+
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(&manifest, "text/markdown", Cursor::new(output))
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+    }
+
+    /// A data hash for structured text must exclude only the delimited block.
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_structured_text_rejects_additional_exclusions() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let source = format!(
+            "# -----BEGIN C2PA MANIFEST----- {url} -----END C2PA MANIFEST-----\nsigned\nhidden\n"
+        );
+        let begin = source.find("-----BEGIN").unwrap();
+        let end = source.find("MANIFEST-----\n").unwrap() + "MANIFEST-----".len();
+        let hidden = source.find("hidden").unwrap();
+
+        let sign_with = |exclusions: Vec<HashRange>| {
+            let context = Context::new().with_signer(test_signer(SigningAlg::Ps256));
+            let mut builder = Builder::from_context(context)
+                .with_definition(json!({"title": "Exclusions"}))
+                .unwrap();
+            builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCreation));
+            let mut binding = DataHash::new("jumbf manifest", "sha256");
+            for exclusion in exclusions {
+                binding.add_exclusion(exclusion);
+            }
+            builder.add_assertion(DataHash::LABEL, &binding).unwrap();
+            builder
+                .update_hash_from_stream("text/markdown", &mut Cursor::new(source.as_bytes()))
+                .unwrap();
+            builder.sign_embeddable("application/c2pa").unwrap()
+        };
+        let validate = |manifest: &[u8]| {
+            Reader::default()
+                .with_manifest_data_and_stream(
+                    manifest,
+                    "text/markdown",
+                    Cursor::new(source.as_bytes().to_vec()),
+                )
+                .unwrap()
+                .validation_state()
+        };
+
+        let block = HashRange::new(begin as u64, (end - begin) as u64);
+        assert_eq!(
+            validate(&sign_with(vec![block.clone()])),
+            ValidationState::Trusted
+        );
+        assert_eq!(
+            validate(&sign_with(vec![
+                block,
+                HashRange::new(hidden as u64, "hidden".len() as u64),
+            ])),
+            ValidationState::Invalid
+        );
+    }
+
     #[cfg(feature = "unstable_structured_text")]
     #[c2pa_test_async]
     async fn test_builder_structured_text_remote_url_async() {
