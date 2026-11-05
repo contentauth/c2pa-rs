@@ -277,7 +277,8 @@ pub fn verify_time_stamp(
                     if let Some(extensions) = &c.tbs_certificate.extensions {
                         extensions.iter().any(|e| {
                             if e.extn_id == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER {
-                                return *ski == e.extn_value;
+                                return rasn::der::decode::<types::OctetString>(&e.extn_value)
+                                    .is_ok_and(|extension_ski| ski == &extension_ski);
                             }
                             false
                         })
@@ -743,7 +744,8 @@ pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, Time
                         if e.extn_id
                             == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
                         {
-                            return *ski == e.extn_value;
+                            return rasn::der::decode::<types::OctetString>(&e.extn_value)
+                                    .is_ok_and(|extension_ski| ski == &extension_ski);
                         }
                         false
                     })
@@ -1913,9 +1915,9 @@ pub(crate) mod message_imprint_regression {
             assert_eq!(
                 super::tsa_signer_cert_der_from_token(&token).unwrap(),
                 if raw_extension {
-                    Some(expected.clone())
-                } else {
                     None
+                } else {
+                    Some(expected.clone())
                 }
             );
             let result = verify_time_stamp(
@@ -1925,7 +1927,7 @@ pub(crate) mod message_imprint_regression {
                 &mut StatusTracker::default(),
                 false,
             );
-            assert_eq!(result.is_ok(), raw_extension);
+            assert_eq!(result.is_ok(), !raw_extension);
         }
     }
 
