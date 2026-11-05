@@ -1,0 +1,27 @@
+// Copyright 2026 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+//! Provisional codec bridge for the SDK's existing timestamp verifier.
+//!
+//! Enabled only by `sdk-compat`. These decoded values carry no verification,
+//! profile-validity or trust guarantees. This bridge is not a stable public API.
+
+pub use crate::{
+    asn1::{AlgorithmIdentifier, GeneralizedTime},
+    response::TimeStampResponse,
+};
+
+/// Timestamp structures still consumed by SDK verification and COSE packaging.
+pub mod rfc3161 {
+    pub use crate::asn1::rfc3161::{
+        Accuracy, MessageImprint, PkiStatus, TimeStampReq, TimeStampResp, TimeStampToken, TstInfo,
+    };
+}
+
+/// CMS structures required by the SDK's legacy codec regression tests.
+pub mod rfc5652 {
+    pub use crate::asn1::rfc5652::{ContentInfo, SignedData, SignerInfo, OID_ID_SIGNED_DATA};
+}
