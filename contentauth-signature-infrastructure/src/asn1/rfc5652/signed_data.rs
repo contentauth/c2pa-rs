@@ -204,6 +204,10 @@ impl Eq for CertificateList {}
 
 /// Represents signed data.
 ///
+/// This type and its public members are exposed only for the provisional
+/// `sdk-compat` bridge. Make them crate-private once the SDK's legacy codec
+/// regression tests migrate into this crate.
+///
 /// ASN.1 type specification:
 ///
 /// ```ASN.1
@@ -388,6 +392,10 @@ impl EncapsulatedContentInfo {
 }
 
 /// Per-signer information.
+///
+/// This type and its public members are exposed only for the provisional
+/// `sdk-compat` bridge. Make them crate-private once the SDK's legacy codec
+/// regression tests migrate into this crate.
 ///
 /// ```ASN.1
 /// SignerInfo ::= SEQUENCE {
