@@ -190,18 +190,6 @@ impl PrimitiveContent for Attribute {
     }
 }
 
-/// Opaque certificate list captured in its DER encoding.
-#[derive(Clone, Debug)]
-pub(crate) struct CertificateList(Captured);
-
-impl PartialEq for CertificateList {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.as_slice() == other.0.as_slice()
-    }
-}
-
-impl Eq for CertificateList {}
-
 /// Represents signed data.
 ///
 /// This type and its public members are exposed only for the provisional
@@ -841,11 +829,14 @@ pub(crate) type SignatureAlgorithmIdentifier = AlgorithmIdentifier;
 
 /// Revocation information choices.
 ///
+/// Uninhabited until parsing is implemented; embedded revocation data is
+/// explicitly rejected rather than represented by unused placeholder variants.
+///
 /// ```ASN.1
 /// RevocationInfoChoices ::= SET OF RevocationInfoChoice
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RevocationInfoChoices(Vec<RevocationInfoChoice>);
+pub(crate) enum RevocationInfoChoices {}
 
 impl RevocationInfoChoices {
     pub(crate) fn take_from<S: Source>(
@@ -853,35 +844,6 @@ impl RevocationInfoChoices {
     ) -> Result<Self, DecodeError<S::Error>> {
         Err(cons.content_err("RevocationInfoChoices parsing not implemented"))
     }
-}
-
-/// Revocation information choice.
-///
-/// ```ASN.1
-/// RevocationInfoChoice ::= CHOICE {
-///   crl CertificateList,
-///   other [1] IMPLICIT OtherRevocationInfoFormat }
-/// ```
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(unused)]
-pub(crate) enum RevocationInfoChoice {
-    Crl(Box<CertificateList>),
-    Other(OtherRevocationInfoFormat),
-}
-
-/// Other revocation information format.
-///
-/// ```ASN.1
-/// OtherRevocationInfoFormat ::= SEQUENCE {
-///   otherRevInfoFormat OBJECT IDENTIFIER,
-///   otherRevInfo ANY DEFINED BY otherRevInfoFormat }
-/// ```
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct OtherRevocationInfoFormat {
-    pub(crate) other_rev_info_info_format: Oid,
-
-    // TODO: Support ASN.1 ANY values.
-    pub(crate) other_rev_info: Option<()>,
 }
 
 /// Certificate choices.
@@ -1223,6 +1185,23 @@ mod tests {
         assert!(decoded.signer_infos.is_empty());
         assert!(decoded.certificates.is_none());
         assert!(decoded.crls.is_none());
+    }
+
+    #[test]
+    fn signed_data_explicitly_rejects_embedded_revocation_data() {
+        let der = tlv(
+            0x30,
+            &[
+                2, 1, 1, 0x31, 0, 0x30, 5, 6, 3, 0x2a, 3, 4, 0xa1, 0, 0x31, 0,
+            ],
+        );
+
+        let error =
+            Constructed::decode(der.as_slice(), Mode::Der, SignedData::take_from).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("RevocationInfoChoices parsing not implemented"));
     }
 
     #[test]
