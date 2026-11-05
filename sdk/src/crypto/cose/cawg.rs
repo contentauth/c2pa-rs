@@ -352,6 +352,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use rasn_pkix::{Certificate, Extension};
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
 
@@ -589,7 +591,7 @@ mod tests {
         }
 
         let der = rasn::der::encode(&certificate(&[], &[EMAIL, DOCUMENT_SIGNING])).unwrap();
-        
+
         let mut policy = CertificateTrustPolicy::new();
         policy.clear_ekus();
         policy.add_valid_ekus(EMAIL.as_bytes());
@@ -645,7 +647,7 @@ mod tests {
             let (signature, certificate) = signed_cose(&policies, &[EMAIL], b"payload");
             let mut policy = CertificateTrustPolicy::default();
             policy.add_end_entity_credentials(&certificate).unwrap();
-            
+
             let verifier = Verifier::VerifyTrustPolicyFor(
                 Cow::Owned(policy),
                 super::super::TrustAnchorType::CAWG,
@@ -945,7 +947,7 @@ mod tests {
             let context = Context::new().with_settings(settings).unwrap();
             let mut store = Store::from_context(&context);
             store.commit_claim(claim.clone()).unwrap();
-            
+
             for asynchronous in [false, true] {
                 let mut log = StatusTracker::default();
                 if asynchronous {
