@@ -4,6 +4,13 @@
 // or the MIT license (http://opensource.org/licenses/MIT),
 // at your option.
 
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
 //! Provisional codec bridge for the SDK's existing timestamp verifier.
 //!
 //! Enabled only by `sdk-compat`. These decoded values carry no verification,
