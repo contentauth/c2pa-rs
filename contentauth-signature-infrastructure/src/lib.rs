@@ -29,7 +29,7 @@
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-pub mod acquisition;
+pub mod timestamp_acquisition;
 
 mod asn1;
 mod response;
@@ -37,7 +37,7 @@ mod response;
 #[cfg(feature = "sdk-compat")]
 pub mod sdk_compat;
 
-pub use acquisition::{
+pub use timestamp_acquisition::{
     acquire, acquire_with_body, request_body, AcquisitionError, AcquisitionReply,
     AcquisitionRequest, AcquisitionWorkflow, UnverifiedTimeStampResponse, MAX_RESPONSE_BYTES,
 };
