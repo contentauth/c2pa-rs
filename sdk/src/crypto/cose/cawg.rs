@@ -1,6 +1,15 @@
 // Copyright 2026 Adobe. All rights reserved.
-// This file is licensed to you under the Apache License, Version 2.0
-// (http://www.apache.org/licenses/LICENSE-2.0).
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
@@ -122,12 +131,16 @@ pub(crate) fn trusted_cawg_timestamp(
 ) -> Option<TstInfo> {
     let mut timestamp_sign1 = sign1.clone();
     // A legacy header must not shadow a usable sigTst2 header.
-    if timestamp_sign1.unprotected.rest.iter().any(|(label, _)| {
-        *label == coset::Label::Text("sigTst2".into())
-    }) {
-        timestamp_sign1.unprotected.rest.retain(|(label, _)| {
-            *label != coset::Label::Text("sigTst".into())
-        });
+    if timestamp_sign1
+        .unprotected
+        .rest
+        .iter()
+        .any(|(label, _)| *label == coset::Label::Text("sigTst2".into()))
+    {
+        timestamp_sign1
+            .unprotected
+            .rest
+            .retain(|(label, _)| *label != coset::Label::Text("sigTst".into()));
     }
 
     let (_, storage) = get_cose_tst_info(&timestamp_sign1)?;
@@ -571,7 +584,11 @@ mod tests {
     }
 
     fn signed_cose(policies: &[&str], purposes: &[&str], data: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        let der = rasn::der::encode(&certificate(policies, purposes)).unwrap();
+        signed_cose_with_certificate(&certificate(policies, purposes), data)
+    }
+
+    fn signed_cose_with_certificate(certificate: &Certificate, data: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let der = rasn::der::encode(certificate).unwrap();
         let key = c2pa_raw_crypto::signer_from_private_key(
             include_bytes!("../../../tests/fixtures/certs/ed25519.pem"),
             c2pa_raw_crypto::SigningAlg::Ed25519,
@@ -704,10 +721,17 @@ mod tests {
                 let mut log = StatusTracker::default();
                 let timestamp = trusted_cawg_timestamp(&sign1, b"payload", &policy, &mut log);
                 assert_eq!(timestamp.is_some(), kind == TrustAnchorType::TSA, "{log:?}");
-                for now in [INTERIM_TRUST_END - 86_400, INTERIM_TRUST_END - 1, INTERIM_TRUST_END] {
+                for now in [
+                    INTERIM_TRUST_END - 86_400,
+                    INTERIM_TRUST_END - 1,
+                    INTERIM_TRUST_END,
+                ] {
                     assert_eq!(
                         interim_certificate_is_acceptable(
-                            &leaf, at(now), timestamp.as_ref(), &policy,
+                            &leaf,
+                            at(now),
+                            timestamp.as_ref(),
+                            &policy,
                         )
                         .unwrap(),
                         now < INTERIM_TRUST_END || (kind == TrustAnchorType::TSA && accepted),
@@ -773,6 +797,141 @@ mod tests {
     }
 
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    #[c2pa_macros::c2pa_test_async]
+    async fn manifest_only_timestamp_is_used_during_cawg_identity_decoding() {
+        use coset::TaggedCborSerializable;
+
+        use crate::{
+            assertions::{DataHash, UserCbor},
+            claim::Claim,
+            identity::{IdentityAssertion, SignerPayload},
+            manifest::StoreOptions,
+            settings::{Settings, TrustAnchor, TrustListKind},
+            store::Store,
+            Context, Manifest,
+        };
+
+        let mut claim = Claim::new("manifest timestamp test", None, 1);
+        let binding = claim
+            .add_assertion(&DataHash::new("asset", "sha256"))
+            .unwrap();
+        let signer_payload = SignerPayload {
+            referenced_assertions: vec![binding],
+            sig_type: "cawg.x509.cose".into(),
+            roles: Vec::new(),
+        };
+        let mut payload_bytes = Vec::new();
+        c2pa_cbor::to_writer(&mut payload_bytes, &signer_payload).unwrap();
+        let mut identity_certificate = certificate(&[SMIME_POLICIES[0]], &[EMAIL]);
+        // Expired at validation time, but valid at the manifest's attested time.
+        identity_certificate.tbs_certificate.validity.not_before =
+            rasn_pkix::Time::General(at(1_735_689_600).into());
+        identity_certificate.tbs_certificate.validity.not_after =
+            rasn_pkix::Time::General(at(1_767_312_000).into());
+        let (identity_signature, identity_pem) =
+            signed_cose_with_certificate(&identity_certificate, &payload_bytes);
+        let identity_sign1 = parse_cose_sign1(
+            &identity_signature,
+            &payload_bytes,
+            &mut StatusTracker::default(),
+        )
+        .unwrap();
+        assert!(get_cose_tst_info(&identity_sign1).is_none());
+        let identity = IdentityAssertion {
+            signer_payload,
+            signature: identity_signature,
+            pad1: Vec::new(),
+            pad2: None,
+            label: None,
+        };
+        let mut identity_bytes = Vec::new();
+        c2pa_cbor::to_writer(&mut identity_bytes, &identity).unwrap();
+        claim
+            .add_assertion(&UserCbor::new("cawg.identity", identity_bytes))
+            .unwrap();
+        claim.build().unwrap();
+
+        let data = claim.data().unwrap();
+        let (signature, _) = signed_cose(&[], &[DOCUMENT_SIGNING], &data);
+        let mut sign1 = parse_cose_sign1(&signature, &data, &mut StatusTracker::default()).unwrap();
+        let tsa = add_timestamp(&mut sign1, b"20260101000000Z");
+        sign1.payload = None;
+        claim.set_signature_val(sign1.to_tagged_vec().unwrap());
+
+        for trust_timestamp in [false, true] {
+            let mut settings = Settings::default();
+            settings.core.decode_identity_assertions = true;
+            settings.trust.anchors = Some(vec![
+                TrustAnchor {
+                    trust_anchors: String::new(),
+                    trust_uri: Some("test:identity".into()),
+                    trust_kind: TrustListKind::CAWG,
+                    trust_config: None,
+                    allowed_list: Some(String::from_utf8(identity_pem.clone()).unwrap()),
+                    trusted_ica_issuers: None,
+                },
+                TrustAnchor {
+                    trust_anchors: if trust_timestamp {
+                        String::from_utf8(tsa.clone()).unwrap()
+                    } else {
+                        String::new()
+                    },
+                    trust_uri: Some("test:tsa".into()),
+                    trust_kind: TrustListKind::TSA,
+                    trust_config: None,
+                    allowed_list: None,
+                    trusted_ica_issuers: None,
+                },
+            ]);
+            let context = Context::new().with_settings(settings).unwrap();
+            let mut store = Store::from_context(&context);
+            store.commit_claim(claim.clone()).unwrap();
+            for asynchronous in [false, true] {
+                let mut log = StatusTracker::default();
+                if asynchronous {
+                    Manifest::from_store_async(
+                        &store,
+                        claim.label(),
+                        &mut StoreOptions::default(),
+                        &mut log,
+                        &context,
+                    )
+                    .await
+                    .unwrap();
+                } else {
+                    Manifest::from_store(
+                        &store,
+                        claim.label(),
+                        &mut StoreOptions::default(),
+                        &mut log,
+                        &context,
+                    )
+                    .unwrap();
+                }
+
+                assert_eq!(
+                    log.has_status(validation_status::CAWG_X509_CREDENTIAL_TRUSTED),
+                    trust_timestamp,
+                    "{log:?}",
+                );
+                assert_eq!(
+                    log.has_status("cawg.x509.time_stamp.trusted"),
+                    trust_timestamp
+                );
+                assert_eq!(
+                    log.has_status("cawg.x509.time_stamp.validated"),
+                    trust_timestamp
+                );
+                assert_eq!(
+                    log.has_status(validation_status::CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY),
+                    !trust_timestamp,
+                    "{log:?}",
+                );
+            }
+        }
+    }
+
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn timestamp_assertion_is_verified_against_the_referenced_claim_not_just_its_label() {
         use crate::{
@@ -835,23 +994,36 @@ mod tests {
         use coset::{cbor::value::Value, Label};
         let (sign1, tsa) = timestamped_sign1(b"20270331235959Z");
         let mut policy = CertificateTrustPolicy::default();
-        policy.add_trust_anchors(
-            &tsa, "test:tsa", super::super::TrustAnchorType::TSA, None,
-        ).unwrap();
+        policy
+            .add_trust_anchors(&tsa, "test:tsa", super::super::TrustAnchorType::TSA, None)
+            .unwrap();
 
         let mut with_legacy = sign1.clone();
-        with_legacy.unprotected.rest.insert(0, (Label::Text("sigTst".into()), Value::Null));
+        with_legacy
+            .unprotected
+            .rest
+            .insert(0, (Label::Text("sigTst".into()), Value::Null));
         assert!(trusted_cawg_timestamp(
-            &with_legacy, b"payload", &policy, &mut StatusTracker::default(),
-        ).is_some());
+            &with_legacy,
+            b"payload",
+            &policy,
+            &mut StatusTracker::default(),
+        )
+        .is_some());
 
         for value in [
             Value::Null,
-            Value::Map(vec![(Value::Text("tstTokens".into()), Value::Array(vec![]))]),
-            Value::Map(vec![(Value::Text("tstTokens".into()), Value::Array(vec![
-                Value::Map(vec![(Value::Text("val".into()), Value::Bytes(vec![]))]),
-                Value::Map(vec![(Value::Text("val".into()), Value::Bytes(vec![]))]),
-            ]))]),
+            Value::Map(vec![(
+                Value::Text("tstTokens".into()),
+                Value::Array(vec![]),
+            )]),
+            Value::Map(vec![(
+                Value::Text("tstTokens".into()),
+                Value::Array(vec![
+                    Value::Map(vec![(Value::Text("val".into()), Value::Bytes(vec![]))]),
+                    Value::Map(vec![(Value::Text("val".into()), Value::Bytes(vec![]))]),
+                ]),
+            )]),
         ] {
             let mut malformed = sign1.clone();
             malformed.unprotected.rest.last_mut().unwrap().1 = value;

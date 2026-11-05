@@ -336,7 +336,6 @@ impl IdentityAssertion {
                         let _ = ctp.add_end_entity_credentials(al.as_bytes());
                     }
                 }
-
             }
 
             if let Some(anchors) = &settings.trust.anchors_for_trust_kind(TrustListKind::TSA) {
