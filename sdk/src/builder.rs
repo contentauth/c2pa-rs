@@ -6186,6 +6186,53 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Invalid);
     }
 
+    #[cfg(feature = "unstable_structured_text")]
+    #[c2pa_test_async]
+    async fn test_builder_structured_text_remote_url_async() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let mut builder = Builder::default()
+            .with_definition(json!({"title": "Remote manifest"}))
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCreation));
+        builder.set_no_embed(true);
+        builder.set_remote_url(url);
+
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
+        let mut dest = Cursor::new(Vec::new());
+        let manifest = builder
+            .sign_async(
+                &signer,
+                "text/markdown",
+                &mut Cursor::new(b"# Title\n".to_vec()),
+                &mut dest,
+            )
+            .await
+            .unwrap();
+        let output = dest.into_inner();
+
+        let reader = Reader::default()
+            .with_manifest_data_and_stream_async(
+                &manifest,
+                "text/markdown",
+                Cursor::new(output.clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let context = Context::new()
+            .with_settings(serde_json::json!({"verify": {"remote_manifest_fetch": false}}))
+            .unwrap();
+        let result = Reader::from_context(context)
+            .with_stream_async("text/markdown", Cursor::new(output))
+            .await;
+        assert!(
+            matches!(&result, Err(Error::RemoteManifestUrl(found)) if found == url),
+            "{:?}",
+            result.err()
+        );
+    }
+
     #[test]
     #[cfg(feature = "unstable_structured_text")]
     fn test_builder_structured_text_rejects_url_with_embedded_manifest() {

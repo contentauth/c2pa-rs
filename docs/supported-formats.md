@@ -51,3 +51,5 @@ The Rust library supports the following text formats when the `unstable_structur
 | `toml`           | `application/toml`      |
 | `vtt`            | `text/vtt`              |
 | `yaml`, `yml`    | `application/yaml`      |
+
+These formats hold either an embedded manifest or a remote manifest URL, but not both. To sign with a URL, set both `Builder::set_remote_url` and `Builder::set_no_embed(true)`. If the file already has a manifest block, signing replaces its reference and keeps its form. Otherwise, a new block in Markdown front matter uses the C2PA A.9 multi-line form, which isn't valid YAML alongside other front matter fields.
