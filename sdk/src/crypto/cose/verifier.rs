@@ -529,6 +529,7 @@ mod tests {
             data,
             None,
             TimeStampStorage::V1_sigTst,
+            &crate::Context::new(),
         )
         .unwrap();
 
@@ -559,7 +560,14 @@ mod tests {
         use crate::crypto::cose::{cose_signer::tests::TestSigner, sign, TimeStampStorage};
 
         let signer = TestSigner::new(SigningAlg::Es256);
-        let bytes = sign(&signer, b"data", None, TimeStampStorage::V2_sigTst2_CTT).unwrap();
+        let bytes = sign(
+            &signer,
+            b"data",
+            None,
+            TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(),
+        )
+        .unwrap();
         let original = CoseSign1::from_tagged_slice(&bytes).unwrap();
         let verifier = Verifier::IgnoreProfileAndTrustPolicy;
         for (alg, signature, expected_status) in [
@@ -604,7 +612,14 @@ mod tests {
         use crate::crypto::cose::{cose_signer::tests::TestSigner, sign, TimeStampStorage};
 
         let signer = TestSigner::new(SigningAlg::Ed25519);
-        let bytes = sign(&signer, b"data", None, TimeStampStorage::V1_sigTst).unwrap();
+        let bytes = sign(
+            &signer,
+            b"data",
+            None,
+            TimeStampStorage::V1_sigTst,
+            &crate::Context::new(),
+        )
+        .unwrap();
         let sign1 = CoseSign1::from_tagged_slice(&bytes).unwrap();
         let policy = CertificateTrustPolicy::default();
         let verifier = Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(&policy));
@@ -786,8 +801,15 @@ mod tests {
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
-        let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, &signer, 10000, &settings).unwrap();
+        let cose_bytes = crate::cose_sign::sign_claim(
+            &claim_bytes,
+            &signer,
+            10000,
+            &crate::Context::new()
+                .with_settings(settings.clone())
+                .unwrap(),
+        )
+        .unwrap();
 
         let sign1 =
             super::parse_cose_sign1(&cose_bytes, &claim_bytes, &mut StatusTracker::default())
@@ -818,7 +840,7 @@ mod tests {
                 } else {
                     verifier.verify_profile(&sign1, None, None, &mut profile_log)
                 };
-                assert_eq!(profile.is_err(), !allow_eku);
+                assert_eq!(profile.is_err(), invalid);
                 assert_eq!(profile_log.has_status(SIGNING_CREDENTIAL_INVALID), invalid);
 
                 let mut log = StatusTracker::default();
@@ -901,8 +923,14 @@ mod tests {
         // Sign below the layer that checks the certificate profile, which would refuse it.
         let signer = RawSignerCoseSigner::new(raw_signer.as_ref(), &cert_chain);
         let claim_bytes = b"claim";
-        let cose_bytes =
-            sign(&signer, claim_bytes, None, TimeStampStorage::V2_sigTst2_CTT).unwrap();
+        let cose_bytes = sign(
+            &signer,
+            claim_bytes,
+            None,
+            TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(),
+        )
+        .unwrap();
 
         let mut ctp = CertificateTrustPolicy::default();
         ctp.add_trust_anchors(

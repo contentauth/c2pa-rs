@@ -61,14 +61,17 @@ pub trait TimeStampProvider {
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
-    /// todo: THIS CODE IS NOT COMPATIBLE WITH C2PA 2.x sigTst2
-    fn send_time_stamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
+    /// Uses the caller's resolver, network policy and time-stamp request settings from `context`.
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+        context: &Context,
+    ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
-                let context = Context::new();
                 return Some(super::http_request::default_rfc3161_request(
-                    &url, headers, &body, message, &context,
+                    &url, headers, &body, message, context,
                 ));
             }
         }
@@ -113,17 +116,18 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     /// provided by [`Self::time_stamp_service_url()`], if any.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
+    /// Uses the caller's resolver, network policy and timeout settings from `context`.
     async fn send_time_stamp_request(
         &self,
         message: &[u8],
+        context: &Context,
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
-                let context = Context::new();
                 return Some(
                     super::http_request::default_rfc3161_request_async(
-                        &url, headers, &body, message, &context,
+                        &url, headers, &body, message, context,
                     )
                     .await,
                 );
@@ -218,15 +222,22 @@ mod tests {
         assert!(TimeStampProvider::time_stamp_service_url(&DefaultProvider).is_none());
         assert!(TimeStampProvider::time_stamp_request_headers(&DefaultProvider).is_none());
         assert!(TimeStampProvider::time_stamp_request_body(&DefaultProvider, b"data").is_ok());
-        assert!(TimeStampProvider::send_time_stamp_request(&DefaultProvider, b"data").is_none());
+        assert!(TimeStampProvider::send_time_stamp_request(
+            &DefaultProvider,
+            b"data",
+            &crate::Context::new()
+        )
+        .is_none());
         assert!(AsyncTimeStampProvider::time_stamp_service_url(&DefaultProvider).is_none());
         assert!(AsyncTimeStampProvider::time_stamp_request_headers(&DefaultProvider).is_none());
         assert!(AsyncTimeStampProvider::time_stamp_request_body(&DefaultProvider, b"data").is_ok());
-        assert!(
-            AsyncTimeStampProvider::send_time_stamp_request(&DefaultProvider, b"data")
-                .await
-                .is_none()
-        );
+        assert!(AsyncTimeStampProvider::send_time_stamp_request(
+            &DefaultProvider,
+            b"data",
+            &crate::Context::new()
+        )
+        .await
+        .is_none());
     }
 
     #[c2pa_macros::c2pa_test_async]
@@ -253,11 +264,18 @@ mod tests {
             }
         }
 
-        assert!(TimeStampProvider::send_time_stamp_request(&InvalidBody, b"data").is_none());
-        assert!(
-            AsyncTimeStampProvider::send_time_stamp_request(&InvalidBody, b"data")
-                .await
-                .is_none()
-        );
+        assert!(TimeStampProvider::send_time_stamp_request(
+            &InvalidBody,
+            b"data",
+            &crate::Context::new()
+        )
+        .is_none());
+        assert!(AsyncTimeStampProvider::send_time_stamp_request(
+            &InvalidBody,
+            b"data",
+            &crate::Context::new()
+        )
+        .await
+        .is_none());
     }
 }

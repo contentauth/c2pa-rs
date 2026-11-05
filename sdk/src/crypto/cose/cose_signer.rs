@@ -175,6 +175,7 @@ pub(super) mod tests {
         fn send_time_stamp_request(
             &self,
             _message: &[u8],
+            _context: &crate::Context,
         ) -> Option<Result<Vec<u8>, TimeStampError>> {
             self.timestamp.clone().map(Ok)
         }
@@ -206,6 +207,7 @@ pub(super) mod tests {
         async fn send_time_stamp_request(
             &self,
             _message: &[u8],
+            _context: &crate::Context,
         ) -> Option<Result<Vec<u8>, TimeStampError>> {
             self.timestamp.clone().map(Ok)
         }
@@ -224,7 +226,9 @@ pub(super) mod tests {
             raw.sign(b"payload").unwrap()
         );
         assert!(adapter.ocsp_responses().is_empty());
-        assert!(adapter.send_time_stamp_request(b"payload").is_none());
+        assert!(adapter
+            .send_time_stamp_request(b"payload", &crate::Context::new())
+            .is_none());
     }
 
     #[c2pa_macros::c2pa_test_async]

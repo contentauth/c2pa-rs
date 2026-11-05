@@ -1422,6 +1422,20 @@ pub(crate) mod message_imprint_regression {
         build_token_with(imprint_oid, imprint_md, data, TokenOptions::default())
     }
 
+    pub(crate) fn build_token_at(data: &[u8], gen_time: &[u8]) -> Vec<u8> {
+        build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            data,
+            TokenOptions {
+                gen_time: Some(gen_time),
+                profile_extensions: true,
+                signed_attrs: true,
+                ..Default::default()
+            },
+        )
+    }
+
     #[derive(Default)]
     struct TokenOptions<'a> {
         gen_time: Option<&'a [u8]>,
@@ -1429,6 +1443,7 @@ pub(crate) mod message_imprint_regression {
         signed_time: Option<(u8, &'a [u8])>,
         signed_attrs: bool,
         profile_extensions: bool,
+        signer_eku: Option<&'a str>,
         cms_digest: Option<(&'a [u8], MessageDigest)>,
     }
 
@@ -1457,8 +1472,9 @@ pub(crate) mod message_imprint_regression {
             .unwrap();
         cb.set_not_after(&Asn1Time::from_unix(1_900_000_000).unwrap())
             .unwrap();
-        cb.append_extension(ExtendedKeyUsage::new().time_stamping().build().unwrap())
-            .unwrap();
+        let mut eku = ExtendedKeyUsage::new();
+        eku.other(options.signer_eku.unwrap_or(super::TIMESTAMP_OID_STR));
+        cb.append_extension(eku.build().unwrap()).unwrap();
         if options.profile_extensions {
             use openssl::x509::extension::{
                 AuthorityKeyIdentifier, KeyUsage, SubjectKeyIdentifier,
@@ -2129,6 +2145,54 @@ pub(crate) mod message_imprint_regression {
                 false,
             );
             assert_eq!(result.is_ok(), !raw_extension);
+        }
+    }
+
+    #[test]
+    fn timestamp_trust_requires_timestamp_signing_eku() {
+        use crate::{crypto::cose::TrustAnchorType, validation_status::SIGNING_CREDENTIAL_INVALID};
+
+        for purpose in [
+            "1.3.6.1.4.1.62558.2.1",
+            "1.3.6.1.5.5.7.3.4",
+            "1.3.6.1.5.5.7.3.9",
+            super::TIMESTAMP_OID_STR,
+        ] {
+            let token = build_token_with(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                TokenOptions {
+                    profile_extensions: true,
+                    signer_eku: Some(purpose),
+                    ..Default::default()
+                },
+            );
+            let cert = super::tsa_signer_cert_der_from_token(&token)
+                .unwrap()
+                .unwrap();
+            let pem = openssl::x509::X509::from_der(&cert)
+                .unwrap()
+                .to_pem()
+                .unwrap();
+            let mut policy = CertificateTrustPolicy::default();
+            policy
+                .add_trust_anchors(&pem, "test:tsa", TrustAnchorType::TSA, None)
+                .unwrap();
+            let mut log = StatusTracker::default();
+            let result = verify_time_stamp(&token, DATA, &policy, &mut log, true);
+            assert!(log.has_status(TIMESTAMP_VALIDATED));
+
+            if purpose == super::TIMESTAMP_OID_STR {
+                assert!(result.is_ok(), "{result:?}: {log:?}");
+                assert!(log.has_status(TIMESTAMP_TRUSTED));
+                assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
+            } else {
+                assert!(matches!(result, Err(TimeStampError::Untrusted)));
+                assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+                assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+                assert!(!log.has_status(TIMESTAMP_TRUSTED));
+            }
         }
     }
 

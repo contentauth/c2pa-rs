@@ -57,6 +57,81 @@ pub(crate) struct StoreValidationInfo<'a> {
 }
 
 impl Store {
+    pub(crate) fn trusted_cawg_timestamp_for_assertion(
+        &self,
+        claim: &Claim,
+        assertion_label: &str,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Option<TstInfo>> {
+        use crate::crypto::cose::{trusted_cawg_timestamp, trusted_cawg_timestamp_token, Verifier};
+
+        let Some((signed_uri, _)) = claim.assertion_hashed_uri_from_label(assertion_label) else {
+            return Ok(None);
+        };
+        let local_reference = crate::jumbf::labels::manifest_label_from_uri(&signed_uri.url())
+            .is_none_or(|label| label == claim.label());
+        if !local_reference
+            || claim.get_claim_assertion_hash(assertion_label).as_deref()
+                != Some(signed_uri.hash().as_slice())
+        {
+            // Claim validation already reports the assertion hash mismatch.
+            return Ok(None);
+        }
+
+        let data = claim.data()?;
+        // The timestamp attests to the claim signature, not directly to the
+        // identity assertion. Verify that signature before reusing its time.
+        let mut signature_log = StatusTracker::default();
+        if Verifier::IgnoreProfileAndTrustPolicy
+            .verify_signature(claim.signature_val(), &data, &[], None, &mut signature_log)
+            .is_err()
+        {
+            log_item!(
+                "",
+                "manifest signature cannot establish the CAWG signing time",
+                "trusted_cawg_timestamp_for_claim"
+            )
+            .validation_status("cawg.x509.time_stamp.mismatch")
+            .informational(validation_log);
+            return Ok(None);
+        }
+
+        let sign1 = claim.cose_sign1()?;
+        if let Some(timestamp) = trusted_cawg_timestamp(&sign1, &data, &self.ctp, validation_log) {
+            return Ok(Some(timestamp));
+        }
+
+        for source_claim in self.claims() {
+            for assertion in source_claim.timestamp_assertions() {
+                let timestamps = match TimeStamp::from_assertion(assertion.assertion()) {
+                    Ok(timestamps) => timestamps,
+                    Err(_) => {
+                        log_item!(
+                            assertion.label(),
+                            "timestamp assertion malformed",
+                            "trusted_cawg_timestamp_for_claim"
+                        )
+                        .validation_status("cawg.x509.time_stamp.malformed")
+                        .informational(validation_log);
+                        continue;
+                    }
+                };
+                if let Some(token) = timestamps.as_ref().get(claim.label()) {
+                    if let Some(timestamp) = trusted_cawg_timestamp_token(
+                        token,
+                        &sign1.signature,
+                        &self.ctp,
+                        validation_log,
+                    ) {
+                        return Ok(Some(timestamp));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     // Returns the timestamp info only if the token validates for the claim's signature.
     pub(crate) fn verified_timestamp_for_claim(
         claim: &Claim,
@@ -171,8 +246,6 @@ impl Store {
                         None => ingredient.alg().to_owned(),
                     };
 
-                    // are we evaluating a 2.x manifest, then use those rule
-                    let ingredient_version = ingredient.version();
                     let has_redactions = svi.redactions.iter().any(|r| r.contains(&label));
 
                     // allow the extra ingredient trust checks
@@ -226,9 +299,9 @@ impl Store {
                         )?;
                     }
 
-                    // if manifest hash did not match because of redaction and this is a V2 or greater claim then we
-                    // must try the signature validation method before proceeding
-                    if !manifests_match && has_redactions && ingredient_version > 1 {
+                    // Only ingredient assertions v3 and later support claimSignature.
+                    // Require it regardless of the child claim version.
+                    if !manifests_match && has_redactions && ingredient_assertion.version >= 3 {
                         let claim_signature =
                             ingredient_assertion.signature().ok_or_else(|| {
                                 log_item!(
@@ -471,15 +544,14 @@ impl Store {
 
                 // save the ocsp_ders stored in the StoreValidationInfo
                 for ocsp_der in certificate_status_assertion.as_ref() {
-                    // OCSP status codes refer to the claim signature box
-                    validation_log.push_current_uri(found_claim.signature_uri());
+                    // Collect evidence without reporting a current-time verdict.
+                    // Claim verification selects the source and evaluates it at signing time.
                     let checked = OcspResponse::from_der_checked(
                         ocsp_der,
                         &signing_cert_chain,
                         None,
-                        validation_log,
+                        &mut StatusTracker::default(),
                     );
-                    validation_log.pop_current_uri();
 
                     if let Ok(response) = checked {
                         let ocsp_ders = svi
@@ -617,5 +689,341 @@ impl Store {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod ocsp_reporting_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use coset::{cbor::value::Value, CoseSign1, Label, TaggedCborSerializable};
+
+    use super::*;
+    use crate::{
+        assertions::DataHash,
+        cose_validator::{check_ocsp_status, check_ocsp_status_async, get_signing_cert_serial_num},
+        crypto::{
+            asn1::{rfc3161::MessageImprint, AlgorithmIdentifier, GeneralizedTime},
+            cert_chain_pem_to_der,
+            ocsp::test_responder::{encode_response, good_basic_response},
+        },
+        settings::Settings,
+        utils::test::create_test_claim,
+    };
+
+    const GOOD: &[u8] = include_bytes!("../../tests/fixtures/crypto/ocsp/response_good.der");
+    const REVOKED: &[u8] = include_bytes!("../../tests/fixtures/crypto/ocsp/response_revoked.der");
+
+    fn context(override_assertion: bool) -> Context {
+        let mut settings = Settings::default();
+        settings.verify.ocsp_fetch = false;
+        settings.verify.ocsp_fetch_should_override = false;
+        settings.builder.certificate_status_should_override = Some(override_assertion);
+        Context::new().with_settings(settings).unwrap()
+    }
+
+    fn store(responses: Vec<Vec<u8>>, staple: Option<&[u8]>, context: &Context) -> Store {
+        let chain = cert_chain_pem_to_der(include_bytes!(
+            "../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
+        ))
+        .unwrap();
+        // Only the COSE headers are needed at this collection/OCSP boundary.
+        // The OCSP responses themselves retain their real signatures.
+        let mut sign1 = CoseSign1 {
+            protected: coset::ProtectedHeader::default(),
+            unprotected: coset::Header::default(),
+            payload: None,
+            signature: vec![0; 8],
+        };
+        sign1.unprotected.rest.push((
+            Label::Text("x5chain".into()),
+            Value::Array(chain.into_iter().map(Value::Bytes).collect()),
+        ));
+
+        if let Some(staple) = staple {
+            sign1.unprotected.rest.push((
+                Label::Text("rVals".into()),
+                Value::Map(vec![(
+                    Value::Text("ocspVals".into()),
+                    Value::Array(vec![Value::Bytes(staple.to_vec())]),
+                )]),
+            ));
+        }
+
+        let mut claim = create_test_claim().unwrap();
+        claim
+            .add_assertion(&DataHash::new("test asset", "sha256"))
+            .unwrap();
+        claim
+            .add_assertion(&CertificateStatus::new(responses))
+            .unwrap();
+        claim.set_signature_val(sign1.to_tagged_vec().unwrap());
+        let mut store = Store::from_context(context);
+        store.commit_claim(claim).unwrap();
+        store
+            .ctp
+            .add_end_entity_credentials(include_bytes!(
+                "../../tests/fixtures/crypto/ocsp/ocsp_responder.pem"
+            ))
+            .unwrap();
+        store
+    }
+
+    fn signing_timestamp() -> TstInfo {
+        // StoreValidationInfo holds already verified timestamps; timestamp
+        // authentication is covered separately by verified_timestamp_for_claim.
+        TstInfo {
+            version: bcder::Integer::from(1u8),
+            policy: "1.2.3.4".parse().unwrap(),
+            message_imprint: MessageImprint {
+                hash_algorithm: AlgorithmIdentifier {
+                    algorithm: "2.16.840.1.101.3.4.2.1".parse().unwrap(),
+                },
+                hashed_message: bcder::OctetString::new(bytes::Bytes::from_static(&[0; 32])),
+            },
+            serial_number: bcder::Integer::from(1u8),
+            gen_time: GeneralizedTime::from_der_bytes(b"\x18\x0f20250307150000Z").unwrap(),
+            accuracy: None,
+            ordering: None,
+            nonce: None,
+            tsa: None,
+            extensions: None,
+        }
+    }
+
+    #[async_generic]
+    fn evaluate(
+        store: &Store,
+        svi: &StoreValidationInfo<'_>,
+        log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<OcspResponse> {
+        let claim = store.provenance_claim().unwrap();
+        let sign1 = claim.cose_sign1().unwrap();
+        let serial = get_signing_cert_serial_num(&sign1).unwrap().to_string();
+        log.push_current_uri(claim.signature_uri());
+        let data = claim.data().unwrap();
+        let result = if _sync {
+            check_ocsp_status(
+                &sign1,
+                &data,
+                &store.ctp,
+                svi.certificate_statuses.get(&serial),
+                svi.timestamps.get(claim.label()),
+                log,
+                context,
+            )
+        } else {
+            check_ocsp_status_async(
+                &sign1,
+                &data,
+                &store.ctp,
+                svi.certificate_statuses.get(&serial),
+                svi.timestamps.get(claim.label()),
+                log,
+                context,
+            )
+            .await
+        };
+        log.pop_current_uri();
+        result
+    }
+
+    fn assert_only_status(log: &StatusTracker, store: &Store, status: &str) {
+        let statuses: Vec<_> = log
+            .logged_items()
+            .iter()
+            .filter(|item| item.validation_status.is_some())
+            .collect();
+        assert_eq!(statuses.len(), 1, "{statuses:#?}");
+        assert_eq!(statuses[0].validation_status.as_deref(), Some(status));
+        assert_eq!(
+            statuses[0].label,
+            store.provenance_claim().unwrap().signature_uri()
+        );
+    }
+
+    #[test]
+    fn collection_does_not_duplicate_authoritative_revocation() {
+        let context = context(true);
+        let store = store(vec![REVOKED.to_vec(), REVOKED.to_vec()], None, &context);
+        let claim = store.provenance_claim().unwrap();
+        let mut log = StatusTracker::default();
+        let mut svi = store
+            .get_store_validation_info(claim, None, &mut log, &context)
+            .unwrap();
+        assert!(log.logged_items().is_empty());
+        svi.timestamps
+            .insert(claim.label().to_owned(), signing_timestamp());
+
+        assert!(evaluate(&store, &svi, &mut log, &context).is_err());
+        assert_only_status(&log, &store, validation_status::SIGNING_CREDENTIAL_REVOKED);
+    }
+
+    #[test]
+    fn stale_good_uses_only_its_claims_signing_time() {
+        let context = context(true);
+        let store = store(vec![GOOD.to_vec()], None, &context);
+        let claim = store.provenance_claim().unwrap();
+        let mut log = StatusTracker::default();
+        let mut svi = store
+            .get_store_validation_info(claim, None, &mut log, &context)
+            .unwrap();
+        assert!(log.logged_items().is_empty());
+        svi.timestamps
+            .insert("another claim".into(), signing_timestamp());
+
+        evaluate(&store, &svi, &mut log, &context).unwrap();
+        assert!(log.logged_items().is_empty());
+        svi.timestamps
+            .insert(claim.label().to_owned(), signing_timestamp());
+
+        evaluate(&store, &svi, &mut log, &context).unwrap();
+        assert_only_status(
+            &log,
+            &store,
+            validation_status::SIGNING_CREDENTIAL_NOT_REVOKED,
+        );
+    }
+
+    #[test]
+    fn unselected_assertion_does_not_report_revocation() {
+        for override_assertion in [false, true] {
+            let context = context(override_assertion);
+            let store = store(vec![REVOKED.to_vec()], Some(GOOD), &context);
+            let claim = store.provenance_claim().unwrap();
+            let mut log = StatusTracker::default();
+            let mut svi = store
+                .get_store_validation_info(claim, None, &mut log, &context)
+                .unwrap();
+            assert!(log.logged_items().is_empty());
+            svi.timestamps
+                .insert(claim.label().to_owned(), signing_timestamp());
+
+            if override_assertion {
+                assert!(evaluate(&store, &svi, &mut log, &context).is_err());
+                assert_only_status(&log, &store, validation_status::SIGNING_CREDENTIAL_REVOKED);
+            } else {
+                evaluate(&store, &svi, &mut log, &context).unwrap();
+                assert_only_status(
+                    &log,
+                    &store,
+                    validation_status::SIGNING_CREDENTIAL_NOT_REVOKED,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_and_unauthenticated_evidence_cannot_report_good() {
+        let context = context(true);
+        let mut tampered = good_basic_response();
+        tampered.tbs_response_data.responses[0]
+            .cert_id
+            .serial_number = 1.into();
+        let store = store(vec![vec![0], encode_response(&tampered)], None, &context);
+        let claim = store.provenance_claim().unwrap();
+        let mut log = StatusTracker::default();
+        let mut svi = store
+            .get_store_validation_info(claim, None, &mut log, &context)
+            .unwrap();
+        assert!(log.logged_items().is_empty());
+        let serial = get_signing_cert_serial_num(&claim.cose_sign1().unwrap())
+            .unwrap()
+            .to_string();
+        assert!(!svi.certificate_statuses.contains_key(&serial));
+        svi.timestamps
+            .insert(claim.label().to_owned(), signing_timestamp());
+
+        evaluate(&store, &svi, &mut log, &context).unwrap();
+        assert_only_status(
+            &log,
+            &store,
+            validation_status::SIGNING_CREDENTIAL_OCSP_SKIPPED,
+        );
+    }
+
+    #[test]
+    fn collected_response_still_requires_authoritative_responder_trust() {
+        let context = context(true);
+        let mut store = store(vec![GOOD.to_vec()], None, &context);
+        store.ctp = CertificateTrustPolicy::new();
+        let claim = store.provenance_claim().unwrap();
+        let mut log = StatusTracker::default();
+        let mut svi = store
+            .get_store_validation_info(claim, None, &mut log, &context)
+            .unwrap();
+        let serial = get_signing_cert_serial_num(&claim.cose_sign1().unwrap())
+            .unwrap()
+            .to_string();
+        assert_eq!(svi.certificate_statuses[&serial], vec![GOOD.to_vec()]);
+        svi.timestamps
+            .insert(claim.label().to_owned(), signing_timestamp());
+
+        evaluate(&store, &svi, &mut log, &context).unwrap();
+        assert!(!log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn asynchronous_validation_preserves_selection_and_failures() {
+        for override_assertion in [false, true] {
+            let context = context(override_assertion);
+            let store = store(vec![REVOKED.to_vec()], Some(GOOD), &context);
+            let claim = store.provenance_claim().unwrap();
+            let mut log = StatusTracker::default();
+            let mut svi = store
+                .get_store_validation_info(claim, None, &mut log, &context)
+                .unwrap();
+            assert!(log.logged_items().is_empty());
+            svi.timestamps
+                .insert(claim.label().to_owned(), signing_timestamp());
+
+            let result = evaluate_async(&store, &svi, &mut log, &context).await;
+            let expected = if override_assertion {
+                assert!(result.is_err());
+                validation_status::SIGNING_CREDENTIAL_REVOKED
+            } else {
+                result.unwrap();
+                validation_status::SIGNING_CREDENTIAL_NOT_REVOKED
+            };
+            assert_only_status(&log, &store, expected);
+        }
+    }
+
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn fresh_good_reports_once_after_collection() {
+        use chrono::{DateTime, Duration, Utc};
+
+        use crate::crypto::ocsp::test_responder::TestResponder;
+
+        let context = context(true);
+        let responder = TestResponder::new();
+        let mut basic = good_basic_response();
+        let now = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
+        basic.tbs_response_data.produced_at = (now - Duration::hours(1)).fixed_offset();
+        basic.tbs_response_data.responses[0].this_update =
+            (now - Duration::hours(1)).fixed_offset();
+        basic.tbs_response_data.responses[0].next_update =
+            Some((now + Duration::hours(24)).fixed_offset());
+        let mut store = store(vec![responder.sign(basic)], None, &context);
+        store
+            .ctp
+            .add_end_entity_credentials(&responder.cert_pem())
+            .unwrap();
+        let claim = store.provenance_claim().unwrap();
+        let mut log = StatusTracker::default();
+        let svi = store
+            .get_store_validation_info(claim, None, &mut log, &context)
+            .unwrap();
+        assert!(log.logged_items().is_empty());
+
+        evaluate(&store, &svi, &mut log, &context).unwrap();
+        assert_only_status(
+            &log,
+            &store,
+            validation_status::SIGNING_CREDENTIAL_NOT_REVOKED,
+        );
     }
 }
