@@ -81,6 +81,7 @@ fn verify_first_signer(token: &[u8], message: &[u8])
     -> Result<(), Box<dyn std::error::Error>>
 {
     let parsed = ParsedTimestamp::parse(token)?;
+
     let signed = parsed.verify_signatures().next().ok_or("no timestamp signer")??;
 
     // Host temporal policy: use the attested time, certificate bounds and
@@ -88,16 +89,20 @@ fn verify_first_signer(token: &[u8], message: &[u8])
     let time = signed.generation_time().timestamp();
     let (start, end) = signed.signer_validity();
     let margin = signed.accuracy_seconds();
+
     if time < start.saturating_sub(margin) || time > end.saturating_add(margin) {
         return Err("timestamp outside signer validity".into());
     }
 
     let verified = signed.verify_message_imprint(message)?;
     let signer_certificate_der = verified.signature().signer_certificate();
+
     // Validate this certificate's TSA profile and chain against host TSA
     // anchors before treating verified.generation_time() as accepted time.
     let _ = signer_certificate_der;
-    Ok(()) // Cryptographic/temporal checks only; NOT a trust verdict.
+
+    // These are only cryptographic and temporal checks, not a trust verdict.
+    Ok(())
 }
 ```
 

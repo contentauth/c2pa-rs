@@ -142,7 +142,7 @@ pub(crate) fn parse_and_validate_sigtst(
 
     let mut tstinfos: Vec<TstInfo> = vec![];
 
-    // only a single value is allowed in tstTokens
+    // Only a single value is allowed in tstTokens.
     if tst_container.tst_tokens.len() > 1 {
         log_item!(
             "",
@@ -246,8 +246,7 @@ pub(crate) fn add_sigtst_header(
         let mut cts = cts?;
 
         if tss == TimeStampStorage::V2_sigTst2_CTT {
-            // In `sigTst2`, we use only the `TimeStampToken` and not `TimeStampRsp` for
-            // sigTst2
+            // Use only the `TimeStampToken`, not `TimeStampRsp`, in `sigTst2`.
             cts = timestamptoken_from_timestamprsp(&cts).map_err(|err| {
                 TimeStampError::DecodeError(format!(
                     "unable to parse time stamp token from timestamp response: {err:?}"
@@ -299,6 +298,7 @@ pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
                 VerificationErrorKind::DecodeError(message) => {
                     CoseError::InternalError(message).into()
                 }
+
                 other => CoseError::InternalError(other.to_string()).into(),
             }
         })

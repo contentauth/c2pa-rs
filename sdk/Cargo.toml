@@ -49,7 +49,11 @@ openssl = [
     "contentauth-signature-infrastructure/openssl",
 ]
 pdf = ["dep:lopdf"]
-rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto", "contentauth-signature-infrastructure/rust_native_crypto"]
+rust_native_crypto = [
+    "c2pa_raw_crypto/rust_native_crypto",
+    "contentauth-signature-infrastructure/rust_native_crypto",
+]
+
 # Native structured-text asset handler (C2PA A.9 ASCII-armour comment block). Experimental
 # feature: exempt from the crate's usual semantic-versioning stability guarantees and may change
 # or be removed in any release. See docs/experimental-features.md.

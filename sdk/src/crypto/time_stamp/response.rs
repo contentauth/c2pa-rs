@@ -21,15 +21,18 @@ pub(crate) mod tests {
         struct Status {
             status: rasn::types::Integer,
         }
+
         #[derive(AsnType, Encode)]
         struct Response {
             status: Status,
             token: Option<Any>,
         }
+
         rasn::der::encode(&Response {
             status: Status {
                 status: status.into(),
             },
+
             token: token.map(|token| Any::new(token.to_vec())),
         })
         .unwrap()

@@ -12,6 +12,7 @@ publish = false
 default = ["rust_native_crypto"]
 openssl = ["c2pa_raw_crypto/openssl"]
 rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
+
 # Provisional bridge for the SDK's deferred profile, trust and OCSP consumers.
 sdk-compat = []
 
