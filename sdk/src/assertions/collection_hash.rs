@@ -136,7 +136,7 @@ impl CollectionHash {
         let format = mime::mime_from_path(&path);
         let metadata = fs::metadata(&path)?;
         let entry = UriHashedDataMap {
-            uri: Self::path_to_uri(&path),
+            uri: Self::path_to_uri(&path)?,
             hash: None,
             size: Some(metadata.len()),
             dc_format: format,
@@ -260,7 +260,7 @@ impl CollectionHash {
 
             let format = mime::mime_from_path(&path);
             self.uris.push(UriHashedDataMap {
-                uri: Self::path_to_uri(&path),
+                uri: Self::path_to_uri(&path)?,
                 hash: Some(hash),
                 size: Some(hash_range.length()),
                 dc_format: format,
@@ -329,7 +329,7 @@ impl CollectionHash {
 
         let uri_ranges = zip_uri_ranges(stream)?;
         for uri_map in &self.uris {
-            let path = PathBuf::from(Self::path_to_uri(Path::new(&uri_map.uri)));
+            let path = PathBuf::from(Self::path_to_uri(Path::new(&uri_map.uri))?);
             Self::validate_uri(&path)?;
 
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
@@ -354,8 +354,11 @@ impl CollectionHash {
     ///
     /// Path needs to be a valid URI, so normalize separators.
     /// https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
-    fn path_to_uri(path: &Path) -> String {
-        path.to_string_lossy().replace('\\', "/")
+    fn path_to_uri(path: &Path) -> Result<String> {
+        let path = path.to_str().ok_or_else(|| {
+            Error::BadParam(format!("path `{}` is not valid UTF-8", path.display()))
+        })?;
+        Ok(path.replace('\\', "/"))
     }
 
     /// Validates a collection URI per the C2PA spec.
