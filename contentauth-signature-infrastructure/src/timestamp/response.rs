@@ -110,3 +110,101 @@ impl TimeStampResponse {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use bcder::{
+        encode::{self, PrimitiveContent},
+        Captured, Mode, Tag,
+    };
+
+    use super::*;
+    use crate::asn1::rfc5652::ContentInfo;
+
+    fn response() -> TimeStampResponse {
+        TimeStampResponse(
+            Constructed::decode(
+                [0x30, 5, 0x30, 3, 2, 1, 0].as_slice(),
+                Mode::Der,
+                TimeStampResp::take_from,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn with_content(content_type: &Oid, content: Option<&[u8]>) -> TimeStampResponse {
+        let content_oid: bcder::Oid = content_type.to_string().parse().unwrap();
+        let cms = Captured::from_values(
+            Mode::Der,
+            encode::sequence((
+                3_u8.encode(),
+                encode::set(None::<bcder::Captured>),
+                encode::sequence((
+                    content_oid.encode_ref(),
+                    content
+                        .map(|bytes| bcder::OctetString::encode_slice(bytes).explicit(Tag::CTX_0)),
+                )),
+                encode::set(None::<bcder::Captured>),
+            )),
+        );
+        let mut response = response();
+        response.0.time_stamp_token = Some(ContentInfo {
+            content_type: "1.2.840.113549.1.7.2".parse().unwrap(),
+            content: cms,
+        });
+        response
+    }
+
+    #[test]
+    fn absent_tokens_and_timestamp_content_are_not_verified_evidence() {
+        let response = response();
+        assert!(response.signed_data().unwrap().is_none());
+        assert!(response.tst_info().unwrap().is_none());
+
+        let absent_info = with_content(Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO, None);
+        assert!(absent_info.signed_data().unwrap().is_some());
+        assert!(absent_info.tst_info().unwrap().is_none());
+
+        let wrong_content_type =
+            with_content(Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS7_DATA, Some(&[0]));
+        assert!(wrong_content_type.tst_info().unwrap().is_none());
+    }
+
+    #[test]
+    fn wrong_token_type_and_malformed_cms_are_explicit_decode_errors() {
+        let mut response = response();
+        response.0.time_stamp_token = Some(ContentInfo {
+            content_type: bcder::Oid(bytes::Bytes::from_static(&[0x2a, 3, 4])),
+            content: Captured::from_values(Mode::Der, 0_u8.encode()),
+        });
+        assert!(matches!(
+            response.signed_data(),
+            Err(AcquisitionError::DecodeError(message)) if message == "Invalid OID for signed data"
+        ));
+
+        response.0.time_stamp_token.as_mut().unwrap().content_type =
+            "1.2.840.113549.1.7.2".parse().unwrap();
+        assert!(matches!(
+            response.signed_data(),
+            Err(AcquisitionError::DecodeError(message)) if message == "time stamp invalid"
+        ));
+        assert!(matches!(
+            response.tst_info(),
+            Err(AcquisitionError::DecodeError(_))
+        ));
+    }
+
+    #[test]
+    fn malformed_embedded_timestamp_information_is_a_decode_error() {
+        let response = with_content(
+            Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO,
+            Some(&[0]),
+        );
+        assert!(matches!(
+            response.tst_info(),
+            Err(AcquisitionError::DecodeError(_))
+        ));
+    }
+}
