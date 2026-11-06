@@ -160,19 +160,11 @@ fn strip_blocks(text: &str) -> String {
     out
 }
 
-/// The A.9 exclusion span; an end-of-file block also excludes the preceding newline.
-fn exclusion_span(text: &str, block: &BlockInfo) -> (usize, usize) {
-    let mut start = block.start;
-    if block.end == text.len() && start > 0 {
-        let bytes = text.as_bytes();
-        if bytes[start - 1] == b'\n' {
-            start -= 1;
-            if start > 0 && bytes[start - 1] == b'\r' {
-                start -= 1;
-            }
-        }
-    }
-    (start, block.end - start)
+/// The A.9 exclusion span: the manifest block's line or lines, through the line terminator.
+/// The content before it, including the line terminator that ends the preceding line, stays
+/// hashed wherever the block is placed.
+fn exclusion_span(block: &BlockInfo) -> (usize, usize) {
+    (block.start, block.end - block.start)
 }
 
 fn build_block_line(style: CommentStyle, reference: &str) -> String {
@@ -241,10 +233,16 @@ fn insert_block(cleaned: &str, reference: &str, style: CommentStyle, asset_type:
         }
     }
 
+    // The block goes on its own line after the content, which is kept byte for byte: a line
+    // terminator is added before the block only when the content does not already end with one.
     let trimmed = cleaned.trim_start();
     if trimmed.starts_with("#!") || trimmed.starts_with("<?xml") {
-        let base = cleaned.trim_end_matches(['\r', '\n']);
-        return format!("{base}{le}{block_line}");
+        let separator = if cleaned.is_empty() || cleaned.ends_with('\n') {
+            ""
+        } else {
+            le
+        };
+        return format!("{cleaned}{separator}{block_line}{le}");
     }
 
     format!("{block_line}{le}{cleaned}")
@@ -330,7 +328,7 @@ impl C2paWriter for StructuredTextIO {
 
         let (full_len, block_start, block_len) = match locate_block(&text) {
             Some(b) => {
-                let (start, len) = exclusion_span(&text, &b);
+                let (start, len) = exclusion_span(&b);
                 (text.len(), start, len)
             }
             None => {
@@ -339,7 +337,7 @@ impl C2paWriter for StructuredTextIO {
                 let reference = encode_data_uri(PLACEHOLDER_STORE);
                 let with_block = insert_block(&text, &reference, style, &self.asset_type);
                 let b = locate_block(&with_block).ok_or(Error::EmbeddingError)?;
-                let (start, len) = exclusion_span(&with_block, &b);
+                let (start, len) = exclusion_span(&b);
                 (with_block.len(), start, len)
             }
         };
@@ -450,9 +448,52 @@ mod tests {
         assert_eq!(read_back("py", &out).unwrap(), b"store");
     }
 
+    /// An end-of-file block (after a shebang or XML declaration) excludes only its own line:
+    /// the content before it, including its final line terminator, is kept and hashed.
     #[test]
-    fn end_placed_block_exclusion_starts_at_preceding_newline() {
-        let out = embed("py", "#!/usr/bin/env python\nprint('hi')\n", b"store");
+    fn end_placed_block_excludes_only_the_block_line() {
+        for (asset_type, source) in [
+            ("py", "#!/usr/bin/env python\nprint('hi')\n"),
+            ("py", "#!/usr/bin/env python\r\nprint('hi')\r\n"),
+            ("py", "#!/usr/bin/env python\nprint('hi')\n\n"),
+        ] {
+            let out = embed(asset_type, source, b"store");
+            assert!(
+                out.starts_with(source),
+                "content must be kept byte for byte"
+            );
+
+            let io = StructuredTextIO::new(asset_type);
+            let mut cursor = Cursor::new(out.clone().into_bytes());
+            let locations = io.get_object_locations(&mut cursor).unwrap();
+            let cai = locations
+                .iter()
+                .find(|p| p.htype == ObjectType::C2pa)
+                .unwrap();
+            assert_eq!(
+                cai.offset as usize,
+                source.len(),
+                "exclusion starts at the block line"
+            );
+            assert_eq!(
+                (cai.offset as usize) + (cai.length as usize),
+                out.len(),
+                "exclusion runs to EOF"
+            );
+            let excluded = &out[source.len()..];
+            assert!(excluded.starts_with("# -----BEGIN C2PA MANIFEST-----"));
+            assert!(excluded.trim_end().ends_with(END_DELIMITER));
+        }
+    }
+
+    /// Content without a final line terminator gets one, so the block is on its own line;
+    /// the exclusion still covers only the block line.
+    #[test]
+    fn end_placed_block_after_unterminated_last_line() {
+        let source = "#!/usr/bin/env python\nprint('hi')";
+        let out = embed("py", source, b"store");
+        assert!(out.starts_with(&format!("{source}\n# -----BEGIN")));
+
         let io = StructuredTextIO::new("py");
         let mut cursor = Cursor::new(out.clone().into_bytes());
         let locations = io.get_object_locations(&mut cursor).unwrap();
@@ -460,19 +501,9 @@ mod tests {
             .iter()
             .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
-        let excluded =
-            &out.as_bytes()[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
-        assert_eq!(
-            excluded[0], b'\n',
-            "exclusion must begin at the preceding newline"
-        );
-        assert_eq!(
-            (cai.offset as usize) + (cai.length as usize),
-            out.len(),
-            "exclusion runs to EOF"
-        );
-        let excluded = std::str::from_utf8(excluded).unwrap();
-        assert!(excluded.contains(BEGIN_DELIMITER) && excluded.contains(END_DELIMITER));
+        assert_eq!(cai.offset as usize, source.len() + 1);
+        assert_eq!((cai.offset as usize) + (cai.length as usize), out.len());
+        assert_eq!(read_back("py", &out).unwrap(), b"store");
     }
 
     #[test]
