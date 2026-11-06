@@ -265,6 +265,8 @@ pub(crate) enum SigningAlgSchema {
     Ps512,
     Ed25519,
 }
+#[doc(inline)]
+pub use asset_io::HandlerRegistry;
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use external_manifest::ManifestPatchCallback;
@@ -317,6 +319,18 @@ pub(crate) mod store;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
+
+// EXPERIMENT (local only, do not commit): asset-io equivalence check.
+#[cfg(all(test, feature = "asset_io"))]
+mod asset_io_adapter_test;
+#[cfg(test)]
+mod asset_io_bmff_test;
+#[cfg(test)]
+mod asset_io_equivalence_test;
+#[cfg(all(test, feature = "asset_io"))]
+mod asset_io_perf_test;
+#[cfg(test)]
+mod asset_io_riff_test;
 
 #[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
 compile_error!("Either 'openssl' or 'rust_native_crypto' feature must be enabled.");

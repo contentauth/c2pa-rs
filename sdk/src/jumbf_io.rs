@@ -17,17 +17,20 @@ use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 use lazy_static::lazy_static;
 
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", not(feature = "asset_io")))]
 use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "unstable_plain_text")]
 use crate::asset_handlers::plain_text_io::PlainTextIO;
 #[cfg(feature = "unstable_structured_text")]
 use crate::asset_handlers::structured_text_io::StructuredTextIO;
+#[cfg(not(feature = "asset_io"))]
+use crate::asset_handlers::tiff_io::TiffIO;
+#[cfg(not(feature = "asset_io"))]
+use crate::asset_handlers::{jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO};
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
-        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
-        tiff_io::TiffIO, zip_io::ZipIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpegxl_io::JpegXlIO,
+        mp3_io::Mp3IO, zip_io::ZipIO,
     },
     asset_io::{AssetIO, C2paReader, C2paWriter, HandlerRegistry, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
@@ -38,16 +41,33 @@ use crate::{
 // this single list so handlers only need to be enumerated here.
 lazy_static! {
     static ref HANDLER_PROTOTYPES: Vec<Box<dyn AssetIO>> = vec![
-        #[cfg(feature = "pdf")]
+        #[cfg(all(feature = "pdf", not(feature = "asset_io")))]
         Box::new(PdfIO::new("")),
+        #[cfg(all(feature = "pdf", feature = "asset_io"))]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("pdf")),
         Box::new(BmffIO::new("")),
         Box::new(C2paIO::new("")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(JpegIO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("jpg")),
         Box::new(JpegXlIO::new("")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(PngIO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("png")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(RiffIO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("wav")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(SvgIO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("svg")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(TiffIO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("tif")),
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
@@ -242,6 +262,12 @@ pub mod tests {
     use std::io::Seek;
 
     use super::*;
+    #[cfg(all(feature = "pdf", feature = "asset_io"))]
+    use crate::asset_handlers::pdf_io::PdfIO;
+    #[cfg(feature = "asset_io")]
+    use crate::asset_handlers::tiff_io::TiffIO;
+    #[cfg(feature = "asset_io")]
+    use crate::asset_handlers::{jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO};
     use crate::{
         utils::{test::create_test_store, test_signer::test_signer},
         SigningAlg,
@@ -378,6 +404,8 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "tif"));
         assert!(supported.iter().any(|s| s == "tiff"));
         assert!(supported.iter().any(|s| s == "dng"));
+        assert!(supported.iter().any(|s| s == "arw"));
+        assert!(supported.iter().any(|s| s == "nef"));
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
         assert!(supported.iter().any(|s| s == "jxl"));
