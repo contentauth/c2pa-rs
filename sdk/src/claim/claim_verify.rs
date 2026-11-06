@@ -311,6 +311,44 @@ impl Claim {
     // Build a diagnostic message for ingredientMismatch errors, showing the failing
     // action's index, type, each referenced ingredient URL, and the actual relationship
     // found (vs. the expected one).
+    /// Whether `h`, from a `c2pa.deleted` action's `ingredients`, is a valid hashed URI to a
+    /// `componentOf` ingredient assertion in a manifest other than `claim`'s, or to a redacted
+    /// ingredient assertion in one, per the spec's _Validate Assertions_ section.
+    fn is_deleted_ingredient_ref(
+        claim: &Claim,
+        svi: &StoreValidationInfo<'_>,
+        h: &crate::hashed_uri::HashedUri,
+    ) -> bool {
+        let url = h.url();
+        let Some(target) = manifest_label_from_uri(&url) else {
+            return false; // a relative reference is to this manifest
+        };
+        if target == claim.label() {
+            return false;
+        }
+        let (label, instance) = Claim::assertion_label_from_link(&url);
+        if !label.starts_with(labels::INGREDIENT) {
+            return false;
+        }
+        let redacted = svi.redactions.iter().any(|r| {
+            manifest_label_from_uri(r).is_some_and(|m| m == target)
+                && Claim::assertion_label_from_link(r) == (label.clone(), instance)
+        });
+        if redacted {
+            return true;
+        }
+        let Some(ca) = svi
+            .manifest_map
+            .get(&target)
+            .and_then(|c| c.get_claim_assertion(&label, instance))
+        else {
+            return false;
+        };
+        vec_compare(ca.hash(), &h.hash())
+            && Ingredient::from_assertion(ca.assertion())
+                .is_ok_and(|i| i.relationship == Relationship::ComponentOf)
+    }
+
     fn ingredient_mismatch_msg(
         claim: &Claim,
         action_index: usize,
@@ -747,6 +785,28 @@ impl Claim {
                                 action.action(),
                                 params,
                                 "componentOf",
+                            );
+                            log_item!(label.clone(), msg.clone(), "verify_actions")
+                                .validation_status(
+                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                                )
+                                .failure_no_throw(validation_log, Error::ValidationRule(msg));
+                        }
+                    }
+                }
+
+                // c2pa.deleted: an `ingredients` parameter must reference componentOf ingredient
+                // assertions in another manifest, with matching hashes, or redacted ones
+                if action.action() == c2pa_action::DELETED {
+                    if let Some(refs) = action.parameters().and_then(|p| p.ingredients.as_ref()) {
+                        let bad: Vec<String> = refs
+                            .iter()
+                            .filter(|h| !Self::is_deleted_ingredient_ref(claim, svi, h))
+                            .map(|h| h.url())
+                            .collect();
+                        if refs.is_empty() || !bad.is_empty() {
+                            let msg = format!(
+                                "action[{action_index}] ('c2pa.deleted') must reference componentOf ingredient(s) in another manifest; invalid: {bad:?}"
                             );
                             log_item!(label.clone(), msg.clone(), "verify_actions")
                                 .validation_status(
