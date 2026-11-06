@@ -573,7 +573,17 @@ fn box_maps_agree_apart_from_the_placeholder() {
                 .map(|b| (b.names, b.range_start, b.range_len))
                 .collect()
         };
-        let (ko, kn) = (key(ob), key(nb));
+        let (ko, mut kn) = (key(ob), key(nb));
+        if name == "polyglot_signed.jpg" {
+            // The adapter exposes the bytes after JPEG EOI as `c2pa.after`; the
+            // legacy JPEG map does not represent that trailer as a box.
+            let trailer = (vec!["c2pa.after".to_string()], 71462, 801);
+            assert!(
+                kn.contains(&trailer),
+                "{name}: expected adapter trailer box"
+            );
+            kn.retain(|b| b != &trailer);
+        }
         if ko != kn {
             let at = ko
                 .iter()

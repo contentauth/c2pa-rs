@@ -575,10 +575,10 @@ fn asset_io_update_workflow_perf() {
     );
 
     for path in fixture_paths() {
-        if requested_case.as_ref().is_some_and(|requested| {
-            path.file_name()
-                .map_or(true, |name| name != requested.as_os_str())
-        }) {
+        if requested_case
+            .as_ref()
+            .is_some_and(|requested| path.file_name() != Some(requested.as_os_str()))
+        {
             continue;
         }
         let Some(ext) = workflow_extension(&path) else {

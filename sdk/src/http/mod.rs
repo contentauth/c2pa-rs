@@ -673,15 +673,20 @@ pub mod tests {
                 .extension(RequestTimeout(Duration::from_millis(100)))
                 .body(Vec::new())
                 .unwrap();
-            let started = std::time::Instant::now();
             let result = AsyncGenericResolver::new()
                 .http_resolve_async(request)
                 .await;
-            let elapsed = started.elapsed();
             server.join().unwrap();
-            assert!(result.is_err());
-            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
-            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+            assert!(
+                matches!(
+                    &result,
+                    Err(HttpResolverError::Other(error))
+                        if error
+                            .downcast_ref::<::reqwest::Error>()
+                            .is_some_and(::reqwest::Error::is_timeout)
+                ),
+                "expected a reqwest timeout"
+            );
         }
     }
 
