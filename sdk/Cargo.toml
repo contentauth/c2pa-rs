@@ -53,6 +53,12 @@ rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
 # feature: exempt from the crate's usual semantic-versioning stability guarantees and may change
 # or be removed in any release. See docs/experimental-features.md.
 unstable_structured_text = []
+# Native WARC asset handler (C2PA 2.5 "Embedding manifests into WARC files"), carrying the
+# Manifest Store in a final `c2pa-provenance` record and binding the other records with a
+# collection data hash. Plain and gzip-compressed WARC files; adds flate2 (already a
+# dev-dependency) for gzip. Experimental feature: exempt from the crate's usual semantic-versioning stability
+# guarantees and may change or be removed in any release. See docs/experimental-features.md.
+unstable_warc = ["dep:flate2"]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
@@ -130,6 +136,7 @@ img-parts = "0.4.0"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.30"
+flate2 = { version = "1.1.10", optional = true }
 lopdf = { version = "0.45.0", optional = true, default-features = false }
 lazy_static = "1.5.0"
 memchr = "2.8.1"
