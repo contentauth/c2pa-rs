@@ -37,9 +37,16 @@ pub(crate) fn fixture_paths() -> Vec<PathBuf> {
         }
     }
     let mut paths = Vec::new();
+    // On WASI, Wasmtime preopens the SDK directory at `/`; host paths from
+    // `CARGO_MANIFEST_DIR` are not available inside the test module.
+    #[cfg(target_os = "wasi")]
+    let fixture_dir = PathBuf::from("/");
+    #[cfg(not(target_os = "wasi"))]
+    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
     // The fixtures folder itself, as before; the corpus, all the way down.
     walk(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        &fixture_dir.join("tests/fixtures"),
         0,
         0,
         &mut paths,
