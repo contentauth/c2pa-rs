@@ -133,6 +133,17 @@ impl BMFFArena {
         self.arena.get(token)
     }
 
+    fn metadata_insertion_offset(&self, bmff_map: &HashMap<String, Vec<Token>>) -> u64 {
+        // Legacy QuickTime files can omit ftyp; prepend metadata in that case.
+        match bmff_map.get("/ftyp").and_then(|tokens| tokens.first()) {
+            Some(token) => {
+                let info = &self.arena[*token].data;
+                info.offset + info.size
+            }
+            None => 0,
+        }
+    }
+
     fn build_bmff_tree<R>(&mut self, reader: &mut R) -> Result<HashMap<String, Vec<Token>>>
     where
         R: Read + Seek + ?Sized,
@@ -1899,7 +1910,14 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
     reader: &mut R,
 ) -> Result<C2PABmffBoxes> {
-    let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader)?;
+    let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader).map_err(|err| match err {
+        // Truncated or garbled box headers mean the stream isn't valid BMFF
+        // (e.g. a different format passed with a BMFF MIME type).
+        Error::IoError(io_err) => Error::InvalidAsset(format!(
+            "invalid BMFF structure: unable to parse boxes: {io_err}"
+        )),
+        other => other,
+    })?;
 
     reader.rewind()?;
 
@@ -1908,17 +1926,9 @@ pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
 
 impl C2paReader for BmffIO {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
-        input_stream.seek(SeekFrom::Start(4))?;
-
-        let mut header = [0u8; 4];
-        input_stream.read_exact(&mut header)?;
-
-        if header[..4] != *b"ftyp" {
-            return Err(Error::InvalidAsset(format!(
-                "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
-                String::from_utf8_lossy(&header[..4])
-            )));
-        }
+        // QuickTime files may legitimately start with a box other than `ftyp`
+        // (e.g. `mdat` or `wide`), so the box parser validates the structure.
+        input_stream.rewind()?;
 
         let c2pa_boxes = read_bmff_c2pa_boxes(input_stream)?;
 
@@ -2161,15 +2171,6 @@ impl C2paWriter for BmffIO {
             return Ok(());
         }
 
-        // since we reached this point we must have an ordinary manifest store so we may need to truncate off
-        // the update manifest
-        // get ftyp location
-        // start after ftyp
-        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-        let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
-        let ftyp_offset = ftyp_info.offset;
-        let ftyp_size = ftyp_info.size;
-
         // get position to insert c2pa primary manifest store
         let (c2pa_start, c2pa_length) = match get_uuid_token(
             input_stream,
@@ -2182,7 +2183,7 @@ impl C2paWriter for BmffIO {
 
                 (uuid_info.offset, Some(uuid_info.size))
             }
-            Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+            Err(Error::NotFound) => (bmff_tree.metadata_insertion_offset(&bmff_map), None),
             Err(e) => return Err(e),
         };
 
@@ -2411,16 +2412,7 @@ impl WriteXmp for BmffIO {
         // get position to insert XMP
         let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
             Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
-            None => {
-                // get ftyp location
-                // start after ftyp
-                let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-                let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
-                let ftyp_offset = ftyp_info.offset;
-                let ftyp_size = ftyp_info.size;
-
-                ((ftyp_offset + ftyp_size), None)
-            }
+            None => (bmff_tree.metadata_insertion_offset(&bmff_map), None),
         };
 
         let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
@@ -2486,8 +2478,8 @@ impl WriteXmp for BmffIO {
     }
 }
 
-// inject a placeholder free box of free_size at the end of the ftyp box. This is used to reserve
-// space for a manifest box when one does not already exist in the file.
+// Inject a placeholder free box after ftyp, or at the start of a file without ftyp.
+// This reserves space for a manifest box when one does not already exist in the file.
 // Returns the location of the injected placeholder box.  This function assumes the file does not have
 // an existing manifest store and that the placeholder box will be replaced with the manifest store during the first update pass.
 #[allow(dead_code)]
@@ -2512,21 +2504,12 @@ pub(crate) fn inject_placeholder(
         ));
     }
 
-    // since we reached this point we must have an ordinary manifest store so we may need to truncate off
-    // the update manifest
-    // get ftyp location
-    // start after ftyp
-    let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-    let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
-    let ftyp_offset = ftyp_info.offset;
-    let ftyp_size = ftyp_info.size;
-
     // create free box bytes
     let mut free_box_bytes = Vec::with_capacity(free_size + 8);
     write_free_box(&mut free_box_bytes, free_size)?;
 
     // insertion point
-    let start = ftyp_offset + ftyp_size;
+    let start = bmff_tree.metadata_insertion_offset(&bmff_map);
 
     // write content before free box
     input_stream.rewind()?;
@@ -3160,6 +3143,127 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    fn unsigned_mov(with_ftyp: bool) -> Cursor<Vec<u8>> {
+        let bmff = BmffIO::new("mov");
+        let mut source = std::fs::File::open(fixture_path("c.mov")).unwrap();
+        let mut unsigned = Cursor::new(Vec::new());
+        bmff.remove_c2pa(&mut source, &mut unsigned).unwrap();
+        if !with_ftyp {
+            let (tree, map) = BMFFArena::from_stream(&mut unsigned).unwrap();
+            if let Some(tokens) = map.get("/ftyp") {
+                let offset = usize::try_from(tree.as_ref()[tokens[0]].data.offset).unwrap();
+                // Preserve media offsets while removing the file-type declaration.
+                unsigned.get_mut()[offset + 4..offset + 8].copy_from_slice(b"free");
+            }
+        }
+        let (_, map) = BMFFArena::from_stream(&mut unsigned).unwrap();
+        assert_eq!(map.contains_key("/ftyp"), with_ftyp);
+        unsigned
+    }
+
+    fn assert_mov_samples_equal(expected: &mut Cursor<Vec<u8>>, actual: &mut Cursor<Vec<u8>>) {
+        let expected_media = BmffSampleReader::from_stream(expected).unwrap();
+        let actual_media = BmffSampleReader::from_stream(actual).unwrap();
+        assert_eq!(expected_media.tracks().len(), actual_media.tracks().len());
+        let mut compared = false;
+        for (track_id, track) in expected_media.tracks() {
+            if track.sample_count() > 0 {
+                let sample = expected_media
+                    .read_sample(expected, *track_id, 1)
+                    .unwrap()
+                    .unwrap();
+                assert!(!sample.is_empty());
+                assert_eq!(
+                    sample,
+                    actual_media
+                        .read_sample(actual, *track_id, 1)
+                        .unwrap()
+                        .unwrap()
+                );
+                compared = true;
+            }
+        }
+        assert!(compared);
+    }
+
+    #[test]
+    fn test_mov_manifest_insertion_with_and_without_ftyp() {
+        let bmff = BmffIO::new("mov");
+        for with_ftyp in [true, false] {
+            let mut source = unsigned_mov(with_ftyp);
+            assert!(matches!(
+                bmff.read_c2pa(&mut source),
+                Err(Error::JumbfNotFound)
+            ));
+            let (tree, map) = BMFFArena::from_stream(&mut source).unwrap();
+            let insertion_offset = tree.metadata_insertion_offset(&map) as usize;
+            assert_eq!(insertion_offset == 0, !with_ftyp);
+            let mut output = Cursor::new(Vec::new());
+            bmff.write_c2pa(&mut source, &mut output, b"manifest")
+                .unwrap();
+            assert_eq!(
+                &output.get_ref()[insertion_offset + 4..insertion_offset + 8],
+                b"uuid"
+            );
+            assert_eq!(bmff.read_c2pa(&mut output).unwrap(), b"manifest");
+            assert_mov_samples_equal(&mut source, &mut output);
+
+            for manifest in [b"larger replacement manifest".as_slice(), b"small"] {
+                let mut replaced = Cursor::new(Vec::new());
+                bmff.write_c2pa(&mut output, &mut replaced, manifest)
+                    .unwrap();
+                assert_eq!(bmff.read_c2pa(&mut replaced).unwrap(), manifest);
+                assert_mov_samples_equal(&mut source, &mut replaced);
+                output = replaced;
+            }
+
+            let mut removed = Cursor::new(Vec::new());
+            bmff.remove_c2pa(&mut output, &mut removed).unwrap();
+            assert_eq!(removed.into_inner(), source.into_inner());
+        }
+    }
+
+    #[test]
+    fn test_mov_xmp_insertion_with_and_without_ftyp() {
+        let bmff = BmffIO::new("mov");
+        for with_ftyp in [true, false] {
+            let mut source = unsigned_mov(with_ftyp);
+            let mut output = Cursor::new(Vec::new());
+            bmff.write_xmp(&mut source, &mut output, "test xmp")
+                .unwrap();
+            assert_eq!(bmff.read_xmp(&mut output).unwrap(), "test xmp");
+            assert_mov_samples_equal(&mut source, &mut output);
+
+            let mut replaced = Cursor::new(Vec::new());
+            bmff.write_xmp(&mut output, &mut replaced, "replacement xmp")
+                .unwrap();
+            assert_eq!(bmff.read_xmp(&mut replaced).unwrap(), "replacement xmp");
+            assert_mov_samples_equal(&mut source, &mut replaced);
+        }
+    }
+
+    #[test]
+    fn test_mov_placeholder_insertion_with_and_without_ftyp() {
+        for with_ftyp in [true, false] {
+            let mut source = unsigned_mov(with_ftyp);
+            let (tree, map) = BMFFArena::from_stream(&mut source).unwrap();
+            let expected_offset = tree.metadata_insertion_offset(&map);
+            let mut output = Cursor::new(Vec::new());
+            let offset = inject_placeholder(&mut source, &mut output, 1024).unwrap();
+            assert_eq!(offset, expected_offset);
+            assert_mov_samples_equal(&mut source, &mut output);
+
+            let mut manifest = Vec::new();
+            write_c2pa_box(&mut manifest, b"manifest", MANIFEST, &[], 0).unwrap();
+            inject_manifest_into_free_box(&mut output, &manifest, offset).unwrap();
+            assert_eq!(
+                BmffIO::new("mov").read_c2pa(&mut output).unwrap(),
+                b"manifest"
+            );
+            assert_mov_samples_equal(&mut source, &mut output);
+        }
+    }
 
     #[test]
     fn test_read_deep_nesting() {

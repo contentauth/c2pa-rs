@@ -83,23 +83,29 @@ use crate::crypto::cose::{
     signer: &dyn AsyncCoseSigner,
     data: &[u8],
     box_size: Option<usize>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    context: &crate::Context
 ))]
 pub(crate) fn sign(
     signer: &dyn CoseSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
         match tss {
-            TimeStampStorage::V1_sigTst => sign_v1(signer, data, box_size, tss),
-            TimeStampStorage::V2_sigTst2_CTT => sign_v2(signer, data, box_size, tss),
+            TimeStampStorage::V1_sigTst => sign_v1(signer, data, box_size, tss, context),
+            TimeStampStorage::V2_sigTst2_CTT => sign_v2(signer, data, box_size, tss, context),
         }
     } else {
         match tss {
-            TimeStampStorage::V1_sigTst => sign_v1_async(signer, data, box_size, tss).await,
-            TimeStampStorage::V2_sigTst2_CTT => sign_v2_async(signer, data, box_size, tss).await,
+            TimeStampStorage::V1_sigTst => {
+                sign_v1_async(signer, data, box_size, tss, context).await
+            }
+            TimeStampStorage::V2_sigTst2_CTT => {
+                sign_v2_async(signer, data, box_size, tss, context).await
+            }
         }
     }
 }
@@ -108,13 +114,15 @@ pub(crate) fn sign(
     signer: &dyn AsyncCoseSigner,
     data: &[u8],
     box_size: Option<usize>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    context: &crate::Context
 ))]
 pub(crate) fn sign_v1(
     signer: &dyn CoseSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
@@ -129,9 +137,9 @@ pub(crate) fn sign_v1(
 
     // V1: Generate time stamp then sign.
     let unprotected_header = if _sync {
-        build_unprotected_header(signer, data, &protected_header, tss)?
+        build_unprotected_header(signer, data, &protected_header, tss, context)?
     } else {
-        build_unprotected_header_async(signer, data, &protected_header, tss).await?
+        build_unprotected_header_async(signer, data, &protected_header, tss, context).await?
     };
 
     let sign1_builder = CoseSign1Builder::new()
@@ -195,18 +203,37 @@ pub(crate) fn sign_v1(
     signer: &dyn AsyncCoseSigner,
     data: &[u8],
     box_size: Option<usize>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    context: &crate::Context
 ))]
 pub(crate) fn sign_v2(
     signer: &dyn CoseSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
-        sign_v2_embedded(signer, data, box_size, CosePayload::Detached, None, tss)
+        sign_v2_embedded(
+            signer,
+            data,
+            box_size,
+            CosePayload::Detached,
+            None,
+            tss,
+            context,
+        )
     } else {
-        sign_v2_embedded_async(signer, data, box_size, CosePayload::Detached, None, tss).await
+        sign_v2_embedded_async(
+            signer,
+            data,
+            box_size,
+            CosePayload::Detached,
+            None,
+            tss,
+            context,
+        )
+        .await
     }
 }
 
@@ -285,7 +312,8 @@ pub enum CosePayload {
     box_size: Option<usize>,
     payload: CosePayload,
     content_type: Option<ContentType>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    context: &crate::Context
 ))]
 pub(crate) fn sign_v2_embedded(
     signer: &dyn CoseSigner,
@@ -294,6 +322,7 @@ pub(crate) fn sign_v2_embedded(
     payload: CosePayload,
     content_type: Option<ContentType>,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
@@ -369,9 +398,10 @@ pub(crate) fn sign_v2_embedded(
 
     // Fill in the unprotected header with time stamp data.
     let unprotected_header = if _sync {
-        build_unprotected_header(signer, &sig_data_cbor, &protected_header, tss)?
+        build_unprotected_header(signer, &sig_data_cbor, &protected_header, tss, context)?
     } else {
-        build_unprotected_header_async(signer, &sig_data_cbor, &protected_header, tss).await?
+        build_unprotected_header_async(signer, &sig_data_cbor, &protected_header, tss, context)
+            .await?
     };
 
     sign1.unprotected = unprotected_header;
@@ -431,12 +461,13 @@ fn build_protected_header(
     Ok(ph2)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncCoseSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage,))]
+#[async_generic(async_signature(signer: &dyn AsyncCoseSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage, context: &crate::Context,))]
 fn build_unprotected_header(
     signer: &dyn CoseSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Header, CoseError> {
     // signed_data_from_time_stamp_response
 
@@ -445,24 +476,21 @@ fn build_unprotected_header(
     let unprotected_h = HeaderBuilder::new();
 
     let mut unprotected_h = if _sync {
-        add_sigtst_header(signer, data, p_header, unprotected_h, tss)?
+        add_sigtst_header(signer, data, p_header, unprotected_h, tss, context)?
     } else {
-        add_sigtst_header_async(signer, data, p_header, unprotected_h, tss).await?
+        add_sigtst_header_async(signer, data, p_header, unprotected_h, tss, context).await?
     };
 
-    // Set the OCSP responder response if available.
-    let ocsp_val = if _sync {
-        signer.ocsp_response()
+    // Set the OCSP responder responses if available.
+    let ocsp_vals = if _sync {
+        signer.ocsp_responses()
     } else {
-        signer.ocsp_response().await
+        signer.ocsp_responses().await
     };
 
-    if let Some(ocsp) = ocsp_val {
-        let mut ocsp_vec: Vec<Value> = Vec::new();
-        let mut r_vals: Vec<(Value, Value)> = vec![];
-
-        ocsp_vec.push(Value::Bytes(ocsp));
-        r_vals.push((Value::Text("ocspVals".to_string()), Value::Array(ocsp_vec)));
+    if !ocsp_vals.is_empty() {
+        let ocsp_vec = ocsp_vals.into_iter().map(Value::Bytes).collect();
+        let r_vals = vec![(Value::Text("ocspVals".to_string()), Value::Array(ocsp_vec))];
 
         unprotected_h = unprotected_h.text_value("rVals".to_string(), Value::Map(r_vals));
     }
@@ -582,4 +610,250 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: Option<usize>) -> Result<Vec<u8
     ));
 
     pad_cose_sig(sign1, Some(end_size))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::panic)]
+
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+    use crate::{
+        crypto::cose::{
+            cose_signer::tests::TestSigner, get_ocsp_der, signing_alg_from_sign1, Verifier,
+        },
+        status_tracker::StatusTracker,
+    };
+
+    const DATA: &[u8] = b"COSE extraction characterization";
+
+    fn assert_signature(encoded: &[u8], alg: SigningAlg, certs: &[Vec<u8>], embedded: bool) {
+        let sign1 = CoseSign1::from_tagged_slice(encoded).unwrap();
+        assert_eq!(signing_alg_from_sign1(&sign1).unwrap(), alg);
+        assert_eq!(cert_chain_from_sign1(&sign1).unwrap(), certs);
+        assert_eq!(sign1.payload.as_deref(), embedded.then_some(DATA));
+        let verified = Verifier::IgnoreProfileAndTrustPolicy
+            .verify_signature(encoded, DATA, b"", None, &mut StatusTracker::default())
+            .unwrap();
+        assert!(verified.validated);
+        assert_eq!(verified.alg, Some(alg));
+        assert!(Verifier::IgnoreProfileAndTrustPolicy
+            .verify_signature(
+                encoded,
+                b"tampered",
+                b"",
+                None,
+                &mut StatusTracker::default()
+            )
+            .is_err());
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn all_algorithms_round_trip_both_versions_and_apis() {
+        for alg in [
+            SigningAlg::Es256,
+            SigningAlg::Es384,
+            SigningAlg::Es512,
+            SigningAlg::Ps256,
+            SigningAlg::Ps384,
+            SigningAlg::Ps512,
+            SigningAlg::Ed25519,
+        ] {
+            let signer = TestSigner::new(alg);
+            for storage in [
+                TimeStampStorage::V1_sigTst,
+                TimeStampStorage::V2_sigTst2_CTT,
+            ] {
+                let sync = sign(&signer, DATA, None, storage, &crate::Context::new()).unwrap();
+                let asynchronous = sign_async(&signer, DATA, None, storage, &crate::Context::new())
+                    .await
+                    .unwrap();
+                assert_signature(&sync, alg, &signer.certs, false);
+                assert_signature(&asynchronous, alg, &signer.certs, false);
+            }
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn embedded_payload_content_types_and_stapled_ocsp() {
+        let mut signer = TestSigner::new(SigningAlg::Ed25519);
+        signer.certs.truncate(1);
+        signer.ocsp = Some(vec![1, 2, 3]);
+        for content_type in [
+            None,
+            Some(RegisteredLabel::Text("application/cbor".into())),
+            Some(RegisteredLabel::Assigned(iana::CoapContentFormat::Cbor)),
+        ] {
+            let sync = sign_v2_embedded(
+                &signer,
+                DATA,
+                None,
+                CosePayload::Embedded,
+                content_type.clone(),
+                TimeStampStorage::V2_sigTst2_CTT,
+                &crate::Context::new(),
+            )
+            .unwrap();
+            let asynchronous = sign_v2_embedded_async(
+                &signer,
+                DATA,
+                None,
+                CosePayload::Embedded,
+                content_type.clone(),
+                TimeStampStorage::V2_sigTst2_CTT,
+                &crate::Context::new(),
+            )
+            .await
+            .unwrap();
+            for encoded in [sync, asynchronous] {
+                assert_signature(&encoded, signer.alg, &signer.certs, true);
+                let sign1 = CoseSign1::from_tagged_slice(&encoded).unwrap();
+                assert_eq!(sign1.protected.header.content_type, content_type);
+                assert_eq!(get_ocsp_der(&sign1), signer.ocsp);
+                assert!(matches!(sign1.protected.header.rest[0].1, Value::Bytes(_)));
+            }
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn der_ecdsa_signatures_are_normalized_before_storage() {
+        for (alg, size) in [
+            (SigningAlg::Es256, 64),
+            (SigningAlg::Es384, 96),
+            (SigningAlg::Es512, 132),
+        ] {
+            let mut signer = TestSigner::new(alg);
+            signer.signature = Some(vec![0x30, 6, 2, 1, 1, 2, 1, 2]);
+            for storage in [
+                TimeStampStorage::V1_sigTst,
+                TimeStampStorage::V2_sigTst2_CTT,
+            ] {
+                let sync = sign(&signer, DATA, None, storage, &crate::Context::new()).unwrap();
+                let asynchronous = sign_async(&signer, DATA, None, storage, &crate::Context::new())
+                    .await
+                    .unwrap();
+                for encoded in [sync, asynchronous] {
+                    let signature = CoseSign1::from_tagged_slice(&encoded).unwrap().signature;
+                    let mut expected = vec![0; size];
+                    expected[size / 2 - 1] = 1;
+                    expected[size - 1] = 2;
+                    assert_eq!(signature, expected);
+                }
+            }
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn signer_and_certificate_errors_propagate_without_a_signature() {
+        for storage in [
+            TimeStampStorage::V1_sigTst,
+            TimeStampStorage::V2_sigTst2_CTT,
+        ] {
+            for fail_certs in [false, true] {
+                let mut signer = TestSigner::new(SigningAlg::Ed25519);
+                signer.fail_certs = fail_certs;
+                signer.fail_sign = !fail_certs;
+                assert!(matches!(
+                    sign(&signer, DATA, None, storage, &crate::Context::new()),
+                    Err(CoseError::RawSignerError(_))
+                ));
+                assert!(matches!(
+                    sign_async(&signer, DATA, None, storage, &crate::Context::new()).await,
+                    Err(CoseError::RawSignerError(_))
+                ));
+            }
+
+            let mut signer = TestSigner::new(SigningAlg::Es256);
+            signer.signature = Some(vec![0x30, 6, 2, 1, 1, 2, 1, 2]);
+            for certs in [
+                vec![],
+                vec![vec![0]],
+                TestSigner::new(SigningAlg::Ed25519).certs,
+            ] {
+                signer.certs = certs;
+                assert!(sign(&signer, DATA, None, storage, &crate::Context::new()).is_err());
+                assert!(
+                    sign_async(&signer, DATA, None, storage, &crate::Context::new())
+                        .await
+                        .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn padding_hits_exact_sizes_across_cbor_length_boundaries() {
+        let original = CoseSign1 {
+            signature: vec![1; 64],
+            ..Default::default()
+        };
+
+        let unpadded = original.clone().to_tagged_vec().unwrap();
+        assert_eq!(pad_cose_sig(&mut original.clone(), None).unwrap(), unpadded);
+        assert_eq!(
+            pad_cose_sig(&mut original.clone(), Some(unpadded.len())).unwrap(),
+            unpadded
+        );
+        // The existing implementation cannot fill the short-padding interval:
+        // adding the first pad leaves too little space for its recursive check.
+        for size in 0..unpadded.len() + PAD_OFFSET + 256 {
+            if size != unpadded.len() {
+                assert!(matches!(
+                    pad_cose_sig(&mut original.clone(), Some(size)),
+                    Err(CoseError::BoxSizeTooSmall)
+                ));
+            }
+        }
+
+        let mut saw_second_pad = false;
+        for size in (unpadded.len() + PAD_OFFSET + 256..unpadded.len() + 600)
+            .chain(unpadded.len() + 65520..unpadded.len() + 65570)
+        {
+            let mut input = original.clone();
+            // Exercise re-padding separately from adding the initial pad. The
+            // latter currently rejects a first guess above the 16-bit boundary.
+            if size >= unpadded.len() + PAD_OFFSET + 65536 {
+                assert!(matches!(
+                    pad_cose_sig(&mut input, Some(size)),
+                    Err(CoseError::BoxSizeTooSmall)
+                ));
+                input
+                    .unprotected
+                    .rest
+                    .push((Label::Text(PAD.into()), Value::Bytes(vec![0; 20])));
+            }
+
+            let encoded = pad_cose_sig(&mut input, Some(size))
+                .unwrap_or_else(|error| panic!("padding size {size}: {error}"));
+            assert_eq!(encoded.len(), size);
+            let decoded = CoseSign1::from_tagged_slice(&encoded).unwrap();
+            assert_eq!(decoded.signature, original.signature);
+            assert_eq!(decoded.payload, original.payload);
+            for (label, value) in decoded.unprotected.rest {
+                assert!(label == Label::Text(PAD.into()) || label == Label::Text(PAD2.into()));
+                saw_second_pad |= label == Label::Text(PAD2.into());
+                let Value::Bytes(bytes) = value else {
+                    panic!("padding must be bytes")
+                };
+
+                assert!(bytes.iter().all(|&byte| byte == 0));
+            }
+        }
+
+        assert!(
+            saw_second_pad,
+            "must exercise the CBOR length discontinuity"
+        );
+    }
+
+    #[test]
+    fn reserve_size_accounts_for_each_optional_component() {
+        let certs = vec![vec![0; 23], vec![0; 47]];
+        assert_eq!(cose_reserve_size(64, &[], false, None), 1088);
+        assert_eq!(cose_reserve_size(64, &certs, false, None), 1158);
+        assert_eq!(cose_reserve_size(64, &certs, true, Some(&[0; 19])), 11177);
+    }
 }

@@ -34,6 +34,7 @@ use memchr::memmem;
 use serde::Serialize;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
+use x509_parser::extensions::ExtendedKeyUsage;
 
 use super::store_core::MAX_INGREDIENT_DEPTH;
 #[cfg(feature = "file_io")]
@@ -57,6 +58,7 @@ use crate::{
     asset_io::ReadWriteSeek,
     claim::{AssertionStoreJsonFormat, Claim, ClaimAssertion, ClaimAssetData},
     context::Context,
+    crypto::cose::CertificateTrustPolicy,
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
@@ -281,6 +283,76 @@ fn test_bad_claim_v2_generation() {
     assert!(report.has_error(Error::ValidationRule(
         "only first action can be created or opened".to_string()
     )));
+}
+
+// Manifests signed before resource-reference icons were converted to hashed URIs (or by
+// another producer that wrote them) remain readable, but report `hashedURI.missing` against
+// the containing actions assertion and are therefore Invalid.
+#[test]
+fn test_legacy_resource_ref_icon_reads_as_invalid() {
+    let mut context = Context::new();
+    // Simulate an older SDK that did not reject these icons after signing.
+    context.settings_mut().verify.verify_after_sign = false;
+
+    let (format, mut input_stream, mut output_stream) = create_test_streams("earth_apollo17.jpg");
+    let mut store = Store::from_context(&context);
+
+    let mut claim = Claim::new("legacy", Some("legacy"), 2);
+    claim.add_claim_generator_info(ClaimGeneratorInfo::new("legacy_icon_test"));
+
+    let mut agent = ClaimGeneratorInfo::new("LegacyApp");
+    agent.set_icon(crate::resource_store::ResourceRef::new(
+        "image/png",
+        "icon.png",
+    ));
+    let mut actions = Actions::new()
+        .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+    actions.add_software_agent(agent);
+    let actions_uri = claim.add_assertion(&actions).unwrap().url();
+
+    store.commit_claim(claim).unwrap();
+    store
+        .save_to_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            test_signer(SigningAlg::Ps256).as_ref(),
+            &context,
+        )
+        .unwrap();
+
+    output_stream.rewind().unwrap();
+    let reader = crate::Reader::default()
+        .with_stream(format, &mut output_stream)
+        .unwrap();
+
+    assert_eq!(reader.validation_state(), crate::ValidationState::Invalid);
+
+    let failures = reader
+        .validation_results()
+        .and_then(|results| results.active_manifest())
+        .map(|status| status.failure().to_vec())
+        .unwrap_or_default();
+    let (actions_label, _) = Claim::assertion_label_from_link(&actions_uri);
+    assert!(
+        failures.iter().any(|status| {
+            status.code() == validation_status::HASHED_URI_MISSING
+                && status
+                    .url()
+                    .is_some_and(|url| url.ends_with(&format!("c2pa.assertions/{actions_label}")))
+        }),
+        "{failures:?}"
+    );
+
+    let actions: Actions = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion(Actions::LABEL)
+        .unwrap();
+    assert_eq!(
+        actions.software_agents().as_ref().unwrap()[0].name,
+        "LegacyApp"
+    );
 }
 
 #[test]
@@ -2478,6 +2550,189 @@ fn add_ingredient_assertion_to_claim(
     claim.add_assertion(&actions).unwrap();
 
     Ok(())
+}
+
+#[c2pa_test_async]
+async fn test_redacted_ingredient_signature_binding() {
+    use crate::{
+        hashed_uri::HashedUri,
+        jumbf::labels::to_signature_uri,
+        utils::test::{create_test_store, create_test_store_v1},
+        ValidationResults,
+    };
+
+    let context = Context::new();
+    let signer = test_signer(SigningAlg::Ps256);
+
+    for version in [1, 2] {
+        let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+        let mut store = if version == 1 {
+            create_test_store_v1().unwrap()
+        } else {
+            create_test_store().unwrap()
+        };
+        store
+            .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+        output.rewind().unwrap();
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let store = Store::from_stream(format, &mut output, &mut report, &context).unwrap();
+        let child = store.provenance_claim().unwrap();
+        assert_eq!(child.version(), version);
+        let hashes = store.get_manifest_box_hashes(child);
+
+        for ingredient_version in [1, 2, 3] {
+            for (redacted, manifest_matches, signature_hash, expected_status) in [
+                (
+                    true,
+                    true,
+                    Some(vec![0; hashes.signature_box_hash.len()]),
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH),
+                ),
+                (
+                    true,
+                    true,
+                    Some(hashes.signature_box_hash.clone()),
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_VALIDATED),
+                ),
+                (
+                    true,
+                    true,
+                    None,
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING),
+                ),
+                (
+                    false,
+                    true,
+                    None,
+                    Some(validation_status::INGREDIENT_MANIFEST_VALIDATED),
+                ),
+                (
+                    false,
+                    false,
+                    None,
+                    Some(validation_status::INGREDIENT_MANIFEST_MISMATCH),
+                ),
+            ] {
+                if ingredient_version < 3 && signature_hash.is_some() {
+                    continue;
+                }
+
+                let expected_status = if ingredient_version < 3 && redacted {
+                    None
+                } else {
+                    expected_status
+                };
+                let mut parent = Claim::new("redaction binding test", Some("test"), 2);
+                parent.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+                let manifest_hash = if manifest_matches {
+                    hashes.manifest_box_hash.clone()
+                } else {
+                    vec![0; hashes.manifest_box_hash.len()]
+                };
+                let manifest = HashedUri::new(
+                    store.provenance_path().unwrap(),
+                    Some(child.alg().to_owned()),
+                    &manifest_hash,
+                );
+                let signature = signature_hash.map(|hash| {
+                    HashedUri::new(
+                        to_signature_uri(child.label()),
+                        Some(child.alg().to_owned()),
+                        &hash,
+                    )
+                });
+                let ingredient = if ingredient_version < 3 {
+                    let mut ingredient = if ingredient_version == 1 {
+                        Ingredient::new("legacy ingredient", format, "test-instance-id", None)
+                    } else {
+                        Ingredient::new_v2("legacy ingredient", format)
+                    };
+                    ingredient.c2pa_manifest = Some(manifest);
+                    ingredient
+                } else {
+                    Ingredient::new_v3(Relationship::ComponentOf)
+                        .set_active_manifests_and_signature_from_hashed_uri(
+                            Some(manifest),
+                            signature,
+                        )
+                        .set_validation_results(Some(ValidationResults::from_store(
+                            &store, &report,
+                        )))
+                };
+                parent.add_assertion(&ingredient).unwrap();
+                let mut svi = StoreValidationInfo::default();
+                if redacted {
+                    svi.redactions
+                        .push(to_assertion_uri(child.label(), labels::SCHEMA_ORG_INTERNAL));
+                }
+
+                for synchronous in [true, false] {
+                    let mut validation_log =
+                        StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                    let mut visited = HashSet::new();
+                    let result = if synchronous {
+                        Store::ingredient_checks(
+                            &store,
+                            &parent,
+                            &svi,
+                            &mut validation_log,
+                            0,
+                            &context,
+                            &mut visited,
+                        )
+                    } else {
+                        Store::ingredient_checks_async(
+                            &store,
+                            &parent,
+                            &svi,
+                            &mut validation_log,
+                            0,
+                            &context,
+                            &mut visited,
+                        )
+                        .await
+                    };
+                    if let Some(expected_status) = expected_status {
+                        assert!(
+                            validation_log.has_status(expected_status),
+                            "ingredient-v{ingredient_version}, Claim-v{version}, \
+                         redacted={redacted}, sync={synchronous}: \
+                         expected {expected_status}, got {result:?}"
+                        );
+                    } else {
+                        for status in [
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING,
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH,
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_VALIDATED,
+                            validation_status::INGREDIENT_MANIFEST_VALIDATED,
+                        ] {
+                            assert!(
+                                !validation_log.has_status(status),
+                                "legacy redacted ingredient must not report {status}"
+                            );
+                        }
+                    }
+
+                    let should_fail = matches!(
+                        expected_status,
+                        Some(
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH
+                                | validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING
+                                | validation_status::INGREDIENT_MANIFEST_MISMATCH
+                        )
+                    );
+                    assert_eq!(
+                        result.is_err(),
+                        should_fail,
+                        "ingredient-v{ingredient_version}, Claim-v{version}, \
+                     redacted={redacted}, sync={synchronous}, \
+                     expected {expected_status:?}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -5635,6 +5890,335 @@ fn test_sign_zip_update_manifest_is_unsupported() {
     );
 }
 
+#[cfg(feature = "fetch_remote_manifests")]
+mod remote_manifest_response_tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use super::*;
+    use crate::{
+        http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
+        settings::DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
+    };
+
+    const TEST_RESPONSE_SIZE: u64 = 16;
+
+    struct Resolver {
+        content_length: Option<&'static str>,
+        body_length: u64,
+        error_after: Option<u64>,
+        probe_interruptions: usize,
+        bytes_read: Arc<AtomicUsize>,
+    }
+
+    struct Body {
+        remaining: u64,
+        error_after: Option<u64>,
+        probe_interruptions: usize,
+        eof_returned: bool,
+        bytes_read: Arc<AtomicUsize>,
+    }
+
+    impl Read for Body {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.bytes_read.load(Ordering::SeqCst) as u64 == TEST_RESPONSE_SIZE
+                && self.probe_interruptions > 0
+            {
+                self.probe_interruptions -= 1;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            if self
+                .error_after
+                .is_some_and(|limit| self.bytes_read.load(Ordering::SeqCst) as u64 >= limit)
+                || self.eof_returned
+            {
+                return Err(std::io::Error::other("test stream failure"));
+            }
+            let until_error = self.error_after.map_or(u64::MAX, |limit| {
+                limit - self.bytes_read.load(Ordering::SeqCst) as u64
+            });
+            let len = self.remaining.min(buf.len() as u64).min(until_error) as usize;
+            buf[..len].fill(b'x');
+            self.remaining -= len as u64;
+            if !buf.is_empty() && len == 0 {
+                self.eof_returned = true;
+            }
+            self.bytes_read.fetch_add(len, Ordering::SeqCst);
+            Ok(len)
+        }
+    }
+
+    impl SyncHttpResolver for Resolver {
+        fn http_resolve(
+            &self,
+            _request: http::Request<Vec<u8>>,
+        ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+            let mut response = http::Response::builder().status(200);
+            if let Some(len) = self.content_length {
+                response = response.header(http::header::CONTENT_LENGTH, len);
+            }
+            Ok(response
+                .body(Box::new(Body {
+                    remaining: self.body_length,
+                    error_after: self.error_after,
+                    probe_interruptions: self.probe_interruptions,
+                    eof_returned: false,
+                    bytes_read: self.bytes_read.clone(),
+                }) as Box<dyn Read>)
+                .unwrap())
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+    impl AsyncHttpResolver for Resolver {
+        async fn http_resolve_async(
+            &self,
+            request: http::Request<Vec<u8>>,
+        ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+            self.http_resolve(request)
+        }
+    }
+
+    async fn fetch(
+        content_length: Option<&'static str>,
+        body_length: u64,
+        error_after: Option<u64>,
+        use_async: bool,
+    ) -> (Result<Vec<u8>>, usize) {
+        let context = Context::new()
+            .with_settings_value("verify.max_manifest_response_size", TEST_RESPONSE_SIZE)
+            .unwrap();
+        fetch_with_context(context, content_length, body_length, error_after, use_async).await
+    }
+
+    async fn fetch_with_context(
+        context: Context,
+        content_length: Option<&'static str>,
+        body_length: u64,
+        error_after: Option<u64>,
+        use_async: bool,
+    ) -> (Result<Vec<u8>>, usize) {
+        let bytes_read = Arc::new(AtomicUsize::new(0));
+        let resolver = Arc::new(Resolver {
+            content_length,
+            body_length,
+            error_after,
+            probe_interruptions: 0,
+            bytes_read: bytes_read.clone(),
+        });
+        let context = context
+            .with_resolver(resolver.clone())
+            .with_resolver_async(resolver);
+        let result = if use_async {
+            Store::fetch_remote_manifest_async("https://example.com/manifest.c2pa", &context).await
+        } else {
+            Store::fetch_remote_manifest("https://example.com/manifest.c2pa", &context)
+        };
+        (result, bytes_read.load(Ordering::SeqCst))
+    }
+
+    fn assert_size_error(result: Result<Vec<u8>>) {
+        assert!(
+            matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg == "remote manifest exceeds the 16 byte response size limit"),
+            "expected response size error, got {result:?}"
+        );
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_overflow_probe_retries_interrupted() {
+        for use_async in [false, true] {
+            for body_length in [TEST_RESPONSE_SIZE, TEST_RESPONSE_SIZE + 1] {
+                let bytes_read = Arc::new(AtomicUsize::new(0));
+                let resolver = Arc::new(Resolver {
+                    content_length: None,
+                    body_length,
+                    error_after: None,
+                    probe_interruptions: 2,
+                    bytes_read: bytes_read.clone(),
+                });
+                let context = Context::new()
+                    .with_settings_value("verify.max_manifest_response_size", TEST_RESPONSE_SIZE)
+                    .unwrap()
+                    .with_resolver(resolver.clone())
+                    .with_resolver_async(resolver);
+                let result = if use_async {
+                    Store::fetch_remote_manifest_async(
+                        "https://example.com/manifest.c2pa",
+                        &context,
+                    )
+                    .await
+                } else {
+                    Store::fetch_remote_manifest("https://example.com/manifest.c2pa", &context)
+                };
+                if body_length == TEST_RESPONSE_SIZE {
+                    assert_eq!(result.unwrap(), vec![b'x'; TEST_RESPONSE_SIZE as usize]);
+                } else {
+                    assert_size_error(result);
+                }
+                assert_eq!(bytes_read.load(Ordering::SeqCst) as u64, body_length);
+            }
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_oversized_header_rejected_before_reading() {
+        for use_async in [false, true] {
+            for header in ["18446744073709551615", "4294967295", "17"] {
+                let (result, bytes_read) = fetch(Some(header), 1, None, use_async).await;
+                assert_size_error(result);
+                assert_eq!(bytes_read, 0);
+            }
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_body_limit_ignores_untrusted_header() {
+        for use_async in [false, true] {
+            for header in [
+                None,
+                Some("1"),
+                Some("invalid"),
+                Some("18446744073709551616"),
+            ] {
+                let (result, bytes_read) =
+                    fetch(header, TEST_RESPONSE_SIZE + 100, None, use_async).await;
+                assert_size_error(result);
+                assert_eq!(bytes_read as u64, TEST_RESPONSE_SIZE + 1);
+            }
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_exact_limit_accepted() {
+        for use_async in [false, true] {
+            for header in [None, Some("16")] {
+                let (result, bytes_read) = fetch(header, TEST_RESPONSE_SIZE, None, use_async).await;
+                let body = result.unwrap();
+                assert_eq!(body.len() as u64, TEST_RESPONSE_SIZE);
+                assert!(body.iter().all(|byte| *byte == b'x'));
+                assert_eq!(bytes_read as u64, TEST_RESPONSE_SIZE);
+            }
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_small_body_not_truncated_by_header() {
+        for use_async in [false, true] {
+            for header in [
+                None,
+                Some("0"),
+                Some("1"),
+                Some("3"),
+                Some("10"),
+                Some("invalid"),
+            ] {
+                let (result, bytes_read) = fetch(header, 3, None, use_async).await;
+                assert_eq!(result.unwrap(), b"xxx");
+                assert_eq!(bytes_read, 3);
+            }
+            let (result, bytes_read) = fetch(Some("0"), 0, None, use_async).await;
+            assert!(result.unwrap().is_empty());
+            assert_eq!(bytes_read, 0);
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_body_read_error_propagated() {
+        for use_async in [false, true] {
+            let (result, _) = fetch(None, 3, Some(0), use_async).await;
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg.contains("error reading content stream")),
+                "expected stream read error, got {result:?}"
+            );
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_overflow_probe_read_error_propagated() {
+        for use_async in [false, true] {
+            let (result, bytes_read) = fetch(
+                Some("16"),
+                TEST_RESPONSE_SIZE,
+                Some(TEST_RESPONSE_SIZE),
+                use_async,
+            )
+            .await;
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg == "error reading content stream"),
+                "expected overflow probe read error, got {result:?}"
+            );
+            assert_eq!(bytes_read as u64, TEST_RESPONSE_SIZE);
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_default_and_raised_limits_are_independent() {
+        for use_async in [false, true] {
+            let raised = Context::new()
+                .with_settings_value(
+                    "verify.max_manifest_response_size",
+                    DEFAULT_MAX_MANIFEST_RESPONSE_SIZE + 1,
+                )
+                .unwrap();
+            let (result, bytes_read) = fetch_with_context(
+                raised,
+                Some("10485761"),
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE + 1,
+                None,
+                use_async,
+            )
+            .await;
+            let body = result.unwrap();
+            assert_eq!(body.len() as u64, DEFAULT_MAX_MANIFEST_RESPONSE_SIZE + 1);
+            assert_eq!(bytes_read, body.len());
+
+            let default = Context::new();
+            assert_eq!(
+                default.settings().verify.max_manifest_response_size,
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+            );
+            let (result, bytes_read) =
+                fetch_with_context(default, Some("10485761"), 1, None, use_async).await;
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg == "remote manifest exceeds the 10485760 byte response size limit"),
+                "expected the default limit to remain unchanged, got {result:?}"
+            );
+            assert_eq!(bytes_read, 0);
+
+            let (result, bytes_read) = fetch_with_context(
+                Context::new(),
+                Some("10485760"),
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
+                None,
+                use_async,
+            )
+            .await;
+            assert_eq!(
+                result.unwrap().len() as u64,
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+            );
+            assert_eq!(bytes_read as u64, DEFAULT_MAX_MANIFEST_RESPONSE_SIZE);
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_directly_mutated_invalid_limit_rejected() {
+        for use_async in [false, true] {
+            for limit in [0, u64::MAX] {
+                let mut context = Context::new();
+                context.settings_mut().verify.max_manifest_response_size = limit;
+                let (result, bytes_read) =
+                    fetch_with_context(context, None, 1, None, use_async).await;
+                assert!(
+                    matches!(result, Err(Error::BadParam(ref msg)) if msg.contains("max_manifest_response_size")),
+                    "expected invalid settings error, got {result:?}"
+                );
+                assert_eq!(bytes_read, 0);
+            }
+        }
+    }
+}
+
 // SSRF via HTTP redirect during remote-manifest fetch
 // (CAI-12574 / HackerOne #3784091).
 //
@@ -6051,6 +6635,112 @@ fn test_shared_ingredient_inputto_graph_verified_once() {
         validated <= 4 * DEPTH,
         "shared ingredient subtrees must be verified only once"
     );
+}
+
+#[test]
+fn test_from_context_single_eku_certs() {
+    const C2PA_CLAIM_SIGNING: &str = "1.3.6.1.4.1.62558.2.1";
+    const DOCUMENT_SIGNING: &str = "1.3.6.1.5.5.7.3.36";
+    const EMAIL_PROTECTION: &str = "1.3.6.1.5.5.7.3.4";
+
+    fn eku(oid: &str) -> ExtendedKeyUsage<'static> {
+        let mut eku = ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: false,
+            time_stamping: false,
+            ocsp_signing: false,
+            other: Vec::new(),
+        };
+
+        match oid {
+            EMAIL_PROTECTION => eku.email_protection = true,
+            DOCUMENT_SIGNING => eku.other.push(asn1_rs::oid!(1.3.6 .1 .5 .5 .7 .3 .36)),
+            C2PA_CLAIM_SIGNING => eku.other.push(asn1_rs::oid!(1.3.6 .1 .4 .1 .62558 .2 .1)),
+            other => panic!("unhandled OID {other}"),
+        }
+
+        eku
+    }
+
+    let cases = [
+        ("C2PA claim signing", C2PA_CLAIM_SIGNING),
+        ("documentSigning", DOCUMENT_SIGNING),
+        ("emailProtection", EMAIL_PROTECTION),
+    ];
+
+    let defaults = CertificateTrustPolicy::default();
+    for (name, oid) in cases {
+        assert!(
+            defaults.has_allowed_eku(&eku(oid)).is_some(),
+            "{name} ({oid}) should be accepted by the built-in EKU list"
+        );
+    }
+
+    for use_defaults in [false, true] {
+        for configured in [
+            None,
+            Some(""),
+            Some(C2PA_CLAIM_SIGNING),
+            Some(DOCUMENT_SIGNING),
+            Some(EMAIL_PROTECTION),
+        ] {
+            let mut settings = Settings::default();
+            settings.trust.trust_config = configured.map(str::to_owned);
+            settings.trust.anchors = None;
+            settings.trust.use_default_ekus = use_defaults;
+
+            let context = Context::new().with_settings(settings).unwrap();
+            let store = Store::from_context(&context);
+
+            for (name, oid) in cases {
+                let expected = use_defaults
+                    || configured == Some(oid)
+                    || (oid == EMAIL_PROTECTION && configured.unwrap_or_default().is_empty());
+                assert_eq!(
+                    store.ctp.has_allowed_eku(&eku(oid)).is_some(),
+                    expected,
+                    "{name}: defaults={use_defaults}, configured={configured:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_from_context_without_default_ekus() {
+    fn eku(oid: asn1_rs::Oid<'static>) -> ExtendedKeyUsage<'static> {
+        ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: false,
+            time_stamping: false,
+            ocsp_signing: false,
+            other: vec![oid],
+        }
+    }
+
+    let document_signing = asn1_rs::oid!(1.3.6 .1 .5 .5 .7 .3 .36);
+    let c2pa_claim_signing = asn1_rs::oid!(1.3.6 .1 .4 .1 .62558 .2 .1);
+
+    // disabling the built-in EKUs only accepts those configured in `trust_config`
+    let mut settings = Settings::default();
+    settings.trust.trust_config = Some(document_signing.to_string());
+    settings.trust.anchors = None;
+    settings.trust.use_default_ekus = false;
+
+    let context = Context::new().with_settings(settings).unwrap();
+    let store = Store::from_context(&context);
+
+    assert!(store.ctp.has_allowed_eku(&eku(document_signing)).is_some());
+    assert!(store
+        .ctp
+        .has_allowed_eku(&eku(c2pa_claim_signing))
+        .is_none());
 }
 
 #[test]
