@@ -45,12 +45,7 @@ pub(crate) fn fixture_paths() -> Vec<PathBuf> {
     let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // The fixtures folder itself, as before; the corpus, all the way down.
-    walk(
-        &fixture_dir.join("tests/fixtures"),
-        0,
-        0,
-        &mut paths,
-    );
+    walk(&fixture_dir.join("tests/fixtures"), 0, 0, &mut paths);
     if let Some(dir) = std::env::var_os("ASSET_IO_CORPUS") {
         walk(std::path::Path::new(&dir), 0, 32, &mut paths);
     }
