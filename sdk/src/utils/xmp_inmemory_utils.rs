@@ -16,11 +16,11 @@ use std::{io::Cursor, str};
 use log::error;
 use quick_xml::{
     events::{BytesStart, Event},
-    name::QName,
-    Reader, Writer,
+    name::{QName, ResolveResult},
+    NsReader, Reader, Writer,
 };
 
-use crate::{asset_io::ReadSeek, jumbf_io::get_cailoader_handler, Error, Result};
+use crate::{asset_io::ReadSeek, jumbf_io::get_cailoader_handler, Context, Error, Result};
 
 const RDF_DESCRIPTION: &[u8] = b"rdf:Description";
 const XMP_END: &[u8] = b"<?xpacket end=\"w\"?>";
@@ -35,6 +35,21 @@ pub struct XmpInfo {
 }
 
 impl XmpInfo {
+    pub(crate) fn from_source_with_context(
+        source: &mut dyn ReadSeek,
+        format: &str,
+        context: &Context,
+    ) -> Result<Self> {
+        let Some(reader) = context.io().reader(format) else {
+            return Ok(Self::default());
+        };
+        let xmp = reader.read_xmp_result(source)?;
+        match xmp.as_deref() {
+            Some(xmp) => parse_xmp_info(xmp),
+            None => Ok(Self::default()),
+        }
+    }
+
     /// search xmp data for provenance, documentID and instanceID
     pub fn from_source(source: &mut dyn ReadSeek, format: &str) -> Self {
         let xmp = get_cailoader_handler(format).and_then(|cai_loader| {
@@ -52,6 +67,257 @@ impl XmpInfo {
             provenance,
         }
     }
+}
+
+fn xmp_field(namespace: ResolveResult<'_>, local: &[u8]) -> Option<u8> {
+    let ResolveResult::Bound(namespace) = namespace else {
+        return None;
+    };
+    match (namespace.as_ref(), local) {
+        (b"http://ns.adobe.com/xap/1.0/mm/", b"DocumentID") => Some(0),
+        (b"http://ns.adobe.com/xap/1.0/mm/", b"InstanceID") => Some(1),
+        (b"http://purl.org/dc/terms/", b"provenance") => Some(2),
+        _ => None,
+    }
+}
+
+fn set_xmp_field(info: &mut XmpInfo, field: u8, value: String) -> Result<()> {
+    let slot = match field {
+        0 => &mut info.document_id,
+        1 => &mut info.instance_id,
+        _ => &mut info.provenance,
+    };
+    if slot.as_ref().is_some_and(|previous| previous != &value) {
+        return Err(Error::InvalidAsset(
+            "conflicting XMP credential properties".into(),
+        ));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+#[cfg(feature = "pdf")]
+pub(crate) fn validate_xmp(xmp: &str) -> Result<()> {
+    parse_xmp_info(xmp).map(|_| ())
+}
+
+fn parse_xmp_info(xmp: &str) -> Result<XmpInfo> {
+    struct Property {
+        field: u8,
+        depth: usize,
+        text: String,
+        resource: Option<String>,
+    }
+
+    if !xmp.chars().all(xml_character) {
+        return Err(Error::InvalidAsset("invalid XMP XML character".into()));
+    }
+    let mut reader = NsReader::from_str(xmp);
+    let mut info = XmpInfo::default();
+    let mut property: Option<Property> = None;
+    let mut depth = 0usize;
+    let mut roots = 0usize;
+    let mut declaration = false;
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|e| Error::InvalidAsset(format!("malformed XMP: {e}")))?;
+        match event {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                validate_xmp_name(e.name().as_ref())?;
+                let (namespace, local) = reader.resolver().resolve_element(e.name());
+                if matches!(namespace, ResolveResult::Unknown(_)) {
+                    return Err(Error::InvalidAsset("unbound XMP namespace prefix".into()));
+                }
+                let description = matches!(&namespace, ResolveResult::Bound(ns)
+                    if ns.as_ref() == b"http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+                    && local.as_ref() == b"Description";
+                let field = xmp_field(namespace, local.as_ref());
+                if depth == 0 {
+                    roots += 1;
+                }
+                if property.is_some() {
+                    return Err(Error::NotImplemented(
+                        "structured XMP credential property".into(),
+                    ));
+                }
+                let mut resource = None;
+                for attribute in e.attributes() {
+                    let attribute = attribute.map_err(|e| {
+                        Error::InvalidAsset(format!("malformed XMP attribute: {e}"))
+                    })?;
+                    validate_xmp_name(attribute.key.as_ref())?;
+                    let value = reader.decoder().decode(&attribute.value).map_err(|e| {
+                        Error::InvalidAsset(format!("malformed XMP attribute: {e}"))
+                    })?;
+                    let value = quick_xml::escape::unescape(&value).map_err(|e| {
+                        Error::InvalidAsset(format!("malformed XMP attribute: {e}"))
+                    })?;
+                    if !value.chars().all(xml_character) {
+                        return Err(Error::InvalidAsset(
+                            "invalid XMP attribute character".into(),
+                        ));
+                    }
+                    if attribute.key.as_ref() == b"xmlns"
+                        || attribute.key.as_ref().starts_with(b"xmlns:")
+                    {
+                        if attribute.value.contains(&b'&') {
+                            return Err(Error::NotImplemented(
+                                "escaped XMP namespace binding".into(),
+                            ));
+                        }
+                        continue;
+                    }
+                    let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+                    if matches!(namespace, ResolveResult::Unknown(_)) {
+                        return Err(Error::InvalidAsset("unbound XMP attribute prefix".into()));
+                    }
+                    if field == Some(2)
+                        && matches!(&namespace, ResolveResult::Bound(ns)
+                            if ns.as_ref() == b"http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+                        && local.as_ref() == b"resource"
+                    {
+                        resource = Some(value.into_owned());
+                    } else if description {
+                        if let Some(field) = xmp_field(namespace, local.as_ref()) {
+                            set_xmp_field(&mut info, field, value.into_owned())?;
+                        }
+                    }
+                }
+                if matches!(event, Event::Start(_)) {
+                    depth += 1;
+                    if depth > 64 {
+                        return Err(Error::InvalidAsset("XMP nesting exceeds 64".into()));
+                    }
+                    if let Some(field) = field {
+                        property = Some(Property {
+                            field,
+                            depth,
+                            text: String::new(),
+                            resource,
+                        });
+                    }
+                } else if let Some(field) = field {
+                    set_xmp_field(&mut info, field, resource.unwrap_or_default())?;
+                }
+            }
+            Event::End(_) => {
+                if property.as_ref().is_some_and(|p| p.depth == depth) {
+                    let property = property
+                        .take()
+                        .ok_or_else(|| Error::InvalidAsset("missing XMP property state".into()))?;
+                    let text = property.text.trim();
+                    let value = match property.resource {
+                        Some(resource) if text.is_empty() => resource,
+                        Some(_) => {
+                            return Err(Error::InvalidAsset(
+                                "XMP provenance has both text and rdf:resource".into(),
+                            ))
+                        }
+                        None => text.to_owned(),
+                    };
+                    set_xmp_field(&mut info, property.field, value)?;
+                }
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| Error::InvalidAsset("unmatched XMP end tag".into()))?;
+            }
+            Event::Text(text) => {
+                let text = text
+                    .decode()
+                    .map_err(|e| Error::InvalidAsset(format!("malformed XMP text: {e}")))?;
+                if depth == 0 && !text.trim().is_empty() {
+                    return Err(Error::InvalidAsset("text outside XMP root".into()));
+                }
+                if let Some(property) = property.as_mut() {
+                    property.text.push_str(&text);
+                }
+            }
+            Event::CData(text) => {
+                if depth == 0 {
+                    return Err(Error::InvalidAsset("CDATA outside XMP root".into()));
+                }
+                let text = text
+                    .decode()
+                    .map_err(|e| Error::InvalidAsset(format!("malformed XMP CDATA: {e}")))?;
+                if let Some(property) = property.as_mut() {
+                    property.text.push_str(&text);
+                }
+            }
+            Event::DocType(_) => return Err(Error::NotImplemented("XMP DTD".into())),
+            Event::GeneralRef(reference) => {
+                let reference = reference
+                    .decode()
+                    .map_err(|e| Error::InvalidAsset(format!("malformed XMP reference: {e}")))?;
+                let decoded = format!("&{reference};");
+                let decoded = quick_xml::escape::unescape(&decoded)
+                    .map_err(|e| Error::InvalidAsset(format!("malformed XMP reference: {e}")))?;
+                if !decoded.chars().all(xml_character) {
+                    return Err(Error::InvalidAsset(
+                        "invalid XMP reference character".into(),
+                    ));
+                }
+                if depth == 0 {
+                    return Err(Error::InvalidAsset("reference outside XMP root".into()));
+                }
+                if let Some(property) = property.as_mut() {
+                    property.text.push_str(&decoded);
+                }
+            }
+            Event::Decl(decl) => {
+                if declaration || roots != 0 || depth != 0 {
+                    return Err(Error::InvalidAsset("misplaced XMP XML declaration".into()));
+                }
+                let version = decl
+                    .version()
+                    .map_err(|e| Error::InvalidAsset(format!("malformed XMP declaration: {e}")))?;
+                if version.as_ref() != b"1.0" {
+                    return Err(Error::NotImplemented("XMP XML version".into()));
+                }
+                declaration = true;
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if depth != 0 || roots != 1 {
+        return Err(Error::InvalidAsset("incomplete XMP document".into()));
+    }
+    Ok(info)
+}
+
+fn xml_character(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' |
+        '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}')
+}
+
+fn xml_name_start(c: char) -> bool {
+    matches!(c, 'A'..='Z' | '_' | 'a'..='z' | '\u{c0}'..='\u{d6}' |
+        '\u{d8}'..='\u{f6}' | '\u{f8}'..='\u{2ff}' | '\u{370}'..='\u{37d}' |
+        '\u{37f}'..='\u{1fff}' | '\u{200c}'..='\u{200d}' | '\u{2070}'..='\u{218f}' |
+        '\u{2c00}'..='\u{2fef}' | '\u{3001}'..='\u{d7ff}' | '\u{f900}'..='\u{fdcf}' |
+        '\u{fdf0}'..='\u{fffd}' | '\u{10000}'..='\u{effff}')
+}
+
+fn validate_xmp_name(name: &[u8]) -> Result<()> {
+    let name = std::str::from_utf8(name)
+        .map_err(|e| Error::InvalidAsset(format!("invalid XMP XML name: {e}")))?;
+    let mut parts = 0;
+    for part in name.split(':') {
+        parts += 1;
+        let mut chars = part.chars();
+        if parts > 2
+            || !chars.next().is_some_and(xml_name_start)
+            || !chars.all(|c| {
+                xml_name_start(c)
+                    || matches!(c, '-' | '.' | '0'..='9' | '\u{b7}' |
+                        '\u{300}'..='\u{36f}' | '\u{203f}'..='\u{2040}')
+            })
+        {
+            return Err(Error::InvalidAsset("invalid XMP XML name".into()));
+        }
+    }
+    Ok(())
 }
 
 /// Extract an a value from XMP using a key
@@ -72,20 +338,28 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
                         }
                     });
                     if let Some(Ok(attribute)) = value {
-                        if let Ok(s) = String::from_utf8(attribute.value.to_vec()) {
-                            return Some(s);
+                        if let Ok(s) = reader.decoder().decode(&attribute.value) {
+                            if let Ok(s) = quick_xml::escape::unescape(&s) {
+                                return Some(s.into_owned());
+                            }
                         }
                     }
                 } else if e.name() == QName(key.as_bytes()) {
                     // tag case
                     if let Ok(s) = reader.read_text(e.name()) {
                         if let Ok(s) = s.decode() {
-                            return Some(s.into_owned());
+                            if let Ok(s) = quick_xml::escape::unescape(&s) {
+                                return Some(s.into_owned());
+                            }
                         }
                     }
                 }
             }
             Ok(Event::Eof) => break,
+            Err(e) => {
+                error!("Malformed XMP: {e}");
+                return None;
+            }
             _ => {}
         }
     }

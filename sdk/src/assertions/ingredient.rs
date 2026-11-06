@@ -563,9 +563,8 @@ impl Ingredient {
         let mut ingredient = Self::new_v3(relationship);
         ingredient.format = Some(format.to_owned());
 
-        // Try to get xmp info, if this fails all XmpInfo fields will be None.
         stream.rewind()?;
-        let xmp_info = XmpInfo::from_source(&mut stream, format);
+        let xmp_info = XmpInfo::from_source_with_context(&mut stream, format, context)?;
         stream.rewind()?;
         // use xmp info if available
         ingredient.instance_id = xmp_info.instance_id;
