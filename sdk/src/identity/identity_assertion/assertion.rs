@@ -317,6 +317,29 @@ impl IdentityAssertion {
 
         let sig_type = self.signer_payload.sig_type.as_str();
 
+        #[cfg(feature = "unstable_cawg_vcb")]
+        if sig_type == crate::identity::vc_binding::CAWG_VCB_SIG_TYPE {
+            let verifier = crate::identity::vc_binding::VcbSignatureVerifier::new(context);
+
+            // `cawg.vcb.credential_valid` is issued by the verifier itself, only
+            // when the credential is valid and its issuer trusted.
+            let result = if _sync {
+                verifier
+                    .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                    .map(|v| v.to_summary())
+                    .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+            } else {
+                verifier
+                    .check_signature_async(&self.signer_payload, &self.signature, status_tracker)
+                    .await
+                    .map(|v| v.to_summary())
+                    .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+            }?;
+
+            return serde_json::to_value(result)
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()));
+        }
+
         if sig_type == "cawg.x509.cose" {
             let mut ctp = CertificateTrustPolicy::default();
 

@@ -22,6 +22,9 @@ mod examples;
 pub(crate) mod fixtures;
 mod validation_method;
 
+#[cfg(feature = "unstable_cawg_vcb")]
+mod vc_binding;
+
 /// The `did:jwk` issuer that the bundled CAWG ICA `ica_validation` fixtures are
 /// signed with.
 pub(crate) const ICA_FIXTURE_JWK_ISSUER: &str = "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9";
