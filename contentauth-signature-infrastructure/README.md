@@ -85,6 +85,9 @@ packaging and regression tests. It is provisional, not a supported codec API,
 and should shrink as verification moves. Legacy CMS decoding is compiled only
 for this bridge or codec tests. Original MPL-2.0 source notices are retained
 in the codec files; surrounding code uses the repository's MIT/Apache licensing.
+Unsupported legacy attribute-certificate and revocation choices remain explicit
+decoding errors, represented by uninhabited types rather than unreachable
+placeholder data structures.
 
 **Release blocker:** the SDK uses a path-only dependency on this unpublished
 crate. SDK packaging/publication is intentionally unsupported on this branch.
