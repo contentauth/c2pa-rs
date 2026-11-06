@@ -13,41 +13,38 @@
 
 //! Experimental sans-I/O signature infrastructure.
 //!
-//! Currently provides host-driven RFC 3161 timestamp acquisition through
-//! [`timestamp::acquisition`]. Acquisition returns unverified response bytes;
-//! cryptographic verification, certificate-profile validation and trust
-//! evaluation remain in the host SDK.
+//! Signature workflows driven by your application. The crate describes the
+//! external operations it needs; your host performs them using its own HTTP
+//! client, runtime, credentials and network policy.
 //!
-//! Workflow APIs are scoped to their protocol modules, not re-exported at the
-//! crate root:
+//! # Available workflows
 //!
-//! ```
-//! use contentauth_signature_infrastructure::timestamp::acquisition::{
-//!     acquire, AcquisitionWorkflow,
-//! };
-//! ```
+//! - **[Timestamp acquisition](timestamp::acquisition):** request an RFC 3161
+//!   timestamp for a message, using a standard SHA-256 request or a customized
+//!   request body. Supply a fresh nonce, execute the requested HTTP POST, and
+//!   return its response to the workflow. See the module's host-driver example.
 //!
-//! ```compile_fail
-//! use contentauth_signature_infrastructure::{acquire, AcquisitionWorkflow};
-//! ```
+//! # Driving a workflow
 //!
-//! Shared ASN.1 codecs and timestamp response helpers are private implementation
-//! details:
+//! Workflows use `contentauth-sans-io-core`: advance until an operation needs
+//! host input, fulfill that operation with its result, then advance again.
+//! On completion, consume the workflow to obtain its output. Your host controls
+//! I/O, entropy, time inputs, timeout, retries and cancellation; this crate does
+//! not start network requests or require an executor.
 //!
-//! ```compile_fail
-//! use contentauth_signature_infrastructure::asn1;
-//! ```
+//! # What acquisition establishes
 //!
-//! ```compile_fail
-//! use contentauth_signature_infrastructure::timestamp::response;
-//! ```
+//! Timestamp acquisition checks the HTTP envelope, response structure and
+//! reflected nonce, and returns the original, **unverified** response bytes.
+//! It does not establish a correct message imprint, signature validity,
+//! certificate-profile validity or TSA trust. Those checks remain in the host
+//! SDK before the timestamp can be used as evidence.
 //!
-//! The opt-in `sdk-compat` feature exposes a provisional bridge for legacy SDK
-//! codec consumers while they migrate. It is not a stable public codec API and
-//! does not confer cryptographic validity or trust on parsed values.
+//! This crate is an unpublished experiment. Only timestamp acquisition is
+//! currently provided; X.509, OCSP, COSE and timestamp verification workflows
+//! are not yet available here.
 
 #![deny(missing_docs)]
-#![doc = include_str!("../README.md")]
 
 pub mod timestamp;
 
