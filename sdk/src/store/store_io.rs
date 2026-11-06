@@ -616,6 +616,14 @@ impl Store {
         let is_bmff = io.is_bmff_format(format);
         let is_zip = io.is_zip_format(format);
 
+        // The URL stays in the asset's manifest location, so that location is still excluded from
+        // the hash.
+        let url_shares_slot = url.is_some()
+            && io_handler
+                .as_ref()
+                .and_then(|handler| handler.remote_manifest_url_ref())
+                .is_some_and(|writer| writer.url_shares_manifest_slot());
+
         // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
         // we can pass input_stream directly to the write/hash steps, skipping one full-file copy.
         let fast_path = url.is_none() && !remove_manifests;
@@ -629,7 +637,15 @@ impl Store {
                     .remote_manifest_url_ref()
                     .ok_or(Error::XmpNotSupported)?;
 
-                if remove_manifests {
+                // Writing the embedded manifest later would silently overwrite the URL.
+                if url_shares_slot && !remove_manifests {
+                    return Err(Error::BadParam(
+                        "this format can't hold both a remote manifest URL and an embedded manifest; set no_embed"
+                            .to_string(),
+                    ));
+                }
+
+                if remove_manifests && !url_shares_slot {
                     let manifest_writer = io_handler
                         .get_writer(format)
                         .ok_or(Error::UnsupportedType)?;
@@ -992,7 +1008,7 @@ impl Store {
                 };
                 if !pc.update_manifest() {
                     // if we removed the manifest fixup the hash range to be empty
-                    if remove_manifests {
+                    if remove_manifests && !url_shares_slot {
                         new_hash_ranges.iter_mut().for_each(|h| {
                             if h.htype == ObjectType::C2pa || h.htype == ObjectType::OtherExclusion
                             {
@@ -1180,10 +1196,22 @@ impl Store {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
-                if let Some(ext_ref) =
+                let xmp_ref =
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
-                        .provenance
-                {
+                        .provenance;
+                let ext_ref = match xmp_ref {
+                    Some(xmp_ref) => Some(xmp_ref),
+                    // Formats such as structured text keep the URL outside XMP.
+                    None => {
+                        stream.rewind()?;
+                        context.io().handler(asset_type).and_then(|handler| {
+                            handler
+                                .remote_manifest_url_ref()
+                                .and_then(|writer| writer.read_manifest_url(stream))
+                        })
+                    }
+                };
+                if let Some(ext_ref) = ext_ref {
                     let jumbf = if _sync {
                         Store::handle_remote_manifest(&ext_ref, context)?
                     } else {
