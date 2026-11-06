@@ -11,9 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use asn1_rs::nom::AsBytes;
 use async_generic::async_generic;
-use bcder::decode::Constructed;
 use coset::{
     cbor::value::Value, sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext,
 };
@@ -22,12 +20,9 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     crypto::{
-        asn1::rfc3161::{TimeStampResp, TstInfo},
+        asn1::rfc3161::TstInfo,
         cose::{AsyncCoseSigner, CertificateTrustPolicy, CoseError, CoseSigner, TimeStampStorage},
-        time_stamp::{
-            verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
-            TimeStampResponse,
-        },
+        time_stamp::{verify_time_stamp, verify_time_stamp_async, TimeStampError},
     },
     log_item,
     status_tracker::StatusTracker,
@@ -296,36 +291,17 @@ fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
 
 /// Return DER encoded TimeStampToken used by sigTst2 from TimeStampResponse.
 pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
-    let ts_resp = TimeStampResponse(
-        Constructed::decode(ts, bcder::Mode::Der, TimeStampResp::take_from).map_err(|err| {
-            CoseError::InternalError(format!("invalid timestamp response: {err:?}"))
-        })?,
-    );
+    contentauth_signature_infrastructure::timestamp::verification::token_from_response(ts)
+        .map_err(|error| {
+            use contentauth_signature_infrastructure::timestamp::verification::VerificationErrorKind;
 
-    let tst = ts_resp
-        .0
-        .time_stamp_token
-        .ok_or_else(|| CoseError::InternalError("invalid timestamp token".to_string()))?;
-
-    let a = tst
-        .content_type
-        .iter()
-        .map(|v| {
-            v.to_u32()
-                .ok_or(CoseError::InternalError("invalid component".to_string()))
+            match error {
+                VerificationErrorKind::DecodeError(message) => {
+                    CoseError::InternalError(message).into()
+                }
+                other => CoseError::InternalError(other.to_string()).into(),
+            }
         })
-        .collect::<Result<Vec<u32>, CoseError>>()?;
-
-    let ci = ContentInfo {
-        content_type: rasn::types::ObjectIdentifier::new(a).ok_or(CoseError::InternalError(
-            "invalid object identifier for timestamp response".to_string(),
-        ))?,
-        content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
-    };
-
-    Ok(rasn::der::encode(&ci).map_err(|err| {
-        CoseError::InternalError(format!("failed to encode timestamp token: {err:?}"))
-    })?)
 }
 
 #[cfg(test)]

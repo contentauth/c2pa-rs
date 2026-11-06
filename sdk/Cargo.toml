@@ -46,9 +46,10 @@ json_schema = ["dep:schemars"]
 openssl = [
     "dep:openssl",
     "c2pa_raw_crypto/openssl",
+    "contentauth-signature-infrastructure/openssl",
 ]
 pdf = ["dep:lopdf"]
-rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
+rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto", "contentauth-signature-infrastructure/rust_native_crypto"]
 # Native structured-text asset handler (C2PA A.9 ASCII-armour comment block). Experimental
 # feature: exempt from the crate's usual semantic-versioning stability guarantees and may change
 # or be removed in any release. See docs/experimental-features.md.
@@ -112,7 +113,7 @@ chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.78.0"
 c2pa_raw_crypto = { version = "0.3.0", default-features = false, features = ["serde"] }
 coset = "0.4.2"
-contentauth-signature-infrastructure = { path = "../contentauth-signature-infrastructure", features = ["sdk-compat"] }
+contentauth-signature-infrastructure = { path = "../contentauth-signature-infrastructure", default-features = false, features = ["sdk-compat"] }
 contentauth-sans-io-core = "0.2.0"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
 extfmt = "0.2.0"

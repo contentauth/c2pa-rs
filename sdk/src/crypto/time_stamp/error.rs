@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use contentauth_signature_infrastructure::timestamp::acquisition::AcquisitionError;
+use contentauth_signature_infrastructure::timestamp::{
+    acquisition::AcquisitionError,
+    verification::{VerificationError, VerificationErrorKind},
+};
 use thiserror::Error;
 
 use crate::http::HttpResolverError;
@@ -100,6 +103,19 @@ impl From<AcquisitionError> for TimeStampError {
             AcquisitionError::Transport(error) => Self::HttpConnectionError(error),
             AcquisitionError::NonceMismatch => Self::NonceMismatch,
             AcquisitionError::ResponseTooLarge => Self::ResponseTooLarge,
+        }
+    }
+}
+
+impl From<VerificationError> for TimeStampError {
+    fn from(error: VerificationError) -> Self {
+        match error.kind {
+            VerificationErrorKind::DecodeError(message) => Self::DecodeError(message),
+            VerificationErrorKind::InvalidData | VerificationErrorKind::NoMatchingCertificate => {
+                Self::InvalidData
+            }
+            VerificationErrorKind::UnsupportedAlgorithm => Self::UnsupportedAlgorithm,
+            VerificationErrorKind::SignatureMismatch => Self::Untrusted,
         }
     }
 }

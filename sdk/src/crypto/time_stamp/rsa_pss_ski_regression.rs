@@ -8,16 +8,22 @@
 // LICENSE-APACHE files for the specific language governing permissions
 // and limitations under each license.
 
-//! Regression coverage for timestamp RSA-PSS profiles and SKI signer lookup.
+//! SDK trust and status regressions for RSA timestamp profiles and SKI signers.
 
 #![allow(clippy::unwrap_used)]
 
+use rasn::{types, types::Oid};
+use rasn_cms::{CertificateChoices, SignerIdentifier};
+
 use super::*;
+
+const RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
+const RSA_PSS: &str = "1.2.840.113549.1.1.10";
+const MGF1: &str = "1.2.840.113549.1.1.8";
 
 const DATA: &[u8] = b"RSA timestamp regression";
 const SHA256: &str = "2.16.840.1.101.3.4.2.1";
 const SHA384: &str = "2.16.840.1.101.3.4.2.2";
-const SHA512: &str = "2.16.840.1.101.3.4.2.3";
 const PS256: &[u8] = include_bytes!("../../../tests/fixtures/crypto/time_stamp/ps256.tst");
 const PS384: &[u8] = include_bytes!("../../../tests/fixtures/crypto/time_stamp/ps384.tst");
 const PS512: &[u8] = include_bytes!("../../../tests/fixtures/crypto/time_stamp/ps512.tst");
@@ -71,9 +77,8 @@ fn pss(hash: &str, mgf_hash: &str, salt: u8, trailer: Option<u8>) -> Vec<u8> {
 }
 
 fn decode(token: &[u8]) -> rasn_cms::SignedData {
-    signed_data_from_time_stamp_response(token)
-        .unwrap()
-        .unwrap()
+    let content: rasn_cms::ContentInfo = rasn::der::decode(token).unwrap();
+    rasn::der::decode(content.content.as_bytes()).unwrap()
 }
 
 fn encode(sd: &rasn_cms::SignedData) -> Vec<u8> {
@@ -113,11 +118,16 @@ fn verify(token: &[u8]) -> (Result<TstInfo, TimeStampError>, StatusTracker) {
         &mut log,
         false,
     );
+    assert!(log
+        .logged_items()
+        .iter()
+        .all(|item| item.kind != crate::status_tracker::LogKind::Failure));
+
     (result, log)
 }
 
 #[test]
-fn rsa_pss_profiles_with_rsa_encryption_spki_and_legacy_pkcs1_verify() {
+fn rsa_profiles_reach_validated_and_trusted_sdk_statuses() {
     for token in [PS256, PS384, PS512, PKCS1] {
         let sd = decode(token);
         assert_eq!(
@@ -134,24 +144,6 @@ fn rsa_pss_profiles_with_rsa_encryption_spki_and_legacy_pkcs1_verify() {
         assert!(log.has_status(TIMESTAMP_VALIDATED));
         assert!(log.has_status(TIMESTAMP_TRUSTED));
         assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
-
-        if token != PKCS1 {
-            let signer = sd.signer_infos.to_vec()[0];
-            let key = &certificate(&sd).tbs_certificate.subject_public_key_info;
-            let tbs = signed_attributes_digested_content(signer).unwrap().unwrap();
-            let signature = OctetString::new(bytes::Bytes::copy_from_slice(&signer.signature));
-            assert!(
-                validate_timestamp_sig(
-                    &bcder::Oid::from_str(RSA_ENCRYPTION).unwrap(),
-                    &bcder::Oid::from_str(&signer.digest_algorithm.algorithm.to_string()).unwrap(),
-                    &signature,
-                    &tbs,
-                    &rasn::der::encode(key).unwrap(),
-                )
-                .is_err(),
-                "the previous SPKI-based selection must reproduce the failure"
-            );
-        }
     }
 }
 
@@ -198,104 +190,6 @@ fn rsa_profiles_and_ski_signers_reach_normal_tsa_trust_validation() {
 }
 
 #[test]
-fn legacy_rsa_signature_oids_preserve_pkcs1_and_require_matching_digest() {
-    let mut sd = decode(PKCS1);
-    let mut signer = sd.signer_infos.to_vec()[0].clone();
-    let key = &certificate(&sd)
-        .tbs_certificate
-        .subject_public_key_info
-        .algorithm;
-
-    for (signature, hash) in [
-        ("1.2.840.113549.1.1.5", "1.3.14.3.2.26"),
-        ("1.2.840.113549.1.1.11", SHA256),
-        ("1.2.840.113549.1.1.12", SHA384),
-        ("1.2.840.113549.1.1.13", SHA512),
-    ] {
-        signer.signature_algorithm = algorithm(signature, Some(vec![5, 0]));
-        signer.digest_algorithm = algorithm(hash, None);
-        assert_eq!(
-            timestamp_signature_algorithm(&signer, key)
-                .unwrap()
-                .to_string(),
-            RSA_ENCRYPTION
-        );
-        signer.digest_algorithm = algorithm("1.2.3.4", None);
-        assert!(timestamp_signature_algorithm(&signer, key).is_err());
-    }
-
-    signer.signature_algorithm = algorithm("1.2.840.113549.1.1.11", Some(vec![5, 0]));
-    signer.digest_algorithm = algorithm(SHA256, None);
-    sd.signer_infos = vec![signer].into();
-    assert!(verify(&encode(&sd)).0.is_ok());
-}
-
-#[test]
-fn pss_signature_parameters_are_required_and_strictly_parsed() {
-    let sd = decode(PS256);
-    let mut signer = sd.signer_infos.to_vec()[0].clone();
-    let key = &certificate(&sd)
-        .tbs_certificate
-        .subject_public_key_info
-        .algorithm;
-    signer.signature_algorithm.parameters = None;
-    assert!(matches!(
-        timestamp_signature_algorithm(&signer, key),
-        Err(TimeStampError::DecodeError(_))
-    ));
-
-    for parameters in [
-        vec![5, 0],
-        vec![4, 0],
-        vec![0x30, 1, 0],
-        tlv(0x30, &tlv(0xa4, &tlv(2, &[1]))),
-        tlv(0x30, &tlv(0x82, &[32])),
-        tlv(0x30, &tlv(0xa2, &tlv(2, &[0xff]))),
-        tlv(0x30, &tlv(0xa2, &tlv(2, &[]))),
-        tlv(0x30, &tlv(0xa2, &tlv(2, &[0, 32]))),
-        tlv(0x30, &tlv(0xa2, &tlv(2, &[1, 0, 0, 0, 0, 0, 0, 0, 0]))),
-        tlv(
-            0x30,
-            &tlv(
-                0xa0,
-                &rasn::der::encode(&algorithm(SHA256, Some(vec![4, 0]))).unwrap(),
-            ),
-        ),
-        tlv(0x30, &tlv(0xa2, &[2, 1, 32, 5, 0])),
-        tlv(
-            0x30,
-            &[
-                tlv(0xa0, &hash_algorithm(SHA256)),
-                tlv(0xa0, &hash_algorithm(SHA256)),
-            ]
-            .concat(),
-        ),
-        tlv(
-            0x30,
-            &[
-                tlv(0xa2, &tlv(2, &[32])),
-                tlv(0xa0, &hash_algorithm(SHA256)),
-            ]
-            .concat(),
-        ),
-        [pss(SHA256, SHA256, 32, None), vec![5, 0]].concat(),
-        tlv(
-            0x30,
-            &tlv(0xa1, &rasn::der::encode(&algorithm(MGF1, None)).unwrap()),
-        ),
-    ] {
-        signer.signature_algorithm.parameters = Some(types::Any::new(parameters.clone()));
-        assert!(
-            matches!(
-                timestamp_signature_algorithm(&signer, key),
-                Err(TimeStampError::DecodeError(_))
-            ),
-            "{parameters:02x?}"
-        );
-    }
-}
-
-#[test]
 fn pss_profiles_reject_unsupported_and_inconsistent_parameters() {
     let mut sd = decode(PS256);
     let mut signer = sd.signer_infos.to_vec()[0].clone();
@@ -325,59 +219,12 @@ fn pss_profiles_reject_unsupported_and_inconsistent_parameters() {
         ),
     ] {
         signer.signature_algorithm.parameters = Some(types::Any::new(parameters.clone()));
-        assert!(
-            matches!(
-                timestamp_signature_algorithm(
-                    &signer,
-                    &certificate(&sd)
-                        .tbs_certificate
-                        .subject_public_key_info
-                        .algorithm
-                ),
-                Err(TimeStampError::UnsupportedAlgorithm)
-            ),
-            "{parameters:02x?}"
-        );
         sd.signer_infos = vec![signer.clone()].into();
         let (result, log) = verify(&encode(&sd));
         assert!(result.is_err(), "{parameters:02x?}");
         assert!(log.has_status(TIMESTAMP_MALFORMED));
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
     }
-}
-
-#[test]
-fn pss_parameter_defaults_and_null_or_absent_hash_parameters() {
-    for (hash, salt) in [(SHA256, 32), (SHA384, 48), (SHA512, 64)] {
-        let sd = decode(PS256);
-        let key = &certificate(&sd)
-            .tbs_certificate
-            .subject_public_key_info
-            .algorithm;
-        let mut signer = sd.signer_infos.to_vec()[0].clone();
-        signer.digest_algorithm = algorithm(hash, None);
-        signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(hash, hash, salt, None)));
-        assert!(timestamp_signature_algorithm(&signer, key).is_ok());
-
-        let hash_der = rasn::der::encode(&algorithm(hash, None)).unwrap();
-        let fields = [
-            tlv(0xa0, &hash_der),
-            tlv(
-                0xa1,
-                &rasn::der::encode(&algorithm(MGF1, Some(hash_der))).unwrap(),
-            ),
-            tlv(0xa2, &tlv(2, &[salt])),
-        ]
-        .concat();
-        signer.signature_algorithm.parameters = Some(types::Any::new(tlv(0x30, &fields)));
-        assert!(timestamp_signature_algorithm(&signer, key).is_ok());
-    }
-
-    let defaults = pss_parameters(&types::Any::new(vec![0x30, 0])).unwrap();
-    assert_eq!(defaults.hash, "1.3.14.3.2.26");
-    assert_eq!(defaults.mgf_hash, "1.3.14.3.2.26");
-    assert_eq!(defaults.salt_length, 20);
-    assert_eq!(defaults.trailer, 1);
 }
 
 #[test]
@@ -396,73 +243,6 @@ fn pss_actual_salt_must_match_the_declared_profile() {
         assert!(log.has_status(TIMESTAMP_UNTRUSTED));
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
     }
-}
-
-#[test]
-fn pss_actual_hash_must_match_the_declared_profile() {
-    let sd = decode(PS384);
-    let mut signer = sd.signer_infos.to_vec()[0].clone();
-    signer.digest_algorithm = algorithm(SHA256, None);
-    signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(SHA256, SHA256, 32, None)));
-    let key = &certificate(&sd).tbs_certificate.subject_public_key_info;
-    let signature_algorithm = timestamp_signature_algorithm(&signer, &key.algorithm).unwrap();
-    let tbs = signed_attributes_digested_content(&signer)
-        .unwrap()
-        .unwrap();
-    let signature = OctetString::new(bytes::Bytes::copy_from_slice(&signer.signature));
-    assert!(validate_timestamp_sig(
-        &signature_algorithm,
-        &bcder::Oid::from_str(SHA256).unwrap(),
-        &signature,
-        &tbs,
-        &rasn::der::encode(key).unwrap(),
-    )
-    .is_err());
-}
-
-#[test]
-fn pss_spki_restrictions_and_key_compatibility() {
-    let sd = decode(PS256);
-    let signer = sd.signer_infos.to_vec()[0].clone();
-
-    for parameters in [
-        None,
-        Some(pss(SHA256, SHA256, 32, None)),
-        Some(pss(SHA256, SHA256, 20, None)),
-    ] {
-        let key = algorithm(RSA_PSS, parameters.clone());
-        assert!(timestamp_signature_algorithm(&signer, &key).is_ok());
-        let mut changed = sd.clone();
-        change_certificate(&mut changed, |cert| {
-            cert.tbs_certificate.subject_public_key_info.algorithm = key;
-        });
-        let (result, log) = verify(&encode(&changed));
-        assert!(result.is_ok(), "{parameters:02x?}: {result:?}: {log:?}");
-    }
-
-    for parameters in [
-        vec![0x30, 0],
-        pss(SHA384, SHA384, 48, None),
-        pss(SHA256, SHA384, 32, None),
-        pss(SHA256, SHA256, 33, None),
-        pss(SHA256, SHA256, 32, Some(2)),
-        vec![5, 0],
-    ] {
-        assert!(
-            timestamp_signature_algorithm(&signer, &algorithm(RSA_PSS, Some(parameters))).is_err()
-        );
-    }
-
-    for incompatible in [EC_PUBLIC_KEY, "1.3.101.112"] {
-        assert!(timestamp_signature_algorithm(&signer, &algorithm(incompatible, None)).is_err());
-    }
-
-    let legacy = decode(PKCS1);
-    assert!(timestamp_signature_algorithm(
-        legacy.signer_infos.to_vec()[0],
-        &algorithm(RSA_PSS, None),
-    )
-    .is_err());
 }
 
 #[test]

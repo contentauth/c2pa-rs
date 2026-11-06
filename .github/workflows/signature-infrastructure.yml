@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 jobs:
-  acquisition:
+  timestamp:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,11 +35,14 @@ jobs:
         run: |
           cargo test -p contentauth-signature-infrastructure
           cargo test -p contentauth-signature-infrastructure --features sdk-compat
+          cargo test -p contentauth-signature-infrastructure --no-default-features --features openssl
+          cargo test -p contentauth-signature-infrastructure --no-default-features --features openssl,sdk-compat
       - name: Lint both crate surfaces and the SDK adapter
         run: |
           cargo clippy -p contentauth-signature-infrastructure --all-targets -- -D warnings
           cargo clippy -p contentauth-signature-infrastructure --all-targets --features sdk-compat -- -D warnings
-          cargo clippy -p c2pa --lib -- -D warnings
+          cargo clippy -p contentauth-signature-infrastructure --all-targets --no-default-features --features openssl,sdk-compat -- -D warnings
+          cargo clippy -p c2pa --all-targets -- -D warnings
       - name: Check documentation
         run: |
           RUSTDOCFLAGS='-D warnings' cargo doc -p contentauth-signature-infrastructure --no-deps
@@ -52,5 +55,5 @@ jobs:
       - name: Test SDK crypto compatibility
         run: |
           cargo test -p c2pa --lib crypto::
-      - name: Test SDK acquisition with Rust-native cryptography
-        run: cargo test -p c2pa --no-default-features --features rust_native_crypto --lib crypto::time_stamp
+      - name: Test SDK crypto with Rust-native cryptography
+        run: cargo test -p c2pa --no-default-features --features rust_native_crypto --lib crypto::
