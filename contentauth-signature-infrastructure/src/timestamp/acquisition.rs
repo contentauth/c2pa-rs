@@ -15,6 +15,77 @@
 //!
 //! Checks the HTTP envelope, DER structure and reflected nonce only. The host
 //! supplies entropy, bounds response reads, performs HTTP, and drives the workflow.
+//!
+//! # Host example
+//!
+//! This blocking driver accepts an HTTP adapter supplied by your application.
+//! Connect `send` to your HTTP client, configuring credentials, network policy
+//! and timeout there. Supply a fresh nonce from your application's entropy
+//! source; the workflow neither generates randomness nor performs I/O itself.
+//! An async host follows the same loop, awaiting its HTTP client instead.
+//!
+//! ```no_run
+//! use std::{
+//!     error::Error,
+//!     io::{self, Read},
+//! };
+//!
+//! use contentauth_sans_io_core::{Step, Workflow};
+//! use contentauth_signature_infrastructure::timestamp::acquisition::{
+//!     acquire, AcquisitionReply, AcquisitionRequest, UnverifiedTimeStampResponse,
+//!     MAX_RESPONSE_BYTES,
+//! };
+//! use http::{header::CONTENT_TYPE, Request, Response};
+//!
+//! fn acquire_timestamp(
+//!     url: &str,
+//!     message: &[u8],
+//!     fresh_nonce: u64,
+//!     mut send: impl FnMut(Request<Vec<u8>>) -> io::Result<Response<Box<dyn Read>>>,
+//! ) -> Result<UnverifiedTimeStampResponse, Box<dyn Error>> {
+//!     let mut workflow = acquire(url, Vec::new(), message, fresh_nonce)?;
+//!
+//!     loop {
+//!         match workflow.advance()? {
+//!             Step::Complete => return Ok(workflow.finish()?),
+//!             Step::AwaitHost => {}
+//!             _ => return Err(io::Error::other("unexpected workflow step").into()),
+//!         }
+//!
+//!         let operation = workflow
+//!             .outstanding_requests()
+//!             .first()
+//!             .ok_or_else(|| io::Error::other("missing HTTP operation"))?;
+//!         let id = operation.id;
+//!         let AcquisitionRequest::HttpPost(request) = &operation.kind;
+//!
+//!         // Transport and body-read failures propagate to the host's caller.
+//!         let response = send(request.clone())?;
+//!         let (parts, body) = response.into_parts();
+//!         let content_type = parts
+//!             .headers
+//!             .get(CONTENT_TYPE)
+//!             .and_then(|value| value.to_str().ok());
+//!         let mut bytes = Vec::new();
+//!
+//!         // Read one byte beyond the limit so the workflow can detect overflow.
+//!         // Never size the buffer from Content-Length or read HTTP-error bodies.
+//!         if parts.status == 200 && content_type == Some("application/timestamp-reply") {
+//!             body.take(MAX_RESPONSE_BYTES as u64 + 1)
+//!                 .read_to_end(&mut bytes)?;
+//!         }
+//!
+//!         workflow.fulfill(
+//!             id,
+//!             AcquisitionReply::Http(Ok(Response::from_parts(parts, bytes))),
+//!         )?;
+//!     }
+//! }
+//! ```
+//!
+//! The returned [`UnverifiedTimeStampResponse`] must still pass your timestamp
+//! verifier and applicable certificate/profile/trust checks. This driver adds
+//! no retries; the host decides whether and when to attempt acquisition again.
 
 use bcder::{decode::Constructed, encode::Values, Integer, OctetString};
 use contentauth_sans_io_core::{CoroutineWorkflow, Host, ProtocolError, Request};
