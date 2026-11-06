@@ -11,12 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Shared helpers for the structured-text handler: whole-stream read with a checked
-//! allocation, the `c2pa.hash.data` object layout, and A.9 delimiter / `data:` URI encoding.
+//! Shared helpers for the text-based handlers: whole-stream read with a checked
+//! allocation and the `c2pa.hash.data` object layout (structured text and TTML), plus the
+//! A.9 delimiter / `data:` URI encoding (structured text only).
 
+#[cfg(feature = "unstable_structured_text")]
+use crate::crypto::base64;
 use crate::{
     asset_io::{ObjectLocations, ObjectType, ReadSeek},
-    crypto::base64,
     error::{Error, Result},
     utils::io_utils::{stream_len, ReaderUtils},
 };
@@ -57,20 +59,26 @@ pub(crate) fn read_text_stream(mut reader: &mut dyn ReadSeek) -> Result<String> 
         .map_err(|_| Error::InvalidAsset("text asset is not valid UTF-8".to_string()))
 }
 
+#[cfg(feature = "unstable_structured_text")]
 pub(crate) const BEGIN_DELIMITER: &str = "-----BEGIN C2PA MANIFEST-----";
+#[cfg(feature = "unstable_structured_text")]
 pub(crate) const END_DELIMITER: &str = "-----END C2PA MANIFEST-----";
+#[cfg(feature = "unstable_structured_text")]
 pub(crate) const DATA_URI_PREFIX: &str = "data:application/c2pa;base64,";
 
+#[cfg(feature = "unstable_structured_text")]
 pub(crate) fn encode_data_uri(store_bytes: &[u8]) -> String {
     format!("{DATA_URI_PREFIX}{}", base64::encode(store_bytes))
 }
 
+#[cfg(feature = "unstable_structured_text")]
 pub(crate) enum ManifestReference {
     Embedded(Vec<u8>),
     /// External reference; handlers treat it as no embedded store.
     External,
 }
 
+#[cfg(feature = "unstable_structured_text")]
 pub(crate) fn parse_manifest_reference(reference: &str) -> Result<ManifestReference> {
     let reference = reference.trim();
     match reference.strip_prefix(DATA_URI_PREFIX) {
@@ -83,6 +91,7 @@ pub(crate) fn parse_manifest_reference(reference: &str) -> Result<ManifestRefere
     }
 }
 
+#[cfg(feature = "unstable_structured_text")]
 /// Whether the text between the delimiters is a manifest reference at all: A.9.3 admits
 /// only a URL or a `data:` URI, and A.9.5 treats an empty one as a failure. Text that is
 /// neither means the surrounding delimiters are ordinary content (prose describing the
@@ -108,7 +117,7 @@ pub(crate) fn is_manifest_reference(reference: &str) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unstable_structured_text"))]
 mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
