@@ -325,7 +325,7 @@ mod tests {
     }
 
     impl crate::identity::builder::CredentialHolder for RecordingCredentialHolder {
-        fn sig_type(&self) -> &'static str {
+        fn sig_type(&self) -> &str {
             self.sig_type
         }
 
@@ -382,7 +382,7 @@ mod tests {
         });
         struct Shared(std::sync::Arc<RecordingCredentialHolder>);
         impl crate::identity::builder::CredentialHolder for Shared {
-            fn sig_type(&self) -> &'static str {
+            fn sig_type(&self) -> &str {
                 self.0.sig_type()
             }
 

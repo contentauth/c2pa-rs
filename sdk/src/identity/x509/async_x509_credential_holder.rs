@@ -77,7 +77,7 @@ impl AsyncX509CredentialHolder {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AsyncCredentialHolder for AsyncX509CredentialHolder {
-    fn sig_type(&self) -> &'static str {
+    fn sig_type(&self) -> &str {
         super::CAWG_X509_SIG_TYPE
     }
 
