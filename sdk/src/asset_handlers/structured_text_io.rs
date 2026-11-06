@@ -31,7 +31,7 @@ enum CommentStyle {
 }
 
 /// A.9.2 excludes `text/html` and `image/svg+xml`, which have their own embedding sections.
-static SUPPORTED_TYPES: [&str; 28] = [
+pub(crate) static SUPPORTED_TYPES: [&str; 28] = [
     "atom",
     "application/atom+xml",
     "css",

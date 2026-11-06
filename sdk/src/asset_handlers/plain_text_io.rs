@@ -47,7 +47,7 @@ use crate::{
     utils::io_utils::{stream_len, ReaderUtils},
 };
 
-const SUPPORTED_TYPES: [&str; 2] = ["txt", "text/plain"];
+pub(crate) const SUPPORTED_TYPES: [&str; 2] = ["txt", "text/plain"];
 
 /// Used only to size a wrapper before the real manifest is known, so
 /// [`get_object_locations`](C2paWriter::get_object_locations) can report an
