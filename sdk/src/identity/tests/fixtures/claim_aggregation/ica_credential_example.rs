@@ -88,13 +88,23 @@ pub(crate) fn ica_example_identities() -> NEVec<VerifiedIdentity> {
         VerifiedIdentity {
             type_: NonEmptyString::new("cawg.crypto_wallet".to_string()).unwrap(),
             name: None,
-            username: Some(NonEmptyString::new("username".to_string()).unwrap()),
-            uri: Some(UriBuf::from_str("https://example-crypto-wallet.com/username").unwrap()),
+            username: None,
+            uri: Some(
+                UriBuf::from_str(
+                    "https://example-crypto-wallet.com/fa64ef445f994138bdeb9baac6ce1e16",
+                )
+                .unwrap(),
+            ),
             provider: IdentityProvider {
                 id: UriBuf::from_str("https://example-crypto-wallet.com").unwrap(),
                 name: NonEmptyString::new("Example Crypto Wallet".to_string()).unwrap(),
             },
-            address: None,
+            // §8.1.2.5: `address` is required for `cawg.crypto_wallet`. (The CAWG
+            // specification's own example used `username`; see
+            // decentralized-identity/cawg-identity-assertion#288.)
+            address: Some(
+                NonEmptyString::new("fa64ef445f994138bdeb9baac6ce1e16".to_string()).unwrap(),
+            ),
             verified_at: "2024-05-27T08:40:39.569856Z"
                 .parse::<DateTime<FixedOffset>>()
                 .unwrap(),
