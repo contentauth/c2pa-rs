@@ -45,6 +45,9 @@
 //! are not yet available here.
 
 #![deny(missing_docs)]
+#![deny(clippy::expect_used)]
+#![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
 
 pub mod timestamp;
 
