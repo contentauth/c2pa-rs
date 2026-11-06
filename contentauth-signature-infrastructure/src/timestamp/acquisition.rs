@@ -313,6 +313,8 @@ async fn acquire_response(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use bcder::{decode::Constructed, encode::Values, Integer as BcderInteger};
     use contentauth_sans_io_core::{ProtocolError, Step, Workflow};
     use http::{header, Response};
