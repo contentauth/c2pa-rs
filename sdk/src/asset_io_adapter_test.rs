@@ -757,12 +757,7 @@ fn signs_and_validates() {
         ]);
     }
     for (file, mime) in cases {
-        let src = fs::read(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures")
-                .join(file),
-        )
-        .unwrap();
+        let src = fs::read(crate::utils::test::fixture_path(file)).unwrap();
         let mut builder = Builder::from_context(test_context())
             .with_definition(
                 r#"{"title": "t", "claim_generator_info": [{"name": "t", "version": "1"}]}"#,
