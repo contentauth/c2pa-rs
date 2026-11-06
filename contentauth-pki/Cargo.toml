@@ -9,12 +9,17 @@ readme = "README.md"
 publish = false
 
 [features]
-# Provisional bridge until timestamp verification moves out of the SDK.
+default = ["rust_native_crypto"]
+openssl = ["c2pa_raw_crypto/openssl"]
+rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
+# Provisional bridge for the SDK's deferred profile, trust and OCSP consumers.
 sdk-compat = []
 
 [dependencies]
+asn1-rs = "0.7.2"
 bcder = "0.7.6"
 bytes = "1.11.1"
+c2pa_raw_crypto = { version = "0.3.0", default-features = false }
 chrono = { version = "0.4.44", default-features = false, features = ["std"] }
 contentauth-sans-io-core = "0.2.0"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
@@ -22,6 +27,8 @@ hex = "0.4.3"
 http = "1.4.1"
 rasn = "0.28.13"
 rasn-cms = "0.28.13"
+rasn-pkix = "0.28.13"
+sha1 = "0.11.0"
 sha2 = "0.11.0"
 thiserror = "2.0.18"
 

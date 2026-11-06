@@ -11,24 +11,25 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Provisional codec bridge for the SDK's existing timestamp verifier.
+//! Provisional timestamp-fact bridge for deferred SDK policy consumers.
 //!
 //! Enabled only by `sdk-compat`. These decoded values carry no verification,
 //! profile-validity, or trust guarantees. This bridge is not a stable public API.
 
-pub use crate::{
-    asn1::{AlgorithmIdentifier, GeneralizedTime},
-    timestamp::response::TimeStampResponse,
-};
+pub use crate::asn1::{AlgorithmIdentifier, GeneralizedTime};
 
-/// Timestamp structures still consumed by SDK verification and COSE packaging.
+/// Timestamp structures still consumed by SDK profile, trust, OCSP and acquisition adapters.
 pub mod rfc3161 {
-    pub use crate::asn1::rfc3161::{
-        Accuracy, MessageImprint, PkiStatus, TimeStampReq, TimeStampResp, TimeStampToken, TstInfo,
-    };
+    pub use crate::asn1::rfc3161::{Accuracy, MessageImprint, TimeStampReq, TstInfo};
 }
 
-/// CMS structures required by the SDK's legacy codec regression tests.
-pub mod rfc5652 {
-    pub use crate::asn1::rfc5652::{ContentInfo, SignedData, SignerInfo, OID_ID_SIGNED_DATA};
+/// Adapt fully cryptographically verified facts to the SDK's deferred policy API.
+///
+/// The returned legacy structure does not establish profile validity or trust.
+/// This narrow bridge avoids exposing CMS/signers or raw ASN.1 through the
+/// supported verification API, while SDK profile/OCSP consumers still use TstInfo.
+pub fn verified_timestamp_info(
+    timestamp: &crate::timestamp::verification::VerifiedTimestamp<'_>,
+) -> rfc3161::TstInfo {
+    timestamp.legacy_info()
 }

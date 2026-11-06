@@ -1,9 +1,10 @@
 # PKI extraction experiment
 
 `contentauth-pki` is an **unpublished, provisional**
-workspace crate. This first layer implements host-driven RFC 3161 timestamp
-acquisition. X.509 validation, timestamp verification, OCSP, and COSE remain in
-the C2PA SDK; their extraction is not claimed by this layer.
+workspace crate. The acquisition foundation implements host-driven RFC 3161
+timestamp acquisition. This second layer adds deterministic timestamp
+cryptographic verification and only its private CMS/X.509 support. Certificate
+profile/chain policy, trust, OCSP, and COSE orchestration remain in the C2PA SDK.
 
 The scope is public key infrastructure (PKI) workflows for content authenticity.
 COSE is supporting machinery, not a general-purpose COSE environment.
@@ -31,7 +32,7 @@ bodies, additional headers, HTTP 200 requirement, and exact
 `application/timestamp-reply` content type (parameters are not accepted).
 It checks reflected nonces when a granted response contains timestamp
 information, including missing or unexpected nonces. Non-granted responses and
-missing tokens are deliberately passed to the existing SDK verifier rather
+missing tokens are deliberately passed to the verifier rather
 than mistaken for verified results. Original response bytes are retained;
 signed CMS data is not re-encoded for return to the verifier.
 
@@ -59,7 +60,8 @@ remains host-side; it is not a new success or fallback in this crate.
 | --- | --- |
 | Parsed | ASN.1 structure decoded; no authenticity claim. Codecs are private. |
 | Acquired/unverified | HTTP envelope, structure, and available reflected nonce checked; original bytes returned. |
-| Cryptographically verified | Not produced here. SDK checks signatures and message imprints. |
+| Signature-verified | `SignatureVerifiedTimestamp`: CMS signature and signed-attribute digest checked; not yet bound to the host message. |
+| Cryptographically verified | `VerifiedTimestamp`: signature plus message imprint checked. Not an accepted signing time. |
 | Profile-valid | Not produced here. Existing SDK certificate/profile checks remain authoritative. |
 | Trusted | Not produced here. SDK trust policy and C2PA/CAWG reporting remain authoritative. |
 
@@ -68,6 +70,67 @@ accept explicit facts and policy inputs chosen by the host rather than infer
 SDK policy, configure resolvers, consult settings, or emit C2PA status codes.
 No public verification-policy abstraction or empty subsystem scaffolding is
 introduced in anticipation of that work.
+
+## Verifying a timestamp
+
+The public API stays under `timestamp::verification`. `ParsedTimestamp::parse`
+accepts a granted RFC 3161 response or a legacy bare token and retains the received
+CMS encoding for signed-attribute verification. No I/O suspension is necessary.
+
+```rust
+use contentauth_pki::timestamp::verification::ParsedTimestamp;
+
+fn verify_first_signer(token: &[u8], message: &[u8])
+    -> Result<(), Box<dyn std::error::Error>>
+{
+    let parsed = ParsedTimestamp::parse(token)?;
+    let signed = parsed.verify_signatures().next().ok_or("no timestamp signer")??;
+
+    // Host temporal policy: use the attested time, certificate bounds and
+    // accuracy, not the current clock or a CMS signingTime attribute.
+    let time = signed.generation_time().timestamp();
+    let (start, end) = signed.signer_validity();
+    let margin = signed.accuracy_seconds();
+    if time < start.saturating_sub(margin) || time > end.saturating_add(margin) {
+        return Err("timestamp outside signer validity".into());
+    }
+
+    let verified = signed.verify_message_imprint(message)?;
+    let signer_certificate_der = verified.signature().signer_certificate();
+    // Validate this certificate's TSA profile and chain against host TSA
+    // anchors before treating verified.generation_time() as accepted time.
+    let _ = signer_certificate_der;
+    Ok(()) // Cryptographic/temporal checks only; NOT a trust verdict.
+}
+```
+
+Hosts trying multiple signers iterate `verify_signatures`, retaining failures
+according to their reporting policy. Certificate lookup uses the first match in
+decoded certificate order, including strict SKI decoding; it does not try every
+certificate sharing an identifier. Duplicate signature values are rejected even
+when a SET OF decoder would collapse identical SignerInfos. RSA-PSS parameters
+and SPKI restrictions remain strict PS256/384/512, with legacy PKCS#1 v1.5
+compatibility. CMS SHA-1 digests remain distinct from SHA-256/384/512-only message
+imprints. No supported algorithm profile is expanded by this layer.
+
+`VerificationError` carries a typed failure kind, stage and diagnostic, without
+SDK status codes. The SDK preserves signer iteration, temporal-before-imprint
+failure precedence, C2PA/CAWG reporting and timestamp-only diagnostic isolation.
+It still chooses profile/EKU policy, orders candidate chains, uses only TSA trust
+anchors (not private/claim anchors), and decides legacy acceptance. Successful
+cryptography alone never enables trusted CAWG signing-time association.
+
+`signer_certificate_from_token` is explicitly **unverified** certificate lookup.
+`token_from_response` only extracts/re-encodes a bare token for `sigTst2`; legacy
+`sigTst` keeps the original response bytes. Both packaging and validation reuse
+the relocated private codecs. RFC 3161 uses CMS, so verification adds no COSE
+dependency or public X.509 codec API.
+
+The independent crate defaults to `rust_native_crypto`. Hosts may instead use
+`default-features = false` with `openssl`; the SDK forwards its selected backend
+without enabling the independent crate's defaults. Both sync/async SDK adapters
+use the same deterministic verifier. Browser verification uses Rust-native
+primitives; no browser executor or clock is introduced.
 
 ## Private codecs and compatibility
 
@@ -82,11 +145,13 @@ this crate and do not depend on the SDK fixture directory.
 
 `asn1` and `timestamp::response` are private. Timestamp response interpretation
 lives alongside acquisition, rather than in the shared ASN.1 codec layer.
-The opt-in `sdk-compat` bridge exposes only
-the legacy timestamp/CMS types still required by SDK verification, COSE
-packaging, and regression tests. It is provisional, not a supported codec API,
-and should shrink as verification moves. Legacy CMS decoding is compiled only
-for this bridge or codec tests. Original MPL-2.0 source notices are retained
+The opt-in `sdk-compat` bridge now exposes only the legacy timestamp facts and
+request structures still needed by deferred SDK profile/trust/OCSP consumers
+and acquisition adapters. `verified_timestamp_info` adapts a `VerifiedTimestamp`
+to the existing SDK `TstInfo` contract; it does not validate trust. CMS signer/data
+types, response wrappers, and token/response codecs are no longer exported.
+The bridge is provisional, not a supported codec API. Legacy CMS decoding is
+compiled only for codec tests. Original MPL-2.0 source notices are retained
 in the codec files; surrounding code uses the repository's MIT/Apache licensing.
 Unsupported legacy attribute-certificate and revocation choices remain explicit
 decoding errors, represented by uninhabited types rather than unreachable
@@ -99,19 +164,14 @@ The crate's name, API, and compatibility feature are experimental.
 
 ## Subsequent bounded layers
 
-1. Extract timestamp cryptographic verification and shared X.509 facts behind
-   explicit time, algorithm, and certificate inputs. Preserve exact signed-attribute
-   bytes, RSA-PSS/SKI correctness, and isolated invalid-TSA diagnostics. Keep
-   profile selection, trust inputs, and status reporting in the host; reduce the
-   provisional codec bridge rather than adding another implementation.
-2. Move X.509 chain/profile mechanics with explicit host-selected role/policy
+1. Move X.509 chain/profile mechanics with explicit host-selected role/policy
    inputs and separate verified/profile-valid/trusted outcomes. Do not silently
    redefine role-specific EKU acceptance: #3025 remains unresolved.
-3. Extract OCSP parsing and verification using the shared certificate foundation,
+2. Extract OCSP parsing and verification using the shared certificate foundation,
    then host-driven acquisition. Preserve issuer-signed responses, authoritative
    status reporting, and bounded reads. #3026 verification-resource budgets remain
    unresolved; this layer neither invents budgets nor claims they are solved.
-4. Move COSE verification/signing orchestration atop those primitives while the
+3. Move COSE verification/signing orchestration atop those primitives while the
    SDK retains C2PA/CAWG mapping, settings, resolver wiring, and SDK policy.
 
 Each layer depends on the shared codec/fact boundary below it and should carry

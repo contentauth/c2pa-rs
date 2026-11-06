@@ -213,4 +213,168 @@ mod tests {
             Err(AcquisitionError::DecodeError(_))
         ));
     }
+
+    fn response_der(status: u8, token: Option<&[u8]>) -> Result<Vec<u8>, rasn::error::EncodeError> {
+        #[derive(AsnType, Encode)]
+        struct Status {
+            status: rasn::types::Integer,
+        }
+        #[derive(AsnType, Encode)]
+        struct Response {
+            status: Status,
+            token: Option<Any>,
+        }
+
+        rasn::der::encode(&Response {
+            status: Status {
+                status: status.into(),
+            },
+            token: token.map(|bytes| Any::new(bytes.to_vec())),
+        })
+    }
+
+    #[test]
+    fn status_and_absent_token_are_independent() -> Result<(), Box<dyn std::error::Error>> {
+        for status in 0..=5 {
+            let bytes = response_der(status, None)?;
+            let result = signed_data_from_time_stamp_response(&bytes);
+            assert_eq!(result.is_ok(), status <= 1);
+            if status <= 1 {
+                assert!(result?.is_none());
+            }
+        }
+
+        assert!(signed_data_from_time_stamp_response(&[0x30, 1, 0]).is_err());
+        assert!(signed_data_from_time_stamp_response(b"bad DER")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn token_and_response_decoding_preserve_content() -> Result<(), Box<dyn std::error::Error>> {
+        let token = include_bytes!("../../tests/fixtures/time_stamp/ps256.tst");
+        let sd = signed_data_from_time_stamp_response(token)?.ok_or("missing CMS")?;
+        let response = response_der(0, Some(token))?;
+        assert_eq!(
+            signed_data_from_time_stamp_response(&response)?,
+            Some(sd.clone())
+        );
+        assert_eq!(
+            super::super::verification::token_from_response(&response)?,
+            token.as_slice()
+        );
+        assert!(tst_info_from_signed_data(&sd)?.is_some());
+
+        let mut missing = sd.clone();
+        missing.encap_content_info.content = None;
+        assert!(tst_info_from_signed_data(&missing)?.is_none());
+        let mut unrelated = sd.clone();
+        unrelated.encap_content_info.content_type =
+            ObjectIdentifier::new(vec![1, 2, 3]).ok_or("invalid test OID")?;
+        assert!(tst_info_from_signed_data(&unrelated)?.is_none());
+        let mut malformed = sd;
+        malformed.encap_content_info.content = Some(vec![0].into());
+        assert!(tst_info_from_signed_data(&malformed).is_err());
+
+        for oid in [vec![1, 2, 3], vec![1, 2, 840, 113549, 1, 7, 2]] {
+            let invalid = super::ContentInfo {
+                content_type: ObjectIdentifier::new(oid).ok_or("invalid test OID")?,
+                content: Any::new(vec![0x30, 0]),
+            };
+            assert!(signed_data_from_time_stamp_response(&rasn::der::encode(&invalid)?).is_err());
+        }
+
+        Ok(())
+    }
+}
+
+use super::verification::VerificationErrorKind;
+use crate::asn1::rfc3161::TimeStampToken;
+
+#[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct ContentInfo {
+    pub(crate) content_type: rasn::types::ObjectIdentifier,
+
+    #[rasn(tag(explicit(0)))]
+    pub(crate) content: rasn::types::Any,
+}
+
+pub(crate) fn signed_data_from_time_stamp_response(
+    ts_resp: &[u8],
+) -> Result<Option<SignedData>, VerificationErrorKind> {
+    Ok(signed_data_and_bytes_from_time_stamp_response(ts_resp)?.map(|(sd, _)| sd))
+}
+
+// Keep the exact SignedData encoding supplied to rasn so timestamp verification
+// can bind the signature input to the decoded attributes without reparsing the
+// outer TimeStampResp/ContentInfo envelope with a different parser.
+pub(crate) fn signed_data_and_bytes_from_time_stamp_response(
+    ts_resp: &[u8],
+) -> Result<Option<(SignedData, Vec<u8>)>, VerificationErrorKind> {
+    let time_stamp_token = if let Ok(ts) = Constructed::decode(ts_resp, bcder::Mode::Der, |cons| {
+        TimeStampResp::take_from(cons)
+    })
+    .map_err(|e| VerificationErrorKind::DecodeError(e.to_string()))
+    {
+        if ts.status.status == PkiStatus::Granted || ts.status.status == PkiStatus::GrantedWithMods
+        {
+            ts.time_stamp_token
+        } else {
+            return Err(VerificationErrorKind::DecodeError(
+                "time stamp status not granted".to_string(),
+            ));
+        }
+    } else if let Ok(ts) = Constructed::decode(ts_resp, bcder::Mode::Der, |cons| {
+        TimeStampToken::take_opt_from(cons)
+    }) {
+        ts
+    } else {
+        return Err(VerificationErrorKind::DecodeError(
+            "no time stamp found".to_string(),
+        ));
+    };
+
+    let Some(token) = &time_stamp_token else {
+        return Ok(None);
+    };
+
+    if token.content_type != OID_ID_SIGNED_DATA {
+        return Err(VerificationErrorKind::DecodeError(
+            "time stamp has invalid OID".to_string(),
+        ));
+    }
+
+    let mut sd_bytes = Vec::new();
+    token
+        .content
+        .write_encoded(bcder::Mode::Der, &mut sd_bytes)
+        .map_err(|_err| VerificationErrorKind::DecodeError("time stamp invalid".to_string()))?;
+
+    // decode ContentInfo DER as SignedData
+    match rasn::der::decode(&sd_bytes) {
+        Ok(signed_data) => Ok(Some((signed_data, sd_bytes))),
+        Err(_) => Err(VerificationErrorKind::DecodeError(
+            "time stamp invalid".to_string(),
+        )),
+    }
+}
+
+pub(crate) fn tst_info_from_signed_data(
+    signed_data: &SignedData,
+) -> Result<Option<TstInfo>, VerificationErrorKind> {
+    if signed_data.encap_content_info.content_type
+        != Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO
+    {
+        return Ok(None);
+    }
+
+    let Some(content) = &signed_data.encap_content_info.content else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        Constructed::decode(content.as_ref(), bcder::Mode::Der, |cons| {
+            TstInfo::take_from(cons)
+        })
+        .map_err(|err| VerificationErrorKind::DecodeError(err.to_string()))?,
+    ))
 }
