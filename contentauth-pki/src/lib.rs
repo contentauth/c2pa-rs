@@ -23,6 +23,10 @@
 //!   timestamp for a message, using a standard SHA-256 request or a customized
 //!   request body. Supply a fresh nonce, execute the requested HTTP POST, and
 //!   return its response to the workflow. See the module's host-driver example.
+//! - **[Timestamp verification](timestamp::verification):** parse a response or
+//!   bare CMS token, authenticate signer facts, then verify its message imprint.
+//!   These are deterministic functions, not suspended workflows. Certificate
+//!   profile, trust and acceptance remain host decisions.
 //!
 //! # Driving a workflow
 //!
@@ -37,13 +41,13 @@
 //! Timestamp acquisition checks the HTTP envelope, response structure and
 //! reflected nonce, and returns the original, **unverified** response bytes.
 //! It does not establish a correct message imprint, signature validity,
-//! certificate-profile validity, or TSA trust. Those checks remain in the host
-//! SDK before the timestamp can be used as evidence.
+//! certificate-profile validity, or TSA trust. Use `timestamp::verification` for
+//! cryptographic checks, then apply host profile/trust policy before acceptance.
 //!
-//! This crate is an unpublished experiment. Only timestamp acquisition is
-//! currently provided; X.509, OCSP, COSE, and timestamp verification workflows
-//! are not yet available here.
-//! COSE is supporting machinery, not a general-purpose COSE environment.
+//! This crate is an unpublished experiment. Timestamp acquisition and cryptographic
+//! verification are provided; only the internal CMS/X.509 support needed for those
+//! operations is included. X.509 chain/profile policy, OCSP, and COSE orchestration
+//! are not provided.
 
 #![deny(missing_docs)]
 #![deny(clippy::expect_used)]

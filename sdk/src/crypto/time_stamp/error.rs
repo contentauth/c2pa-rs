@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use contentauth_pki::timestamp::acquisition::AcquisitionError;
+use contentauth_pki::timestamp::{
+    acquisition::AcquisitionError,
+    verification::{VerificationError, VerificationErrorKind},
+};
 use thiserror::Error;
 
 use crate::http::HttpResolverError;
@@ -107,6 +110,19 @@ impl From<AcquisitionError> for TimeStampError {
             error => {
                 Self::InternalError(format!("unrecognized timestamp acquisition error: {error}"))
             }
+        }
+    }
+}
+
+impl From<VerificationError> for TimeStampError {
+    fn from(error: VerificationError) -> Self {
+        match error.kind {
+            VerificationErrorKind::DecodeError(message) => Self::DecodeError(message),
+            VerificationErrorKind::InvalidData | VerificationErrorKind::NoMatchingCertificate => {
+                Self::InvalidData
+            }
+            VerificationErrorKind::UnsupportedAlgorithm => Self::UnsupportedAlgorithm,
+            VerificationErrorKind::SignatureMismatch => Self::Untrusted,
         }
     }
 }
