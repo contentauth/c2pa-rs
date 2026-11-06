@@ -33,11 +33,7 @@ pub(crate) fn check_certificate_trust(
     let _openssl = OpenSslMutex::acquire()?;
     let mut ca_outside_validity = false;
 
-    if ctp.anchor_sets_of_type(anchor_type).count() == 0 {
-        return Err(CertificateTrustError::CertificateNotTrusted);
-    }
-
-    for anchor_set in ctp.anchor_sets_of_type(anchor_type) {
+    for anchor_set in ctp.anchor_sets_for_certificate(anchor_type, cert_der)? {
         // Process each anchor set
 
         let mut cert_chain = Stack::new()?;
