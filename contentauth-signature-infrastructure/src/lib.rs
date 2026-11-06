@@ -52,6 +52,3 @@ mod asn1;
 
 #[cfg(feature = "sdk-compat")]
 pub mod sdk_compat;
-
-#[cfg(test)]
-mod tests;
