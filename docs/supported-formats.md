@@ -21,6 +21,7 @@ The following table summarizes the supported media (asset) file formats. This in
 | `heif`          | `image/heif`                                                                    |
 | `jpg`, `jpeg`   | `image/jpeg`                                                                    |
 | `jxl`           | `image/jxl`                                                                     |
+| `keras`         | (none registered) <br/>Keras 3 models, which are ZIP archives.                  |
 | `m4a`           | `audio/mp4`                                                                     |
 | `mp3`           | `audio/mpeg`                                                                    |
 | `mp4`           | `video/mp4`, `application/mp4` <br/>Fragmented MP4 (DASH) supported only for file-based operations from the Rust library. |
