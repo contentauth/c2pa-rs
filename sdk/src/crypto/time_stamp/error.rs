@@ -111,9 +111,11 @@ impl From<VerificationError> for TimeStampError {
     fn from(error: VerificationError) -> Self {
         match error.kind {
             VerificationErrorKind::DecodeError(message) => Self::DecodeError(message),
+
             VerificationErrorKind::InvalidData | VerificationErrorKind::NoMatchingCertificate => {
                 Self::InvalidData
             }
+
             VerificationErrorKind::UnsupportedAlgorithm => Self::UnsupportedAlgorithm,
             VerificationErrorKind::SignatureMismatch => Self::Untrusted,
         }

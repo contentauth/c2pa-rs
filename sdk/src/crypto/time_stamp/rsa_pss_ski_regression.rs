@@ -63,10 +63,12 @@ fn hash_algorithm(hash: &str) -> Vec<u8> {
 
 fn pss(hash: &str, mgf_hash: &str, salt: u8, trailer: Option<u8>) -> Vec<u8> {
     let mut fields = tlv(0xa0, &hash_algorithm(hash));
+
     fields.extend(tlv(
         0xa1,
         &rasn::der::encode(&algorithm(MGF1, Some(hash_algorithm(mgf_hash)))).unwrap(),
     ));
+
     fields.extend(tlv(0xa2, &tlv(2, &[salt])));
 
     if let Some(trailer) = trailer {
@@ -111,6 +113,7 @@ fn change_certificate(
 
 fn verify(token: &[u8]) -> (Result<TstInfo, TimeStampError>, StatusTracker) {
     let mut log = StatusTracker::default();
+
     let result = verify_time_stamp(
         token,
         DATA,
@@ -118,6 +121,7 @@ fn verify(token: &[u8]) -> (Result<TstInfo, TimeStampError>, StatusTracker) {
         &mut log,
         false,
     );
+
     assert!(log
         .logged_items()
         .iter()
@@ -130,6 +134,7 @@ fn verify(token: &[u8]) -> (Result<TstInfo, TimeStampError>, StatusTracker) {
 fn rsa_profiles_reach_validated_and_trusted_sdk_statuses() {
     for token in [PS256, PS384, PS512, PKCS1] {
         let sd = decode(token);
+
         assert_eq!(
             certificate(&sd)
                 .tbs_certificate
@@ -139,7 +144,9 @@ fn rsa_profiles_reach_validated_and_trusted_sdk_statuses() {
                 .to_string(),
             RSA_ENCRYPTION
         );
+
         let (result, log) = verify(token);
+
         assert!(result.is_ok(), "{result:?}: {log:?}");
         assert!(log.has_status(TIMESTAMP_VALIDATED));
         assert!(log.has_status(TIMESTAMP_TRUSTED));
@@ -154,6 +161,7 @@ fn rsa_profiles_and_ski_signers_reach_normal_tsa_trust_validation() {
         let cert_der = tsa_signer_cert_der_from_token(token).unwrap().unwrap();
         let pem = pem::encode(&pem::Pem::new("CERTIFICATE", cert_der));
         let mut policy = CertificateTrustPolicy::new();
+
         policy
             .add_trust_anchors(pem.as_bytes(), "test:tsa", TrustAnchorType::TSA, None)
             .unwrap();
@@ -171,16 +179,21 @@ fn rsa_profiles_and_ski_signers_reach_normal_tsa_trust_validation() {
                             == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
                     })
                     .unwrap();
+
                 let mut signer = sd.signer_infos.to_vec()[0].clone();
+
                 signer.version = 3.into();
+
                 signer.sid = SignerIdentifier::SubjectKeyIdentifier(
                     rasn::der::decode(&extension.extn_value).unwrap(),
                 );
+
                 sd.signer_infos = vec![signer].into();
             }
 
             let mut log = StatusTracker::default();
             let result = verify_time_stamp(&encode(&sd), DATA, &policy, &mut log, true);
+
             assert!(result.is_ok(), "{result:?}: {log:?}");
             assert!(log.has_status(TIMESTAMP_VALIDATED));
             assert!(log.has_status(TIMESTAMP_TRUSTED));
@@ -221,6 +234,7 @@ fn pss_profiles_reject_unsupported_and_inconsistent_parameters() {
         signer.signature_algorithm.parameters = Some(types::Any::new(parameters.clone()));
         sd.signer_infos = vec![signer.clone()].into();
         let (result, log) = verify(&encode(&sd));
+
         assert!(result.is_err(), "{parameters:02x?}");
         assert!(log.has_status(TIMESTAMP_MALFORMED));
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
@@ -234,11 +248,13 @@ fn pss_actual_salt_must_match_the_declared_profile() {
         include_bytes!("../../../tests/fixtures/crypto/time_stamp/ps256-saltmax.tst").as_slice(),
     ] {
         assert!(verify(token).0.is_err());
+
         let mut sd = decode(token);
         let mut signer = sd.signer_infos.to_vec()[0].clone();
         signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(SHA256, SHA256, 32, None)));
         sd.signer_infos = vec![signer].into();
         let (result, log) = verify(&encode(&sd));
+
         assert!(matches!(result, Err(TimeStampError::Untrusted)));
         assert!(log.has_status(TIMESTAMP_UNTRUSTED));
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
@@ -249,7 +265,9 @@ fn pss_actual_salt_must_match_the_declared_profile() {
 fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
     let mut sd = decode(PS256);
     let expected = tsa_signer_cert_der_from_token(PS256).unwrap().unwrap();
+
     assert!(verify(PS256).0.is_ok());
+
     let extension = certificate(&sd)
         .tbs_certificate
         .extensions
@@ -263,17 +281,22 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
         .unwrap()
         .extn_value
         .clone();
+
     let identifier = rasn::der::decode::<types::OctetString>(&extension).unwrap();
+
     let mut signer = sd.signer_infos.to_vec()[0].clone();
     signer.version = 3.into();
     signer.sid = SignerIdentifier::SubjectKeyIdentifier(identifier.clone());
     sd.signer_infos = vec![signer.clone()].into();
     let token = encode(&sd);
+
     assert_eq!(
         tsa_signer_cert_der_from_token(&token).unwrap(),
         Some(expected)
     );
+
     let (result, log) = verify(&token);
+
     assert!(result.is_ok(), "{result:?}: {log:?}");
     assert!(log.has_status(TIMESTAMP_VALIDATED));
 
@@ -286,8 +309,10 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
         Some([extension.to_vec(), vec![5, 0]].concat()),
     ] {
         let mut changed = sd.clone();
+
         change_certificate(&mut changed, |cert| {
             let extensions = cert.tbs_certificate.extensions.as_mut().unwrap();
+
             if let Some(value) = value {
                 let extension = extensions
                     .iter_mut()
@@ -296,6 +321,7 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
                             == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
                     })
                     .unwrap();
+
                 extension.extn_value = value.into();
             } else {
                 extensions.retain(|extension| {
@@ -304,7 +330,9 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
                 });
             }
         });
+
         let token = encode(&changed);
+
         assert!(tsa_signer_cert_der_from_token(&token).unwrap().is_none());
         assert!(matches!(verify(&token).0, Err(TimeStampError::InvalidData)));
     }
@@ -312,6 +340,7 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
     signer.sid = SignerIdentifier::SubjectKeyIdentifier(extension);
     sd.signer_infos = vec![signer].into();
     let token = encode(&sd);
+
     assert!(tsa_signer_cert_der_from_token(&token).unwrap().is_none());
     assert!(matches!(verify(&token).0, Err(TimeStampError::InvalidData)));
 }
