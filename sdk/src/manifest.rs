@@ -22,7 +22,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    assertion::{AssertionBase, AssertionData},
+    assertion::{AssertionBase, AssertionCbor, AssertionData},
     assertions::{labels, Actions, AssertionMetadata, EmbeddedData, Metadata, SoftwareAgent},
     claim::{ClaimAssertionType, RemoteManifest},
     dynamic_assertion::PartialClaim,
@@ -588,9 +588,13 @@ impl Manifest {
                             };
                         }
                     }
-                    let manifest_assertion = ManifestAssertion::from_assertion(&actions)?
-                        .set_instance(claim_assertion.instance())
-                        .set_created(created);
+                    // Report the actions as stored. `to_assertion` would rewrite a v1 string
+                    // softwareAgent into the form it writes for new assertions.
+                    let value = actions.to_cbor_assertion()?.as_json_object()?;
+                    let manifest_assertion =
+                        ManifestAssertion::new(actions.label().to_owned(), value)
+                            .set_instance(claim_assertion.instance())
+                            .set_created(created);
                     manifest.assertions.push(manifest_assertion);
                 }
                 base if base.starts_with(labels::INGREDIENT) => {
