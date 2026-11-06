@@ -855,6 +855,26 @@ impl Actions {
         &self.templates
     }
 
+    /// Returns the `digitalSourceType` that applies to `action` once templates are merged.
+    ///
+    /// Per the C2PA spec's _Action Templates_ section, a manifest consumer merges the `*`
+    /// template (if present) and then each template with the same action name, in array
+    /// order, and overlays the action's own values last.
+    pub(crate) fn effective_source_type<'a>(
+        &'a self,
+        action: &'a Action,
+    ) -> Option<&'a DigitalSourceType> {
+        let templates = self.templates.as_deref().unwrap_or_default();
+        action.source_type().or_else(|| {
+            templates
+                .iter()
+                .filter(|t| t.action == "*")
+                .chain(templates.iter().filter(|t| t.action == action.action()))
+                .filter_map(|t| t.source_type.as_ref())
+                .next_back()
+        })
+    }
+
     /// Add a top level ClaimGeneratorInfo to the softwareAgent list.  These are
     /// referenced by indexes in the specific Action
     pub fn add_software_agent(&mut self, cgi: ClaimGeneratorInfo) {
