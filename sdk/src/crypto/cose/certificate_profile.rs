@@ -31,6 +31,39 @@ use crate::{
     validation_results::validation_codes::*,
 };
 
+/// Reject specialty signing purposes at a claim-signing boundary.
+pub(crate) fn check_claim_signing_eku(
+    certificate_der: &[u8],
+    validation_log: &mut StatusTracker,
+) -> Result<(), CertificateProfileError> {
+    let result = X509Certificate::from_der(certificate_der)
+        .map_err(|_| CertificateProfileError::InvalidCertificate)
+        .and_then(|(_, certificate)| {
+            certificate
+                .extended_key_usage()
+                .map_err(|_| CertificateProfileError::InvalidCertificate)
+                .and_then(|eku| {
+                    if eku.is_some_and(|eku| eku.value.time_stamping || eku.value.ocsp_signing) {
+                        Err(CertificateProfileError::InvalidEku)
+                    } else {
+                        Ok(())
+                    }
+                })
+        });
+
+    if let Err(error) = &result {
+        log_item!(
+            "",
+            "certificate cannot authorize claim signing",
+            "check_claim_signing_eku"
+        )
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
+        .failure_no_throw(validation_log, error);
+    }
+
+    result
+}
+
 /// Verify that an end-entity X.509 certificate meets the requirements stated in
 /// [§14.5. X.509 Certificates].
 ///
@@ -1209,6 +1242,90 @@ mod tests {
                         .logged_items()
                         .iter()
                         .any(|item| { item.description == "certificate missing mandatory EKU" }));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn role_eku_matrix() {
+        let email = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4]);
+        let document = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 36]);
+        let microsoft = oid(&[1, 3, 6, 1, 4, 1, 311, 76, 59, 1, 9]);
+        let claim = oid(&[1, 3, 6, 1, 4, 1, 62558, 2, 1]);
+        let timestamp = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 8]);
+        let ocsp = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9]);
+        let any = oid(&[2, 5, 29, 37, 0]);
+
+        for purposes in [
+            vec![email.clone()],
+            vec![document.clone()],
+            vec![microsoft],
+            vec![claim.clone()],
+            vec![email.clone(), claim],
+            vec![timestamp.clone()],
+            vec![ocsp.clone()],
+            vec![timestamp.clone(), email.clone()],
+            vec![timestamp.clone(), ocsp.clone()],
+            vec![any],
+            vec![],
+        ] {
+            let mut cert = profile_cert();
+            extension(
+                &mut cert,
+                &[2, 5, 29, 37],
+                rasn::der::encode(&purposes).unwrap(),
+            );
+            let der = rasn::der::encode(&cert).unwrap();
+            for use_defaults in [false, true] {
+                for configured in [
+                    None,
+                    Some(""),
+                    Some("1.3.6.1.5.5.7.3.36"),
+                    Some("1.3.6.1.5.5.7.3.8\n1.3.6.1.5.5.7.3.9"),
+                ] {
+                    let mut policy = CertificateTrustPolicy::new();
+                    if use_defaults {
+                        policy.add_default_valid_ekus();
+                    }
+
+                    if let Some(configured) = configured {
+                        policy.add_valid_ekus(configured.as_bytes());
+                    }
+
+                    let mut log = StatusTracker::default();
+                    let result = super::check_claim_signing_eku(&der, &mut log).and_then(|()| {
+                        check_end_entity_certificate_profile(&der, &policy, &mut log, None)
+                    });
+                    let specialty = purposes.contains(&timestamp) || purposes.contains(&ocsp);
+                    let allowed = !specialty
+                        && !purposes.is_empty()
+                        && purposes[0] != oid(&[2, 5, 29, 37, 0])
+                        && (use_defaults
+                            || (configured.unwrap_or_default().is_empty()
+                                && purposes.contains(&email))
+                            || (configured == Some("1.3.6.1.5.5.7.3.36")
+                                && purposes.contains(&document)));
+                    assert_eq!(
+                        result.is_ok(),
+                        allowed,
+                        "{purposes:?}, {use_defaults}, {configured:?}"
+                    );
+                    assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);
+                    if specialty {
+                        assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
+                    }
+
+                    for required in [&timestamp, &ocsp] {
+                        let mut policy = policy.clone();
+                        policy.add_mandatory_ekus(required.to_string().as_bytes());
+                        let mut log = StatusTracker::default();
+                        let result =
+                            check_end_entity_certificate_profile(&der, &policy, &mut log, None);
+                        let allowed = purposes.len() == 1 && purposes[0] == *required;
+                        assert_eq!(result.is_ok(), allowed);
+                        assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);
+                    }
                 }
             }
         }

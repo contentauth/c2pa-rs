@@ -36,21 +36,7 @@ pub(crate) fn check_certificate_trust(
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
 ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
-    if ctp.anchor_sets_of_type(anchor_type).count() == 0 {
-        return Err(CertificateTrustError::CertificateNotTrusted);
-    }
-
-    let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) else {
-        return Err(CertificateTrustError::InvalidCertificate);
-    };
-
-    let Ok(Some(eku)) = cert.extended_key_usage() else {
-        return Err(CertificateTrustError::InvalidEku);
-    };
-
-    let Some(_approved_oid) = ctp.has_allowed_eku(eku.value) else {
-        return Err(CertificateTrustError::InvalidEku);
-    };
+    let anchor_sets = ctp.anchor_sets_for_certificate(anchor_type, cert_der)?;
 
     // Add end-entity cert to the chain if not already there.
     let full_chain = if !chain_der.is_empty() && cert_der == chain_der[0] {
@@ -98,7 +84,7 @@ pub(crate) fn check_certificate_trust(
         }
     }
 
-    for anchor_set in ctp.anchor_sets_of_type(anchor_type) {
+    for anchor_set in anchor_sets {
         // Process each anchor set
 
         // Build anchors and check against trust anchors.

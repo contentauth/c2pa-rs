@@ -147,7 +147,7 @@ pub(crate) fn verify_cose(
     };
 
     if _sync {
-        Ok(verifier.verify_signature(
+        Ok(verifier.verify_claim_signature(
             cose_bytes,
             data,
             additional_data,
@@ -156,7 +156,7 @@ pub(crate) fn verify_cose(
         )?)
     } else {
         Ok(verifier
-            .verify_signature_async(
+            .verify_claim_signature_async(
                 cose_bytes,
                 data,
                 additional_data,
@@ -312,6 +312,167 @@ pub mod tests {
         settings::Settings, status_tracker::StatusTracker, utils::test_signer::test_signer, Signer,
         SigningAlg,
     };
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn claim_role_rejects_specialty_ekus_even_when_configured_or_privately_trusted() {
+        use crate::{
+            crypto::{
+                cert_chain_pem_to_der,
+                cose::{sign, CertificateProfileError, RawSignerCoseSigner, TimeStampStorage},
+            },
+            validation_status::{SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED},
+        };
+
+        for purpose in [8, 9] {
+            let mut certificates =
+                cert_chain_pem_to_der(include_bytes!("../tests/fixtures/certs/ed25519.pub"))
+                    .unwrap();
+            // Only EKU profile/role checks are under test; the public key is unchanged.
+            let mut certificate: rasn_pkix::Certificate =
+                rasn::der::decode(&certificates[0]).unwrap();
+            let eku_oid = rasn::types::ObjectIdentifier::new(vec![2, 5, 29, 37]).unwrap();
+            certificate
+                .tbs_certificate
+                .extensions
+                .as_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|extension| extension.extn_id == eku_oid)
+                .unwrap()
+                .extn_value = rasn::der::encode(&vec![rasn::types::ObjectIdentifier::new(vec![
+                1, 3, 6, 1, 5, 5, 7, 3, purpose,
+            ])
+            .unwrap()])
+            .unwrap()
+            .into();
+            certificates[0] = rasn::der::encode(&certificate).unwrap();
+            let raw_signer = c2pa_raw_crypto::signer_from_private_key(
+                include_bytes!("../tests/fixtures/certs/ed25519.pem"),
+                SigningAlg::Ed25519,
+            )
+            .unwrap();
+            let signer = RawSignerCoseSigner::new(raw_signer.as_ref(), &certificates);
+            let signature = sign(
+                &signer,
+                b"claim",
+                None,
+                TimeStampStorage::V2_sigTst2_CTT,
+                &crate::Context::new(),
+            )
+            .unwrap();
+
+            for use_defaults in [false, true] {
+                for configured in [None, Some(""), Some("1.3.6.1.5.5.7.3.8\n1.3.6.1.5.5.7.3.9")] {
+                    for verify_trust in [false, true] {
+                        let mut policy = CertificateTrustPolicy::new();
+                        if use_defaults {
+                            policy.add_default_valid_ekus();
+                        }
+
+                        if let Some(config) = configured {
+                            policy.add_valid_ekus(config.as_bytes());
+                        }
+
+                        let certificate_pem = format!(
+                            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+                            crate::crypto::base64::encode(&certificates[0])
+                        );
+                        policy
+                            .add_end_entity_credentials(certificate_pem.as_bytes())
+                            .unwrap();
+                        let mut settings = Settings::default();
+                        settings.verify.verify_trust = verify_trust;
+                        settings.trust.use_default_ekus = use_defaults;
+                        settings.trust.trust_config = configured.map(str::to_owned);
+                        let context = crate::Context::new()
+                            .with_settings(settings.clone())
+                            .unwrap();
+                        let sdk_signer = crate::signer::RawSignerWrapper::new(
+                            c2pa_raw_crypto::signer_from_private_key(
+                                include_bytes!("../tests/fixtures/certs/ed25519.pem"),
+                                SigningAlg::Ed25519,
+                            )
+                            .unwrap(),
+                            certificates.clone(),
+                            None,
+                        );
+                        let error = crate::cose_sign::cose_sign(
+                            &sdk_signer,
+                            b"claim",
+                            10000,
+                            TimeStampStorage::V2_sigTst2_CTT,
+                            &context,
+                        )
+                        .unwrap_err();
+                        assert!(matches!(
+                            error,
+                            Error::CertificateProfileError(CertificateProfileError::InvalidEku)
+                        ));
+
+                        let sign1 =
+                            parse_cose_sign1(&signature, b"claim", &mut StatusTracker::default())
+                                .unwrap();
+                        let verifier = Verifier::VerifyTrustPolicy(Cow::Borrowed(&policy));
+                        // CAWG still uses the shared identity profile, not the claim-role gate.
+                        let identity = Verifier::VerifyTrustPolicyFor(
+                            Cow::Borrowed(&policy),
+                            crate::crypto::cose::TrustAnchorType::CAWG,
+                        );
+                        let mut log = StatusTracker::default();
+                        assert!(identity
+                            .verify_profile(&sign1, None, None, &mut log)
+                            .is_ok());
+                        assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
+
+                        for use_async in [false, true] {
+                            let mut log = StatusTracker::default();
+                            let result = if use_async {
+                                verifier
+                                    .verify_claim_signature_async(
+                                        &signature, b"claim", b"", None, &mut log,
+                                    )
+                                    .await
+                            } else {
+                                verifier.verify_claim_signature(
+                                    &signature, b"claim", b"", None, &mut log,
+                                )
+                            };
+                            assert!(matches!(
+                                result,
+                                Err(crate::crypto::cose::CoseError::CertificateProfileError(
+                                    CertificateProfileError::InvalidEku
+                                ))
+                            ));
+                            assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+                            assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+
+                            let mut log = StatusTracker::default();
+                            let result = if use_async {
+                                verify_cose_async(
+                                    &signature, b"claim", b"", true, &policy, None, &mut log,
+                                    &settings,
+                                )
+                                .await
+                            } else {
+                                verify_cose(
+                                    &signature, b"claim", b"", true, &policy, None, &mut log,
+                                    &settings,
+                                )
+                            };
+                            assert!(matches!(
+                                result,
+                                Err(Error::CertificateProfileError(
+                                    CertificateProfileError::InvalidEku
+                                ))
+                            ));
+                            assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+                            assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_no_timestamp() {
