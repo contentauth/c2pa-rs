@@ -13,8 +13,6 @@
 
 use std::io::Cursor;
 
-use id3::Tag;
-
 use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
@@ -91,19 +89,7 @@ pub struct Mp3IO {
 
 impl C2paReader for Mp3IO {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
-        input_stream.rewind()?;
-        let mut manifest: Option<Vec<u8>> = None;
-        if let Ok(tag) = Tag::read_from2(input_stream) {
-            for eo in tag.encapsulated_objects() {
-                if id3_helper::is_c2pa_mime_type(&eo.mime_type) {
-                    match manifest {
-                        Some(_) => return Err(Error::TooManyManifestStores),
-                        None => manifest = Some(eo.data.clone()),
-                    }
-                }
-            }
-        }
-        manifest.ok_or(Error::JumbfNotFound)
+        id3_helper::read_manifest_from_id3(input_stream)?.ok_or(Error::JumbfNotFound)
     }
 
     fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
@@ -309,6 +295,19 @@ pub mod tests {
     fn test_read_cai_too_many_manifest_stores() {
         // MP3 does not validate the audio payload, so an empty slice is fine.
         test_helpers::run_read_cai_too_many_manifest_stores(&Mp3IO::new("mp3"), &[]);
+    }
+
+    #[test]
+    fn test_read_cai_c2pa_geob_not_hidden() {
+        test_helpers::run_read_cai_c2pa_geob_not_hidden(&Mp3IO::new("mp3"), &[]);
+    }
+
+    #[test]
+    fn test_read_cai_too_many_manifest_stores_extended_header() {
+        test_helpers::run_read_cai_too_many_manifest_stores_extended_header(
+            &Mp3IO::new("mp3"),
+            &[],
+        );
     }
 
     #[test]
