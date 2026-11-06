@@ -18,7 +18,7 @@
 //! live here so each format handler only needs format-specific logic (header
 //! validation, FLAC stream verification, …).
 
-use std::io::{Cursor, SeekFrom};
+use std::io::{Cursor, Read, SeekFrom};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use id3::{
@@ -38,6 +38,138 @@ use crate::{
 pub(crate) const GEOB_FRAME_MIME_TYPE: &str = "application/c2pa";
 pub(crate) const GEOB_FRAME_MIME_TYPE_DEPRECATED: &str = "application/x-c2pa-manifest-store";
 pub(crate) const GEOB_FRAME_FILE_NAME: &str = "c2pa";
+
+// ── Reading tags safely ────────────────────────────────────────────────────
+
+/// Reads the ID3v2 tag at the stream's current position, or `None` if there is no tag or it
+/// can't be parsed. Use this rather than [`Tag::read_from2`] for untrusted input.
+///
+/// The `id3` crate allocates each frame's declared size before reading it, so a frame header
+/// in a tiny file can claim gigabytes (32-bit sizes in ID3v2.3). Such a tag can never parse,
+/// since the file doesn't hold that many bytes, so it is rejected before `id3` reads it.
+pub(crate) fn read_id3_tag(input_stream: &mut dyn ReadSeek) -> Option<Tag> {
+    let start = input_stream.stream_position().ok()?;
+    let sizes_ok = frame_sizes_fit(input_stream, start);
+    input_stream.seek(SeekFrom::Start(start)).ok()?;
+    if !sizes_ok.unwrap_or(true) {
+        return None;
+    }
+    Tag::read_from2(&mut *input_stream).ok()
+}
+
+/// Walks the frame headers of the ID3v2 tag at `start` the way the `id3` crate does, without
+/// reading frame contents into memory. Returns `Ok(false)` if a frame declares more bytes than
+/// remain in the stream, `Ok(true)` otherwise, including when there is no tag or it is
+/// malformed in some other way, which `id3` reports itself.
+fn frame_sizes_fit(input_stream: &mut dyn ReadSeek, start: u64) -> Result<bool> {
+    const UNSYNCHRONISATION: u8 = 0x80;
+    const EXTENDED_HEADER: u8 = 0x40;
+
+    let available = stream_len(input_stream)?.saturating_sub(start);
+    let mut header = [0u8; 10];
+    if input_stream.read_exact(&mut header).is_err() || &header[0..3] != b"ID3" {
+        return Ok(true);
+    }
+    let (version, flags) = (header[3], header[5]);
+    let syncsafe = |b: &[u8]| {
+        b.iter()
+            .fold(0u64, |size, byte| (size << 7) | u64::from(byte & 0x7f))
+    };
+    let tag_size = syncsafe(&header[6..10]);
+
+    let mut reader = std::io::BufReader::new(&mut *input_stream);
+    let mut ext_size = 0;
+    if flags & EXTENDED_HEADER != 0 {
+        let mut ext = [0u8; 6];
+        if reader.read_exact(&mut ext).is_err() {
+            return Ok(true);
+        }
+        ext_size = syncsafe(&ext[0..4]);
+        if ext_size < 6 {
+            return Ok(true);
+        }
+        std::io::copy(&mut (&mut reader).take(ext_size - 6), &mut std::io::sink())?;
+    }
+    let frame_bytes = tag_size.saturating_sub(ext_size);
+
+    // ID3v2.2 is limited to the tag and ID3v2.3 is not, as in `id3`; both may be
+    // unsynchronised as a whole. ID3v2.4 has no tag-level unsynchronisation.
+    let unsync = flags & UNSYNCHRONISATION != 0 && version <= 3;
+    let mut frames: Box<dyn Read + '_> = match (version, unsync) {
+        (2, true) => Box::new(Unsynchronised::new(reader.take(frame_bytes))),
+        (2, false) => Box::new(reader.take(frame_bytes)),
+        (_, true) => Box::new(Unsynchronised::new(reader)),
+        (_, false) => Box::new(reader),
+    };
+
+    let header_len = if version == 2 { 6 } else { 10 };
+    let mut offset = 0u64;
+    while offset < frame_bytes {
+        let mut frame_header = [0u8; 10];
+        if frames.read_exact(&mut frame_header[..header_len]).is_err() || frame_header[0] == 0 {
+            break; // end of data, or padding
+        }
+        let size = match version {
+            2 => u64::from(u32::from_be_bytes([
+                0,
+                frame_header[3],
+                frame_header[4],
+                frame_header[5],
+            ])),
+            3 => u64::from(u32::from_be_bytes([
+                frame_header[4],
+                frame_header[5],
+                frame_header[6],
+                frame_header[7],
+            ])),
+            _ => syncsafe(&frame_header[4..8]),
+        };
+        if size > available {
+            return Ok(false);
+        }
+        let skipped = std::io::copy(&mut (&mut frames).take(size), &mut std::io::sink())?;
+        if skipped < size {
+            break;
+        }
+        offset += header_len as u64 + size;
+    }
+    Ok(true)
+}
+
+/// Undoes ID3v2 unsynchronisation: drops each `0x00` that follows `0xFF`.
+struct Unsynchronised<R> {
+    inner: R,
+    after_ff: bool,
+}
+
+impl<R: Read> Unsynchronised<R> {
+    fn new(inner: R) -> Self {
+        Unsynchronised {
+            inner,
+            after_ff: false,
+        }
+    }
+}
+
+impl<R: Read> Read for Unsynchronised<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut byte = [0u8; 1];
+        let mut written = 0;
+        while written < buf.len() {
+            if self.inner.read(&mut byte)? == 0 {
+                break;
+            }
+            if self.after_ff && byte[0] == 0 {
+                self.after_ff = false;
+                continue;
+            }
+            self.after_ff = byte[0] == 0xff;
+            buf[written] = byte[0];
+            written += 1;
+        }
+        Ok(written)
+    }
+}
 pub(crate) const GEOB_FRAME_DESCRIPTION: &str = "c2pa manifest store";
 
 // ── ID3V2Header ─────────────────────────────────────────────────────────────
@@ -109,7 +241,7 @@ pub(crate) fn get_manifest_pos(mut input_stream: &mut dyn ReadSeek) -> Result<Op
     let header = ID3V2Header::parse_from_bytes(&buf)?;
     input_stream.rewind()?;
 
-    if let Ok(tag) = Tag::read_from2(&mut *input_stream) {
+    if let Some(tag) = read_id3_tag(&mut *input_stream) {
         let mut manifests = Vec::new();
         for eo in tag.encapsulated_objects() {
             if is_c2pa_mime_type(&eo.mime_type) {
@@ -130,7 +262,7 @@ pub(crate) fn get_manifest_pos(mut input_stream: &mut dyn ReadSeek) -> Result<Op
 /// Reads the XMP string from the PRIV `"XMP"` frame in the ID3 tag, if any.
 pub(crate) fn read_xmp_from_id3(input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
     input_stream.rewind()?;
-    if let Ok(tag) = Tag::read_from2(&mut *input_stream) {
+    if let Some(tag) = read_id3_tag(&mut *input_stream) {
         for frame in tag.frames() {
             if let Content::Private(private) = frame.content() {
                 if private.owner_identifier == "XMP" {
@@ -156,7 +288,7 @@ pub(crate) fn write_cai_with_id3(
 ) -> Result<()> {
     input_stream.rewind()?;
     let mut out_tag = Tag::new();
-    if let Ok(tag) = Tag::read_from2(&mut *input_stream) {
+    if let Some(tag) = read_id3_tag(&mut *input_stream) {
         for f in tag.frames() {
             match f.content() {
                 Content::EncapsulatedObject(eo) => {
@@ -204,7 +336,7 @@ pub(crate) fn write_xmp_to_id3_stream(
 ) -> Result<()> {
     source_stream.rewind()?;
     let mut out_tag = Tag::new();
-    if let Ok(tag) = Tag::read_from2(&mut *source_stream) {
+    if let Some(tag) = read_id3_tag(&mut *source_stream) {
         for f in tag.frames() {
             match f.content() {
                 Content::Private(private) => {
@@ -659,5 +791,146 @@ pub(crate) mod test_helpers {
         let xmp = handler.get_reader().read_xmp(&mut f).expect("xmp present");
         let p = extract_provenance(&xmp).unwrap();
         assert_eq!(&p, "https://example.com/ref");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
+
+    use id3::{Tag, TagLike, Version};
+
+    use super::*;
+
+    fn syncsafe(size: u32) -> [u8; 4] {
+        [
+            (size >> 21) as u8 & 0x7f,
+            (size >> 14) as u8 & 0x7f,
+            (size >> 7) as u8 & 0x7f,
+            size as u8 & 0x7f,
+        ]
+    }
+
+    /// An ID3v2 tag with one frame whose header declares `declared` bytes but which holds only
+    /// 16, followed by some audio-like bytes.
+    fn oversized_frame(version: u8, declared: u32) -> Vec<u8> {
+        let mut frame = Vec::new();
+        match version {
+            2 => {
+                frame.extend(b"TT2");
+                frame.extend(&declared.to_be_bytes()[1..]);
+            }
+            3 => {
+                frame.extend(b"TIT2");
+                frame.extend(declared.to_be_bytes());
+                frame.extend([0, 0]);
+            }
+            _ => {
+                frame.extend(b"TIT2");
+                frame.extend(syncsafe(declared));
+                frame.extend([0, 0]);
+            }
+        }
+        frame.extend([0u8; 16]);
+
+        let mut tag = b"ID3".to_vec();
+        tag.extend([version, 0, 0]);
+        tag.extend(syncsafe(frame.len() as u32));
+        tag.extend(frame);
+        tag.extend([0xff, 0xfb, 0x90, 0x00]);
+        tag.extend([0u8; 64]);
+        tag
+    }
+
+    fn fits(data: &[u8]) -> bool {
+        frame_sizes_fit(&mut Cursor::new(data), 0).unwrap()
+    }
+
+    #[test]
+    fn test_rejects_frames_larger_than_the_file() {
+        // Found by fuzzing: one flipped bit makes an ID3v2.3 TIT2 frame claim 0x40000003 bytes
+        // in a 445-byte file, and `id3` allocated 1 GiB before failing.
+        let bomb = include_bytes!("../../tests/fixtures/id3v23_frame_size_bomb.mp3");
+        assert!(!fits(bomb));
+        assert!(read_id3_tag(&mut Cursor::new(bomb)).is_none());
+
+        for (version, declared) in [(2, 0x00ff_ffff), (3, 0x4000_0003), (4, 0x0fff_ffff)] {
+            let data = oversized_frame(version, declared);
+            assert!(!fits(&data), "ID3v2.{version}");
+            assert!(read_id3_tag(&mut Cursor::new(&data)).is_none());
+        }
+    }
+
+    #[test]
+    fn test_accepts_valid_tags() {
+        for version in [Version::Id3v23, Version::Id3v24] {
+            let mut tag = Tag::new();
+            tag.set_title("A title");
+            tag.set_artist("An artist");
+            let mut data = Vec::new();
+            tag.write_to(&mut data, version).unwrap();
+            data.extend([0xff, 0xfb, 0x90, 0x00]);
+
+            assert!(fits(&data), "{version:?}");
+            let read = read_id3_tag(&mut Cursor::new(&data)).unwrap();
+            assert_eq!(read.title(), Some("A title"));
+        }
+
+        // A frame that fits exactly is not rejected.
+        let mut exact = oversized_frame(3, 16);
+        exact.truncate(10 + 10 + 16);
+        assert!(fits(&exact));
+    }
+
+    #[test]
+    fn test_unsynchronised_tag_is_walked_after_decoding() {
+        // ID3v2.3 with tag-level unsynchronisation. The TIT2 frame's size is 0xFF, so its header
+        // contains `FF 00 00`, written as `FF 00 00 00`: walking the raw bytes would misread the
+        // frame, so the guard must undo the unsynchronisation as `id3` does.
+        let mut frame = b"TIT2".to_vec();
+        frame.extend(0xffu32.to_be_bytes());
+        frame.extend([0, 0]);
+        frame.push(0); // ISO-8859-1
+        frame.extend(vec![b'x'; 0xfe]);
+
+        let mut unsynchronised = Vec::new();
+        for byte in frame {
+            unsynchronised.push(byte);
+            if byte == 0xff {
+                unsynchronised.push(0);
+            }
+        }
+        let mut data = b"ID3".to_vec();
+        data.extend([3, 0, 0x80]);
+        data.extend(syncsafe(unsynchronised.len() as u32));
+        data.extend(unsynchronised);
+        data.extend([0xff, 0xfb, 0x90, 0x00]);
+
+        assert!(fits(&data));
+        let read = read_id3_tag(&mut Cursor::new(&data)).unwrap();
+        assert_eq!(read.title().map(str::len), Some(0xfe));
+    }
+
+    #[test]
+    fn test_no_tag() {
+        let data = [0xff, 0xfb, 0x90, 0x00, 1, 2, 3, 4];
+        assert!(fits(&data));
+        assert!(read_id3_tag(&mut Cursor::new(&data[..])).is_none());
+    }
+
+    #[test]
+    fn test_reads_from_the_current_position() {
+        // The guard walks the tag from where the stream is, then returns there for `id3`.
+        let mut tag = Tag::new();
+        tag.set_title("At offset 2");
+        let mut data = vec![0xaa, 0xbb];
+        tag.write_to(&mut data, Version::Id3v23).unwrap();
+
+        let mut stream = Cursor::new(&data[..]);
+        stream.set_position(2);
+        let read = read_id3_tag(&mut stream).unwrap();
+        assert_eq!(read.title(), Some("At offset 2"));
     }
 }
