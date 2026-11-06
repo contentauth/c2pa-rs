@@ -27,16 +27,20 @@
 //!
 //! # fn example(token: &[u8], message: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
 //! let parsed = ParsedTimestamp::parse(token)?;
+//!
 //! let signed = parsed
 //!     .verify_signatures()
 //!     .next()
 //!     .ok_or("no timestamp signer")??;
+//!
 //! // Inspect signed.generation_time(), signed.signer_validity() and
 //! // signed.accuracy_seconds() under the host's temporal policy.
 //! let verified = signed.verify_message_imprint(message)?;
+//!
 //! // The host must still validate the certificate profile and chain against
 //! // its TSA trust anchors before accepting verified.generation_time().
 //! let _certificate = verified.signature().signer_certificate();
+//!
 //! # Ok(())
 //! # }
 //! ```
@@ -70,20 +74,28 @@ mod signed_attrs_tests;
 pub enum VerificationStage {
     /// Outer response, token or CMS decoding.
     Envelope,
+
     /// Ambiguous duplicate CMS signatures.
     DuplicateSigners,
+
     /// Missing or unsupported certificate choices.
     Certificates,
+
     /// No certificate matches this signer's identifier.
     SignerIdentifier,
+
     /// Missing or malformed timestamp information.
     TimestampInfo,
+
     /// CMS signed attributes or their digest.
     SignedAttributes,
+
     /// Signature algorithm, parameters or public-key compatibility.
     SignatureAlgorithm,
+
     /// Cryptographic signature validation.
     Signature,
+
     /// Algorithm or digest of the time-stamped message.
     MessageImprint,
 }
@@ -94,15 +106,19 @@ pub enum VerificationErrorKind {
     /// The encoded data could not be interpreted.
     #[error("decode error ({0})")]
     DecodeError(String),
+
     /// Signed content or the message imprint does not match.
     #[error("time stamp does not match data")]
     InvalidData,
+
     /// The algorithm or its parameters are outside the supported profiles.
     #[error("time stamp contains an unsupported algorithm")]
     UnsupportedAlgorithm,
+
     /// The CMS signature does not verify; this says nothing about TSA trust.
     #[error("timestamp signature did not verify")]
     SignatureMismatch,
+
     /// This signer has no matching embedded certificate.
     #[error("no matching timestamp signer certificate")]
     NoMatchingCertificate,
@@ -114,8 +130,10 @@ pub enum VerificationErrorKind {
 pub struct VerificationError {
     /// Failed operation.
     pub stage: VerificationStage,
+
     /// Codec or cryptographic failure.
     pub kind: VerificationErrorKind,
+
     /// Human-readable diagnostic; not an application status code.
     pub diagnostic: &'static str,
 }
@@ -166,6 +184,7 @@ impl ParsedTimestamp {
                 })?;
 
         let raw = received_signer_infos(&signed_data_bytes);
+
         if has_duplicate_signatures(&signed_data, raw.as_deref()) {
             return Err(VerificationError::new(
                 VerificationStage::DuplicateSigners,
@@ -201,6 +220,7 @@ impl ParsedTimestamp {
         &self,
     ) -> impl Iterator<Item = Result<SignatureVerifiedTimestamp<'_>, VerificationError>> {
         let raw = received_signer_infos(&self.signed_data_bytes);
+
         self.signed_data
             .signer_infos
             .to_vec()
@@ -227,6 +247,7 @@ impl ParsedTimestamp {
                 )
             })?
             .to_vec();
+
         let signer_index = choices
             .iter()
             .position(|choice| signer_certificate_matches(choice, &signer.sid))
@@ -237,6 +258,7 @@ impl ParsedTimestamp {
                     "no matching timestamp signer certificate",
                 )
             })?;
+
         let CertificateChoices::Certificate(cert) = choices[signer_index] else {
             return Err(VerificationError::new(
                 VerificationStage::Certificates,
@@ -264,9 +286,11 @@ impl ParsedTimestamp {
             })?;
 
         verify_attribute_digest(signer, &self.signed_data)?;
+
         let malformed = |kind, diagnostic| {
             VerificationError::new(VerificationStage::SignedAttributes, kind, diagnostic)
         };
+
         let tbs = match signed_attributes_digested_content(signer).map_err(|_| {
             malformed(
                 VerificationErrorKind::DecodeError("timestamp signer info malformed".into()),
@@ -276,6 +300,7 @@ impl ParsedTimestamp {
             Some(encoded) => raw
                 .and_then(|entries| received_signed_attributes(entries, signer))
                 .unwrap_or(encoded),
+
             None => self
                 .signed_data
                 .encap_content_info
@@ -291,6 +316,7 @@ impl ParsedTimestamp {
                 })?
                 .to_vec(),
         };
+
         let hash_alg = bcder::Oid::from_str(&signer.digest_algorithm.algorithm.to_string())
             .map_err(|_| {
                 VerificationError::new(
@@ -299,6 +325,7 @@ impl ParsedTimestamp {
                     "timestamp bad hash alg",
                 )
             })?;
+
         let key =
             rasn::der::encode(&cert.tbs_certificate.subject_public_key_info).map_err(|_| {
                 VerificationError::new(
@@ -307,6 +334,7 @@ impl ParsedTimestamp {
                     "timestamp bad signing key",
                 )
             })?;
+
         let algorithm = timestamp_signature_algorithm(
             signer,
             &cert.tbs_certificate.subject_public_key_info.algorithm,
@@ -318,7 +346,9 @@ impl ParsedTimestamp {
                 "timestamp invalid signature algorithm or parameters",
             )
         })?;
+
         let signature = OctetString::new(bytes::Bytes::copy_from_slice(&signer.signature));
+
         validate_timestamp_sig(&algorithm, &hash_alg, &signature, &tbs, &key).map_err(|_| {
             VerificationError::new(
                 VerificationStage::Signature,
@@ -393,6 +423,7 @@ impl<'a> SignatureVerifiedTimestamp<'a> {
         message: &[u8],
     ) -> Result<VerifiedTimestamp<'a>, VerificationError> {
         let imprint = &self.tst.message_imprint;
+
         let algorithm = DigestAlgorithm::for_message_imprint(&imprint.hash_algorithm.algorithm)
             .ok_or_else(|| {
                 VerificationError::new(
@@ -401,8 +432,11 @@ impl<'a> SignatureVerifiedTimestamp<'a> {
                     "timestamp unknown message digest algorithm",
                 )
             })?;
+
         let mut hasher = algorithm.digester();
+
         hasher.update(message);
+
         if hasher.finish().as_ref() != imprint.hashed_message.to_bytes() {
             return Err(VerificationError::new(
                 VerificationStage::MessageImprint,
@@ -454,13 +488,17 @@ pub fn signer_certificate_from_token(token: &[u8]) -> Result<Option<Vec<u8>>, Ve
     else {
         return Ok(None);
     };
+
     let Some(ders) = certificate_ders(&sd)? else {
         return Ok(None);
     };
+
     let Some(certs) = &sd.certificates else {
         return Ok(None);
     };
+
     let signers = sd.signer_infos.to_vec();
+
     let Some(signer) = signers.first() else {
         return Ok(None);
     };
@@ -482,9 +520,11 @@ pub fn token_from_response(response: &[u8]) -> Result<Vec<u8>, VerificationError
         .map_err(|error| {
             VerificationErrorKind::DecodeError(format!("invalid timestamp response: {error:?}"))
         })?;
+
     let token = response
         .time_stamp_token
         .ok_or_else(|| VerificationErrorKind::DecodeError("invalid timestamp token".into()))?;
+
     let oid = token
         .content_type
         .iter()
@@ -494,6 +534,7 @@ pub fn token_from_response(response: &[u8]) -> Result<Vec<u8>, VerificationError
                 .ok_or_else(|| VerificationErrorKind::DecodeError("invalid component".into()))
         })
         .collect::<Result<Vec<_>, _>>()?;
+
     let content = ContentInfo {
         content_type: types::ObjectIdentifier::new(oid).ok_or_else(|| {
             VerificationErrorKind::DecodeError(
@@ -502,6 +543,7 @@ pub fn token_from_response(response: &[u8]) -> Result<Vec<u8>, VerificationError
         })?,
         content: types::Any::new(token.content.as_slice().to_vec()),
     };
+
     rasn::der::encode(&content).map_err(|error| {
         VerificationErrorKind::DecodeError(format!("failed to encode timestamp token: {error:?}"))
     })
@@ -511,6 +553,7 @@ fn certificate_ders(sd: &rasn_cms::SignedData) -> Result<Option<Vec<Vec<u8>>>, V
     let Some(certs) = &sd.certificates else {
         return Ok(None);
     };
+
     let invalid = || {
         VerificationError::new(
             VerificationStage::Certificates,
@@ -520,6 +563,7 @@ fn certificate_ders(sd: &rasn_cms::SignedData) -> Result<Option<Vec<Vec<u8>>>, V
             "could not parse timestamp data",
         )
     };
+
     certs
         .to_vec()
         .iter()
@@ -538,10 +582,13 @@ fn verify_attribute_digest(
     let Some(attributes) = &signer.signed_attrs else {
         return Ok(());
     };
+
     let invalid = |kind, diagnostic| {
         VerificationError::new(VerificationStage::SignedAttributes, kind, diagnostic)
     };
+
     let attrs = attributes.to_vec();
+
     let digest = attrs
         .iter()
         .find(|attribute| attribute.r#type == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_MESSAGE_DIGEST)
@@ -551,6 +598,7 @@ fn verify_attribute_digest(
                 "timestamp no message digest",
             )
         })?;
+
     if digest.values.len() != 1 {
         return Err(invalid(
             VerificationErrorKind::DecodeError(format!(
@@ -562,18 +610,21 @@ fn verify_attribute_digest(
     }
 
     let values = digest.values.to_vec();
+
     let value = values.first().ok_or_else(|| {
         invalid(
             VerificationErrorKind::DecodeError("unable to decode message digest".into()),
             "timestamp bad message digest",
         )
     })?;
+
     let expected = rasn::der::decode::<types::OctetString>(value.as_bytes()).map_err(|_| {
         invalid(
             VerificationErrorKind::DecodeError("unable to decode signed message data".into()),
             "timestamp could not decode signed message data",
         )
     })?;
+
     let oid =
         bcder::Oid::from_str(&signer.digest_algorithm.algorithm.to_string()).map_err(|_| {
             invalid(
@@ -581,13 +632,16 @@ fn verify_attribute_digest(
                 "timestamp bad message digest algorithm",
             )
         })?;
+
     let algorithm = DigestAlgorithm::try_from(&oid).map_err(|_| {
         invalid(
             VerificationErrorKind::DecodeError("unsupported digest algorithm".into()),
             "timestamp bad message digest algorithm",
         )
     })?;
+
     let mut hasher = algorithm.digester();
+
     if let Some(content) = &sd.encap_content_info.content {
         hasher.update(content);
     }
@@ -602,8 +656,8 @@ fn verify_attribute_digest(
     Ok(())
 }
 
-// when signed attributes are present the digest is the DER
-// encoding of the SignerInfo SignedAttributes
+// When signed attributes are present, the digest is the DER
+// encoding of the SignerInfo SignedAttributes.
 fn signed_attributes_digested_content(
     signer_info: &rasn_cms::SignerInfo,
 ) -> Result<Option<Vec<u8>>, rasn::error::EncodeError> {
@@ -625,20 +679,27 @@ fn received_signer_infos(sd_bytes: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
     use asn1_rs::{Class, Tag};
 
     let (rest, sd) = asn1_rs::Any::from_der(sd_bytes).ok()?;
+
     if !rest.is_empty() || sd.class() != Class::Universal || sd.tag() != Tag::Sequence {
         return None;
     }
+
     let signer_infos = timestamp_asn1_children(sd.data)?.pop()?;
+
     if signer_infos.class() != Class::Universal || signer_infos.tag() != Tag::Set {
         return None;
     }
+
     let entries = timestamp_asn1_children(signer_infos.data)?;
+
     for entry in &entries {
         if entry.class() != Class::Universal || entry.tag() != Tag::Sequence {
             return None;
         }
+
         raw_signature(entry)?;
     }
+
     Some(entries)
 }
 
@@ -659,6 +720,7 @@ fn has_duplicate_signatures(
     raw_signer_infos: Option<&[asn1_rs::Any<'_>]>,
 ) -> bool {
     let mut decoded = std::collections::HashSet::new();
+
     if !sd
         .signer_infos
         .to_vec()
@@ -669,6 +731,7 @@ fn has_duplicate_signatures(
     }
 
     let mut raw = std::collections::HashSet::new();
+
     raw_signer_infos.is_some_and(|entries| {
         !entries
             .iter()
@@ -679,11 +742,13 @@ fn has_duplicate_signatures(
 fn timestamp_asn1_children(data: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
     let mut rest = data;
     let mut items = Vec::new();
+
     while !rest.is_empty() {
         let (rem, item) = asn1_rs::Any::from_der(rest).ok()?;
         items.push(item);
         rest = rem;
     }
+
     Some(items)
 }
 
@@ -703,38 +768,49 @@ fn received_signed_attributes(
     let signature: &[u8] = signer_info.signature.as_ref();
     let expected = signer_info.signed_attrs.as_ref()?;
     let mut found: Option<&[u8]> = None;
+
     for si in signer_infos {
         let fields = timestamp_asn1_children(si.data)?;
+
         let matches = fields.iter().any(|f| {
             f.class() == Class::Universal && f.tag() == Tag::OctetString && f.data == signature
         });
+
         if !matches {
             continue;
         }
+
         if found.is_some() {
             return None;
         }
-        // signedAttrs is a constructed [0]. A subjectKeyIdentifier sid is a
+
+        // The signedAttrs field is a constructed [0]. A subjectKeyIdentifier sid is a
         // primitive [0] and must not be mistaken for the attributes.
         let attrs = fields.iter().find(|f| {
             f.class() == Class::ContextSpecific && f.tag() == Tag(0) && f.header.is_constructed()
         })?;
+
         found = Some(attrs.data);
     }
+
     let attrs_body = found?;
+
     let header = Header::new(
         Class::Universal,
         true,
         Tag::Set,
         Length::Definite(attrs_body.len()),
     );
+
     let mut out = header.to_der_vec().ok()?;
     out.extend_from_slice(attrs_body);
 
     let decoded: rasn_cms::SignedAttributes = rasn::der::decode(&out).ok()?;
+
     if &decoded != expected {
         return None;
     }
+
     Some(out)
 }
 
@@ -805,7 +881,9 @@ fn pss_parameters(parameters: &types::Any) -> Result<PssParameters, Verification
 
     let invalid =
         || VerificationErrorKind::DecodeError("invalid timestamp RSA-PSS parameters".into());
+
     let bytes = parameters.as_bytes();
+
     let (rest, sequence) = asn1_rs::Any::from_der(bytes).map_err(|_| invalid())?;
 
     if !rest.is_empty()
@@ -823,6 +901,7 @@ fn pss_parameters(parameters: &types::Any) -> Result<PssParameters, Verification
         salt_length: 20,
         trailer: 1,
     };
+
     let fields = timestamp_asn1_children(sequence.data).ok_or_else(invalid)?;
     let mut previous = None;
 
@@ -857,9 +936,11 @@ fn pss_parameters(parameters: &types::Any) -> Result<PssParameters, Verification
                 let hash = mgf.parameters.ok_or_else(invalid)?;
                 result.mgf_hash = pss_hash_algorithm(hash.as_bytes())?;
             }
+
             2 => {
                 result.salt_length = pss_unsigned_integer(field.data)?;
             }
+
             3 => result.trailer = pss_unsigned_integer(field.data)?,
             _ => return Err(invalid()),
         }
@@ -896,6 +977,7 @@ fn pss_unsigned_integer(bytes: &[u8]) -> Result<u64, VerificationErrorKind> {
 fn pss_hash_algorithm(bytes: &[u8]) -> Result<String, VerificationErrorKind> {
     let invalid =
         || VerificationErrorKind::DecodeError("invalid timestamp RSA-PSS hash parameters".into());
+
     let (rest, _) = asn1_rs::Any::from_der(bytes).map_err(|_| invalid())?;
 
     if !rest.is_empty() {
@@ -936,7 +1018,9 @@ fn timestamp_signature_algorithm(
             .ok_or_else(|| {
                 VerificationErrorKind::DecodeError("missing timestamp RSA-PSS parameters".into())
             })?;
+
         let pss = pss_parameters(parameters)?;
+
         let salt_length = match pss.hash.as_str() {
             SHA256_DIGEST => 32,
             SHA384_DIGEST => 48,
@@ -998,7 +1082,7 @@ fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> 
     gt.into()
 }
 
-/// Digest algorithm enum compatible with bcder OIDs
+/// Represent digest algorithms compatible with bcder OIDs.
 #[derive(Clone, Copy, Debug)]
 enum DigestAlgorithm {
     Sha1,
@@ -1032,18 +1116,22 @@ impl TryFrom<&bcder::Oid> for DigestAlgorithm {
     type Error = ();
 
     fn try_from(oid: &bcder::Oid) -> Result<Self, Self::Error> {
-        // Using der::asn1 instead of oids defined in oid.rs, because this is faster and we intend to remove x509_parser eventually.
-        // Convert bcder::Oid to string, then parse as ObjectIdentifier for comparison
+        // Use der::asn1 instead of OIDs defined in oid.rs because it is faster
+        // and we intend to remove x509_parser eventually.
+        // Convert bcder::Oid to a string, then parse as ObjectIdentifier for comparison.
         let oid_str = oid.to_string();
         let const_oid = ObjectIdentifier::new(&oid_str).map_err(|_| ())?;
 
-        // SHA-1: 1.3.14.3.2.26
+        // The SHA-1 OID is 1.3.14.3.2.26.
         const SHA1_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.14.3.2.26");
-        // SHA-256: 2.16.840.1.101.3.4.2.1
+
+        // The SHA-256 OID is 2.16.840.1.101.3.4.2.1.
         const SHA256_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
-        // SHA-384: 2.16.840.1.101.3.4.2.2
+
+        // The SHA-384 OID is 2.16.840.1.101.3.4.2.2.
         const SHA384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2");
-        // SHA-512: 2.16.840.1.101.3.4.2.3
+
+        // The SHA-512 OID is 2.16.840.1.101.3.4.2.3.
         const SHA512_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3");
 
         if const_oid == SHA1_OID {
@@ -1060,7 +1148,7 @@ impl TryFrom<&bcder::Oid> for DigestAlgorithm {
     }
 }
 
-/// Hasher enum to hold different digest types
+/// Hold the supported digest implementations.
 enum Hasher {
     Sha1(Sha1),
     Sha256(Sha256),
@@ -1075,14 +1163,17 @@ impl Hasher {
                 use sha1::Digest;
                 h.update(data);
             }
+
             Hasher::Sha256(h) => {
                 use sha2::Digest;
                 h.update(data);
             }
+
             Hasher::Sha384(h) => {
                 use sha2::Digest;
                 h.update(data);
             }
+
             Hasher::Sha512(h) => {
                 use sha2::Digest;
                 h.update(data);
@@ -1096,14 +1187,17 @@ impl Hasher {
                 use sha1::Digest;
                 HasherOutput(h.finalize().to_vec())
             }
+
             Hasher::Sha256(h) => {
                 use sha2::Digest;
                 HasherOutput(h.finalize().to_vec())
             }
+
             Hasher::Sha384(h) => {
                 use sha2::Digest;
                 HasherOutput(h.finalize().to_vec())
             }
+
             Hasher::Sha512(h) => {
                 use sha2::Digest;
                 HasherOutput(h.finalize().to_vec())
@@ -1112,7 +1206,7 @@ impl Hasher {
     }
 }
 
-/// Wrapper for hash output that implements AsRef<[u8]>
+/// Wrap hash output to implement AsRef<[u8]>.
 struct HasherOutput(Vec<u8>);
 
 impl AsRef<[u8]> for HasherOutput {
@@ -1128,16 +1222,20 @@ fn time_to_datetime(t: rasn_pkix::Time) -> DateTime<Utc> {
     }
 }
 
-/// bcder is non-negative and big-endian
+/// Interpret the bcder integer bytes as a non-negative, big-endian value.
 fn integer_to_i64(int: &bcder::Integer) -> i64 {
     let bytes = int.as_slice();
+
     if bytes.is_empty() || bytes.len() > 8 {
         return 0;
     }
+
     let mut result = 0i64;
+
     for &b in bytes {
         result = (result << 8) | (b as i64);
     }
+
     result
 }
 
@@ -1146,14 +1244,17 @@ fn tst_accuracy_seconds(accuracy: Option<&Accuracy>) -> i64 {
     let Some(acc) = accuracy else {
         return 0;
     };
+
     let secs = acc.seconds.as_ref().map(integer_to_i64).unwrap_or(0);
     let millis = acc.millis.as_ref().map(integer_to_i64).unwrap_or(0);
     let micros = acc.micros.as_ref().map(integer_to_i64).unwrap_or(0);
+
     let total_micros = secs
         .saturating_mul(1_000_000)
         .saturating_add(millis.saturating_mul(1_000))
         .saturating_add(micros);
-    // ceiling division to full seconds
+
+    // Round up to full seconds.
     total_micros.saturating_add(999_999) / 1_000_000
 }
 
@@ -1190,16 +1291,17 @@ mod tests {
     fn message_imprint_rejects_sha1_and_unlisted_algorithms(
     ) -> Result<(), Box<dyn std::error::Error>> {
         for o in [
-            "1.3.14.3.2.26",          // SHA-1
-            "2.16.840.1.101.3.4.2.4", // SHA-224
-            "2.16.840.1.101.3.4.2.8", // SHA3-256
-            "1.2.840.113549.2.5",     // MD5
+            "1.3.14.3.2.26",          // This is SHA-1.
+            "2.16.840.1.101.3.4.2.4", // This is SHA-224.
+            "2.16.840.1.101.3.4.2.8", // This is SHA3-256.
+            "1.2.840.113549.2.5",     // This is MD5.
         ] {
             assert!(
                 DigestAlgorithm::for_message_imprint(&oid(o)?).is_none(),
                 "{o}"
             );
         }
+
         Ok(())
     }
 
@@ -1212,12 +1314,14 @@ mod tests {
         ] {
             assert!(DigestAlgorithm::for_message_imprint(&oid(o)?).is_some());
         }
+
         Ok(())
     }
 
     #[test]
     fn cms_digest_still_accepts_sha1() -> Result<(), Box<dyn std::error::Error>> {
         assert!(DigestAlgorithm::try_from(&oid("1.3.14.3.2.26")?).is_ok());
+
         Ok(())
     }
 
@@ -1232,6 +1336,7 @@ mod tests {
             let mut hasher = algorithm.digester();
             hasher.update(b"a");
             hasher.update(b"bc");
+
             assert_eq!(hex::encode(hasher.finish().as_ref()), expected);
         }
     }
@@ -1239,7 +1344,9 @@ mod tests {
     #[test]
     fn accuracy_rounds_up_subseconds_and_saturates() {
         use super::{integer_to_i64, tst_accuracy_seconds, Accuracy};
+
         assert_eq!(tst_accuracy_seconds(None), 0);
+
         let mut accuracy = Accuracy {
             seconds: None,
             millis: None,
@@ -1248,12 +1355,15 @@ mod tests {
 
         assert_eq!(tst_accuracy_seconds(Some(&accuracy)), 0);
         accuracy.micros = Some(1.into());
+
         assert_eq!(tst_accuracy_seconds(Some(&accuracy)), 1);
         accuracy.seconds = Some(2.into());
         accuracy.millis = Some(999.into());
         accuracy.micros = Some(999.into());
+
         assert_eq!(tst_accuracy_seconds(Some(&accuracy)), 3);
         accuracy.seconds = Some(i64::MAX.into());
+
         assert_eq!(tst_accuracy_seconds(Some(&accuracy)), i64::MAX / 1_000_000);
         assert_eq!(integer_to_i64(&bcder::Integer::from(-1)), 255);
     }
@@ -1264,12 +1374,16 @@ mod tests {
         use chrono::{TimeZone, Utc};
 
         use super::time_to_datetime;
+
         let utc = Utc
             .timestamp_opt(1_577_836_800, 0)
             .single()
             .ok_or("invalid test date")?;
+
         assert_eq!(time_to_datetime(rasn_pkix::Time::Utc(utc)), utc);
+
         assert_eq!(time_to_datetime(rasn_pkix::Time::General(utc.into())), utc);
+
         Ok(())
     }
 }
