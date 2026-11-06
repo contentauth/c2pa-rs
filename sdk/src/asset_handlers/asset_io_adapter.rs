@@ -516,7 +516,10 @@ impl AssetIO for AssetIoAdapter {
     }
 
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
-        self.handler.as_ref().map(|_| self as &dyn AssetBoxHash)
+        self.handler
+            .as_ref()
+            .filter(|handler| handler.id() != aio::containers::tiff::ID)
+            .map(|_| self as &dyn AssetBoxHash)
     }
 
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
@@ -545,8 +548,17 @@ mod tests {
 
     #[test]
     fn box_hash_is_available_for_registered_handlers() {
-        let adapter = AssetIoAdapter::new("tiff");
+        let adapter = AssetIoAdapter::new("jpeg");
         assert!(adapter.asset_box_hash_ref().is_some());
+    }
+
+    #[test]
+    fn box_hash_is_unavailable_for_tiff() {
+        for asset_type in ["tif", "tiff", "dng", "image/tiff", "image/x-adobe-dng"] {
+            let adapter = AssetIoAdapter::new(asset_type);
+            assert!(adapter.handler.is_some(), "{asset_type}");
+            assert!(adapter.asset_box_hash_ref().is_none(), "{asset_type}");
+        }
     }
 
     #[test]

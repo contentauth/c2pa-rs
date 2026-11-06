@@ -546,6 +546,17 @@ fn box_maps_agree_apart_from_the_placeholder() {
             if old_hash.is_none() {
                 continue;
             }
+            if new_hash.is_none()
+                && matches!(
+                    std::path::Path::new(&name)
+                        .extension()
+                        .and_then(|ext| ext.to_str()),
+                    Some("tif" | "tiff" | "dng")
+                )
+            {
+                // C2PA 2.5 does not support general box hashing for TIFF.
+                continue;
+            }
             problems.push(format!("{name}: box hash support differs"));
             continue;
         };
@@ -564,7 +575,11 @@ fn box_maps_agree_apart_from_the_placeholder() {
         };
         let (ko, kn) = (key(ob), key(nb));
         if ko != kn {
-            let at = ko.iter().zip(&kn).position(|(a, b)| a != b).unwrap_or(0);
+            let at = ko
+                .iter()
+                .zip(&kn)
+                .position(|(a, b)| a != b)
+                .unwrap_or(ko.len().min(kn.len()));
             problems.push(format!(
                 "{name}: {} vs {} boxes; first difference at #{at}: {:?} vs {:?}",
                 ko.len(),

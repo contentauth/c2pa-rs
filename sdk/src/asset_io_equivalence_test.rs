@@ -167,6 +167,13 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
         Ok(())
     })
     .map_err(io)?;
+    if let Some(trailing) = s.trailing() {
+        out.push(BoxMap::new(
+            vec![asset_io::AFTER_BOX.to_string()],
+            trailing.offset(),
+            trailing.len(),
+        ));
+    }
     Ok(out)
 }
 
