@@ -7754,6 +7754,114 @@ mod tests {
         );
     }
 
+    // Per the spec's _Validate Assertions_ section, c2pa.opened and c2pa.placed references may
+    // resolve to an ingredient assertion that a later manifest redacted.
+    #[test]
+    fn test_redacted_ingredients_satisfy_opened_and_placed() {
+        let context = test_context().into_shared();
+        let signer = test_signer(SigningAlg::Ps256);
+        let format = "image/jpeg";
+
+        let sign_created = |image: &[u8]| {
+            let mut builder = Builder::from_shared_context(&context);
+            builder
+                .add_action(
+                    Action::new(c2pa_action::CREATED)
+                        .set_source_type(DigitalSourceType::DigitalCapture),
+                )
+                .unwrap();
+            let mut output = Cursor::new(Vec::new());
+            builder
+                .sign(
+                    signer.as_ref(),
+                    format,
+                    &mut Cursor::new(image),
+                    &mut output,
+                )
+                .unwrap();
+            output.into_inner()
+        };
+        let parent = sign_created(TEST_IMAGE_CLEAN);
+        let component = sign_created(TEST_IMAGE_CLOUD);
+
+        // The middle manifest opens `parent` and places `component`.
+        let mut middle_builder = Builder::from_shared_context(&context);
+        for (data, relationship, id) in
+            [(&parent, "parentOf", "p"), (&component, "componentOf", "c")]
+        {
+            middle_builder
+                .add_ingredient_from_stream(
+                    json!({ "title": id, "relationship": relationship, "label": id }).to_string(),
+                    format,
+                    &mut Cursor::new(data),
+                )
+                .unwrap();
+        }
+        middle_builder
+            .add_action(
+                json!({ "action": "c2pa.opened", "parameters": { "ingredientIds": ["p"] } }),
+            )
+            .unwrap();
+        middle_builder
+            .add_action(
+                json!({ "action": "c2pa.placed", "parameters": { "ingredientIds": ["c"] } }),
+            )
+            .unwrap();
+        let mut middle = Cursor::new(Vec::new());
+        middle_builder
+            .sign(
+                signer.as_ref(),
+                format,
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut middle,
+            )
+            .unwrap();
+
+        middle.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream(format, &mut middle)
+            .unwrap();
+        let middle_label = reader.active_label().unwrap().to_owned();
+        let redacted: Vec<String> = reader
+            .active_manifest()
+            .unwrap()
+            .ingredients()
+            .iter()
+            .map(|i| crate::jumbf::labels::to_assertion_uri(&middle_label, i.label().unwrap()))
+            .collect();
+        assert_eq!(redacted.len(), 2);
+
+        // The final manifest opens the middle one and redacts both of its ingredients.
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(redacted.clone());
+        for uri in &redacted {
+            builder
+                .add_action(
+                    Action::new(c2pa_action::REDACTED)
+                        .set_parameter("redacted", uri.clone())
+                        .unwrap(),
+                )
+                .unwrap();
+        }
+        middle.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), format, &mut middle, &mut output)
+            .expect("references to redacted ingredients are valid");
+
+        output.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream(format, &mut output)
+            .unwrap();
+        assert!(
+            !reader
+                .json()
+                .contains(crate::validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH),
+            "{reader}"
+        );
+    }
+
     #[test]
     fn test_redaction_assertion_via_archive() {
         let _settings = Settings::new()
