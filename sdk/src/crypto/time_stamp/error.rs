@@ -103,3 +103,51 @@ impl From<AcquisitionError> for TimeStampError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acquisition_failures_retain_sdk_error_categories_and_details() {
+        use contentauth_sans_io_core::ProtocolError;
+
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::Protocol(ProtocolError::WorkflowNotComplete)),
+            TimeStampError::InternalError(message)
+                if message == ProtocolError::WorkflowNotComplete.to_string()
+        ));
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::InvalidRequest("invalid DER".into())),
+            TimeStampError::InternalError(message) if message == "invalid DER"
+        ));
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::DecodeError("invalid CMS".into())),
+            TimeStampError::DecodeError(message) if message == "invalid CMS"
+        ));
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::HttpErrorResponse(503, Some("text/plain".into()))),
+            TimeStampError::HttpErrorResponse(503, Some(content_type)) if content_type == "text/plain"
+        ));
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::Transport("host cancelled".into())),
+            TimeStampError::HttpConnectionError(message) if message == "host cancelled"
+        ));
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::NonceMismatch),
+            TimeStampError::NonceMismatch
+        ));
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::ResponseTooLarge),
+            TimeStampError::ResponseTooLarge
+        ));
+
+        let request_error = http::Request::post("bad\nuri")
+            .body(Vec::<u8>::new())
+            .unwrap_err();
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::HttpRequestError(request_error)),
+            TimeStampError::HttpResolverError(HttpResolverError::Http(_))
+        ));
+    }
+}

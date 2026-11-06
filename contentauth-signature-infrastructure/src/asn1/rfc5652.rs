@@ -75,13 +75,111 @@ impl ContentInfo {
 
 impl Values for ContentInfo {
     fn encoded_len(&self, mode: Mode) -> usize {
-        encode::sequence((self.content_type.encode_ref(), &self.content)).encoded_len(mode)
+        encode::sequence((
+            self.content_type.encode_ref(),
+            (&self.content).explicit(Tag::CTX_0),
+        ))
+        .encoded_len(mode)
     }
 
     fn write_encoded<W: Write>(&self, mode: Mode, target: &mut W) -> Result<(), std::io::Error> {
-        encode::sequence((self.content_type.encode_ref(), &self.content))
-            .write_encoded(mode, target)
+        encode::sequence((
+            self.content_type.encode_ref(),
+            (&self.content).explicit(Tag::CTX_0),
+        ))
+        .write_encoded(mode, target)
     }
 }
 
 pub(crate) type ContentType = Oid;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn envelope(oid: &[u8], value: u8) -> ContentInfo {
+        ContentInfo {
+            content_type: Oid(bytes::Bytes::copy_from_slice(oid)),
+            content: Captured::from_values(Mode::Der, value.encode()),
+        }
+    }
+
+    #[test]
+    fn content_envelopes_roundtrip_without_changing_captured_content() {
+        for size in [0, 127, 128, 256] {
+            let original = ContentInfo {
+                content_type: Oid(bytes::Bytes::from_static(&[0x2a, 3, 4])),
+                content: Captured::from_values(
+                    Mode::Der,
+                    bcder::OctetString::encode_slice(&vec![0xab; size]),
+                ),
+            };
+            let mut encoded = Vec::new();
+            original.write_encoded(Mode::Der, &mut encoded).unwrap();
+            assert_eq!(encoded.len(), original.encoded_len(Mode::Der));
+            let decoded =
+                Constructed::decode(encoded.as_slice(), Mode::Der, ContentInfo::take_opt_from)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(decoded, original);
+            assert_eq!(decoded.content.as_slice(), original.content.as_slice());
+        }
+    }
+
+    #[test]
+    fn content_encoding_includes_the_explicit_context_wrapper() {
+        let content = envelope(&[0x2a, 3, 4], 0);
+        let mut encoded = Vec::new();
+        content.write_encoded(Mode::Der, &mut encoded).unwrap();
+        assert_eq!(encoded, [0x30, 0x0a, 6, 3, 0x2a, 3, 4, 0xa0, 3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn envelope_equality_compares_both_oid_and_encoded_content() {
+        assert_eq!(envelope(&[0x2a, 3, 4], 1), envelope(&[0x2a, 3, 4], 1));
+        assert_ne!(envelope(&[0x2a, 3, 4], 1), envelope(&[0x2a, 3, 5], 1));
+        assert_ne!(envelope(&[0x2a, 3, 4], 1), envelope(&[0x2a, 3, 4], 2));
+    }
+
+    #[test]
+    fn missing_and_malformed_envelopes_do_not_decode_as_content() {
+        assert!(
+            Constructed::decode(&[][..], Mode::Der, ContentInfo::take_opt_from)
+                .unwrap()
+                .is_none()
+        );
+
+        for bytes in [
+            &[0x30, 0][..],
+            &[0x30, 5, 6, 3, 0x2a, 3, 4],
+            &[0x30, 7, 6, 3, 0x2a, 3, 4, 0xa1, 0],
+        ] {
+            assert!(Constructed::decode(bytes, Mode::Der, ContentInfo::take_opt_from).is_err());
+        }
+    }
+
+    #[test]
+    fn envelope_encoding_propagates_writer_failures() {
+        struct BrokenWriter;
+
+        impl std::io::Write for BrokenWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("test writer failure"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            envelope(&[0x2a, 3, 4], 1)
+                .write_encoded(Mode::Der, &mut BrokenWriter)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::Other
+        );
+    }
+}

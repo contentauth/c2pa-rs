@@ -641,6 +641,24 @@ mod tests {
     }
 
     #[test]
+    fn acquisition_request_describes_and_accepts_its_host_reply() {
+        let mut workflow = workflow();
+        assert_eq!(workflow.advance().unwrap(), Step::AwaitHost);
+        let request = &workflow.outstanding_requests()[0].kind;
+        assert_eq!(
+            contentauth_sans_io_core::Request::expected_reply(request),
+            "HTTP response or transport failure"
+        );
+
+        for reply in [
+            AcquisitionReply::Http(Err("cancelled".into())),
+            AcquisitionReply::Http(Ok(http_response(Vec::new()))),
+        ] {
+            assert!(contentauth_sans_io_core::Request::accepts(request, &reply));
+        }
+    }
+
+    #[test]
     fn invalid_requests_fail_before_host_io() {
         assert!(matches!(
             acquire_with_body("https://tsa.example/", vec![], &[0]),
