@@ -18,7 +18,9 @@ mod claim_verify;
 
 #[cfg(test)]
 pub(crate) use self::claim_core::AssertionStoreJsonFormat;
-pub(crate) use self::claim_verify::ALLOWED_UPDATE_MANIFEST_ACTIONS;
+pub(crate) use self::claim_verify::{
+    data_hash_exclusions_match_manifest, ALLOWED_UPDATE_MANIFEST_ACTIONS,
+};
 pub use self::{
     claim_assertion::{ClaimAssertion, ClaimAssertionType},
     claim_core::{Claim, RemoteManifest},
