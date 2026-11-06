@@ -120,7 +120,11 @@ pub type AcquisitionWorkflow =
 
 /// Build a SHA-256 request using a fresh nonce supplied by the host.
 pub fn request_body(message: &[u8], nonce: u64) -> Result<Vec<u8>, AcquisitionError> {
-    let request = TimeStampReq {
+    encode_request(&standard_request(message, nonce))
+}
+
+fn standard_request(message: &[u8], nonce: u64) -> TimeStampReq {
+    TimeStampReq {
         version: Integer::from(1_u8),
 
         message_imprint: asn1::rfc3161::MessageImprint {
@@ -139,9 +143,7 @@ pub fn request_body(message: &[u8], nonce: u64) -> Result<Vec<u8>, AcquisitionEr
         nonce: Some(Integer::from(nonce)),
         cert_req: Some(true),
         extensions: None,
-    };
-
-    encode_request(&request)
+    }
 }
 
 fn encode_request(request: &TimeStampReq) -> Result<Vec<u8>, AcquisitionError> {
@@ -162,7 +164,7 @@ pub fn acquire(
     message: &[u8],
     nonce: u64,
 ) -> Result<AcquisitionWorkflow, AcquisitionError> {
-    acquire_with_body(url, headers, &request_body(message, nonce)?)
+    acquire_with_request(url, headers, standard_request(message, nonce))
 }
 
 /// Acquire using a customized DER request.
@@ -177,6 +179,14 @@ pub fn acquire_with_body(
     let timestamp_request = Constructed::decode(body, bcder::Mode::Der, TimeStampReq::take_from)
         .map_err(|err| AcquisitionError::InvalidRequest(err.to_string()))?;
 
+    acquire_with_request(url, headers, timestamp_request)
+}
+
+fn acquire_with_request(
+    url: &str,
+    headers: Vec<(String, String)>,
+    timestamp_request: TimeStampReq,
+) -> Result<AcquisitionWorkflow, AcquisitionError> {
     let mut request = HttpRequest::post(url);
 
     for (name, value) in headers {

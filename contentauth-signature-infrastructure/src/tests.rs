@@ -176,6 +176,39 @@ fn host_drives_one_post_and_result_is_unverified_original_bytes() {
 }
 
 #[test]
+fn standard_and_encoded_request_paths_yield_the_same_post() {
+    let url = "https://tsa.example/";
+    let headers = vec![("x-test".into(), "custom".into())];
+    let body = request_body(b"message", 42).unwrap();
+    let mut standard = acquire(url, headers.clone(), b"message", 42).unwrap();
+    let mut custom = acquire_with_body(url, headers, &body).unwrap();
+
+    assert_eq!(standard.advance().unwrap(), Step::AwaitHost);
+    assert_eq!(custom.advance().unwrap(), Step::AwaitHost);
+
+    let AcquisitionRequest::HttpPost(standard_post) = &standard.outstanding_requests()[0].kind;
+    let AcquisitionRequest::HttpPost(custom_post) = &custom.outstanding_requests()[0].kind;
+
+    assert_eq!(standard_post.method(), custom_post.method());
+    assert_eq!(standard_post.uri(), custom_post.uri());
+    assert_eq!(standard_post.headers(), custom_post.headers());
+    assert_eq!(standard_post.body(), custom_post.body());
+
+    let bytes = response_der(0, Some(42), true, None);
+
+    for workflow in [&mut standard, &mut custom] {
+        fulfill(
+            workflow,
+            AcquisitionReply::Http(Ok(http_response(bytes.clone()))),
+        );
+        assert_eq!(workflow.advance().unwrap(), Step::Complete);
+    }
+
+    assert_eq!(standard.finish().unwrap().as_der(), bytes);
+    assert_eq!(custom.finish().unwrap().as_der(), bytes);
+}
+
+#[test]
 fn request_has_deterministic_imprint_and_host_nonce() {
     for nonce in [0, 42, u64::MAX] {
         let body = request_body(b"message", nonce).unwrap();
