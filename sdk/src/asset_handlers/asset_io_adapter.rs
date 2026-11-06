@@ -62,6 +62,21 @@ pub(crate) struct AssetIoAdapter {
 }
 
 impl AssetIoAdapter {
+    pub(crate) fn from_handler(handler: Arc<dyn ContainerHandler>) -> Self {
+        let mut types: Vec<_> = handler
+            .formats()
+            .iter()
+            .flat_map(|spec| spec.format_strings())
+            .collect();
+        if handler.id() == aio::containers::tiff::ID {
+            types.extend(TIFF_READ_ONLY_TYPES);
+        }
+        Self {
+            handler: Some(handler),
+            types,
+        }
+    }
+
     fn handler(&self) -> Result<&Arc<dyn ContainerHandler>> {
         self.handler.as_ref().ok_or(Error::UnsupportedType)
     }
@@ -456,23 +471,17 @@ impl AssetIO for AssetIoAdapter {
                     .flatten()
             })
             .cloned();
-        let mut types = handler.as_ref().map_or_else(Vec::new, |h| {
-            h.formats()
-                .iter()
-                .flat_map(|spec| spec.format_strings())
-                .collect()
-        });
-        if handler
-            .as_ref()
-            .is_some_and(|h| h.id() == aio::containers::tiff::ID)
-        {
-            types.extend(TIFF_READ_ONLY_TYPES);
+        match handler {
+            Some(handler) => Self::from_handler(handler),
+            None => Self {
+                handler: None,
+                types: Vec::new(),
+            },
         }
-        AssetIoAdapter { handler, types }
     }
 
-    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
-        Box::new(AssetIoAdapter::new(asset_type))
+    fn get_handler(&self, _asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(self.clone())
     }
 
     fn get_reader(&self) -> &dyn C2paReader {
@@ -480,7 +489,9 @@ impl AssetIO for AssetIoAdapter {
     }
 
     fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
-        (!is_tiff_read_only_type(asset_type)).then(|| Box::new(self.clone()) as Box<dyn C2paWriter>)
+        let read_only = self.container() == Some(aio::containers::tiff::ID)
+            && is_tiff_read_only_type(asset_type);
+        (!read_only).then(|| Box::new(self.clone()) as Box<dyn C2paWriter>)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -494,6 +505,7 @@ impl AssetIO for AssetIoAdapter {
                 .iter()
                 .flat_map(|spec| {
                     spec.extensions()
+                        .chain(spec.media_types())
                         .map(|ext| (ext.to_owned(), spec.media_type.to_owned()))
                 })
                 .collect();
@@ -531,7 +543,71 @@ impl AssetIO for AssetIoAdapter {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
+
+    #[derive(Debug)]
+    struct CustomContainer(&'static str);
+
+    impl ContainerHandler for CustomContainer {
+        fn id(&self) -> &'static str {
+            "custom"
+        }
+
+        fn formats(&self) -> &[aio::container_api::FormatSpec] {
+            const FORMATS: &[aio::container_api::FormatSpec] =
+                &[aio::container_api::FormatSpec::new("image/jpeg", "jpg")
+                    .extension_aliases(&["custom", "arw"])
+                    .media_type_aliases(&["image/x-custom"])];
+            FORMATS
+        }
+
+        fn parse_async(
+            self: Arc<Self>,
+            _io: aio::container_api::Io,
+        ) -> aio::container_api::BoxFuture<'static, aio::Result<Structure>> {
+            Box::pin(async move { Err(aio::Error::UnsupportedFeature(self.0)) })
+        }
+    }
+
+    #[test]
+    fn custom_container_survives_registration_and_registry_extension() {
+        let mut ctx = crate::Context::new().with_io_handler(CustomContainer("first"));
+        for format in ["jpg", "image/jpeg", "custom", "image/x-custom"] {
+            let mut stream = std::io::Cursor::new(Vec::<u8>::new());
+            assert!(matches!(
+                ctx.io().reader(format).unwrap().read_c2pa(&mut stream),
+                Err(Error::NotImplemented(message)) if message == "first"
+            ));
+            assert_eq!(ctx.io().mime_for(format), Some("image/jpeg"));
+        }
+        assert!(ctx.io().reader("png").is_some());
+        assert!(ctx.io().writer("arw").is_some());
+
+        ctx.add_io_handler(CustomContainer("second"));
+        let mut stream = std::io::Cursor::new(Vec::<u8>::new());
+        assert!(matches!(
+            ctx.io().reader("custom").unwrap().read_c2pa(&mut stream),
+            Err(Error::NotImplemented(message)) if message == "second"
+        ));
+        let imported = aio::HandlerRegistry::new()
+            .with_handler(CustomContainer("third"))
+            .with_handler(CustomContainer("last"));
+        ctx.io_mut().extend(&imported);
+        drop(imported);
+
+        let mut input = std::io::Cursor::new(Vec::<u8>::new());
+        let mut output = std::io::Cursor::new(Vec::<u8>::new());
+        assert!(matches!(
+            ctx.io().reader("custom").unwrap().read_c2pa(&mut input),
+            Err(Error::NotImplemented(message)) if message == "last"
+        ));
+        assert!(matches!(
+            ctx.io().writer("custom").unwrap().write_c2pa(&mut input, &mut output, b"store"),
+            Err(Error::NotImplemented(message)) if message == "last"
+        ));
+    }
 
     #[test]
     fn tiff_camera_raw_formats_are_read_only() {

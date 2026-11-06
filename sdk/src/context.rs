@@ -17,7 +17,7 @@ use std::sync::{
 };
 
 use crate::{
-    asset_io::{AssetIO, HandlerRegistry},
+    asset_io::HandlerRegistry,
     http::{
         restricted::{MetadataGuardResolver, RedirectResolver, RestrictedResolver},
         AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
@@ -579,35 +579,46 @@ impl Context {
     ///
     /// # Arguments
     ///
-    /// * `handler` - Any type implementing `AssetIO`
+    /// * `handler` - An asset-io container handler.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// # use c2pa::{Context, AssetIO};
-    /// let context = Context::new().with_io_handler(MyCustomHandler::new(""));
+    /// # use c2pa::Context;
+    /// let context = Context::new().with_io_handler(MyCustomContainer);
     /// let reader = c2pa::Reader::from_context(context);
     /// ```
-    #[allow(unused)] // not public yet, but used in tests
-    pub(crate) fn with_io_handler(mut self, handler: impl AssetIO + 'static) -> Self {
+    #[cfg(feature = "asset_io")]
+    pub fn with_io_handler(
+        mut self,
+        handler: impl ::asset_io::container_api::ContainerHandler + 'static,
+    ) -> Self {
         self.io.add_handler(handler);
         self
     }
 
     /// Register a custom IO handler on this Context (mutable variant).
-    #[allow(unused)] // not public yet, but used in tests
-    pub(crate) fn add_io_handler(&mut self, handler: impl AssetIO + 'static) {
+    #[cfg(feature = "asset_io")]
+    pub fn add_io_handler(
+        &mut self,
+        handler: impl ::asset_io::container_api::ContainerHandler + 'static,
+    ) {
         self.io.add_handler(handler);
     }
 
     /// Returns this Context's [`HandlerRegistry`], for looking up asset I/O handlers and
     /// their derived metadata (supported formats, MIME types, container families, ...).
     ///
-    /// Custom handlers registered via [`with_io_handler`](Self::with_io_handler) are searched
+    /// Custom handlers registered on this Context are searched
     /// before the built-in global registry; last-registered wins when two handlers claim the
     /// same format.
-    pub(crate) fn io(&self) -> &HandlerRegistry {
+    pub fn io(&self) -> &HandlerRegistry {
         &self.io
+    }
+
+    /// Returns this Context's registry for registering asset-io container handlers.
+    pub fn io_mut(&mut self) -> &mut HandlerRegistry {
+        &mut self.io
     }
 
     /// Configure this Context with a custom cryptographic signer.
@@ -1683,7 +1694,8 @@ mod tests {
             }
         }
 
-        let ctx = Context::new().with_io_handler(CustomHandler);
+        let mut ctx = Context::new();
+        ctx.io.add_boxed_handler(Box::new(CustomHandler));
 
         // Custom handler claims "image/jpeg" — it should win over the built-in.
         let handler = ctx.io().handler("image/jpeg");
@@ -1773,9 +1785,9 @@ mod tests {
             }
         }
 
-        let ctx = Context::new()
-            .with_io_handler(HandlerA)
-            .with_io_handler(HandlerB);
+        let mut ctx = Context::new();
+        ctx.io.add_boxed_handler(Box::new(HandlerA));
+        ctx.io.add_boxed_handler(Box::new(HandlerB));
         let reader = ctx.io().reader("x-custom/test").unwrap();
         let mut stream = std::io::Cursor::new(vec![]);
         // HandlerB was registered last, so it should win.
