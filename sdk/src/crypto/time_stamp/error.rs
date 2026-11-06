@@ -142,12 +142,14 @@ mod tests {
             TimeStampError::ResponseTooLarge
         ));
 
-        let request_error = http::Request::post("bad\nuri")
-            .body(Vec::<u8>::new())
-            .unwrap_err();
         assert!(matches!(
-            TimeStampError::from(AcquisitionError::HttpRequestError(request_error)),
-            TimeStampError::HttpResolverError(HttpResolverError::Http(_))
+            http::Request::post("bad\nuri")
+                .body(Vec::<u8>::new())
+                .map_err(AcquisitionError::HttpRequestError)
+                .map_err(TimeStampError::from),
+            Err(TimeStampError::HttpResolverError(HttpResolverError::Http(
+                _
+            )))
         ));
     }
 }
