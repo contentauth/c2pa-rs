@@ -1248,6 +1248,39 @@ mod tests {
     }
 
     #[test]
+    fn signed_attribute_input_enforces_the_three_octet_length_limit() {
+        let algorithm = [0x30, 0x0b, 6, 9, 0x60, 0x86, 0x48, 1, 0x65, 3, 4, 2, 1];
+        let der = tlv(
+            0x30,
+            &[
+                [2, 1, 1, 0x30, 5, 0x30, 0, 2, 1, 1].as_slice(),
+                &algorithm,
+                &[0xa0, 0],
+                &algorithm,
+                &[4, 1, 0],
+            ]
+            .concat(),
+        );
+        let mut signer = Constructed::decode(der.as_slice(), Mode::Der, SignerInfo::take_opt_from)
+            .unwrap()
+            .unwrap();
+
+        for size in [0x7f, 0x80, 0xff, 0x100, 0xffff, 0x10000, 0xffffff] {
+            signer.signed_attributes_data = Some(vec![0xab; size]);
+            let encoded = signer
+                .signed_attributes_digested_content()
+                .unwrap()
+                .unwrap();
+            assert_eq!(encoded, tlv(0x31, &vec![0xab; size]));
+        }
+
+        signer.signed_attributes_data = Some(vec![0; 0x1000000]);
+        let error = signer.signed_attributes_digested_content().unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), "signed attributes length too long");
+    }
+
+    #[test]
     fn unsupported_legacy_certificate_choices_fail_without_panicking() {
         // These legacy CMS choices have explicit unimplemented parsers;
         // the RFC 3161 engine uses rasn_cms instead.
