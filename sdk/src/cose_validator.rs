@@ -305,6 +305,8 @@ pub(crate) fn get_signing_info(
 #[cfg(test)]
 pub mod tests {
     use coset::{cbor::value::Value, Label};
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;
