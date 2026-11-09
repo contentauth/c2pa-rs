@@ -13,7 +13,7 @@
 
 #![deny(missing_docs)]
 
-//! The `create_signer` module provides a way to obtain a [`Signer`]
+//! The `create_signer` module provides a way to obtain a [`Signer`](crate::Signer)
 //! instance for each signing format supported by this crate.
 #[cfg(feature = "file_io")]
 use std::path::Path;
