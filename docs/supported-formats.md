@@ -9,6 +9,15 @@ The following table summarizes the supported media (asset) file formats. This in
 
 `txt` requires the non-default `unstable_plain_text` feature.
 
+The experimental, non-default `asset_io` feature routes JPEG, PNG, SVG, RIFF,
+TIFF/DNG, MP3, FLAC, and GIF through `asset-io` 0.4. PDF uses it when the `pdf`
+feature is also enabled. Without `asset_io`, these formats retain their legacy
+handlers.
+
+The ID3 adapter preserves unrelated frames byte-for-byte, including malformed
+compressed frames. Its reader can find a manifest after such a frame even when
+the legacy ID3 decoder stops before reaching it.
+
 | Extensions      | MIME type                                                                      |
 | --------------- | ------------------------------------------------------------------------------- |
 | `avi`           | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`  |

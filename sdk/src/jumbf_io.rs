@@ -26,12 +26,12 @@ use crate::asset_handlers::structured_text_io::StructuredTextIO;
 #[cfg(not(feature = "asset_io"))]
 use crate::asset_handlers::tiff_io::TiffIO;
 #[cfg(not(feature = "asset_io"))]
-use crate::asset_handlers::{jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO};
+use crate::asset_handlers::{
+    flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO,
+    svg_io::SvgIO,
+};
 use crate::{
-    asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpegxl_io::JpegXlIO,
-        mp3_io::Mp3IO, zip_io::ZipIO,
-    },
+    asset_handlers::{bmff_io::BmffIO, c2pa_io::C2paIO, jpegxl_io::JpegXlIO, zip_io::ZipIO},
     asset_io::{AssetIO, C2paReader, C2paWriter, HandlerRegistry, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
     utils::mime::normalize_format,
@@ -68,8 +68,15 @@ lazy_static! {
         Box::new(TiffIO::new("")),
         #[cfg(feature = "asset_io")]
         Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("tif")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(Mp3IO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("mp3")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(GifIO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("gif")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(FlacIO::new("")),
         #[cfg(feature = "unstable_structured_text")]
         Box::new(StructuredTextIO::new("")),
@@ -267,7 +274,10 @@ pub mod tests {
     #[cfg(feature = "asset_io")]
     use crate::asset_handlers::tiff_io::TiffIO;
     #[cfg(feature = "asset_io")]
-    use crate::asset_handlers::{jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO};
+    use crate::asset_handlers::{
+        flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO,
+        riff_io::RiffIO, svg_io::SvgIO,
+    };
     use crate::{
         utils::{test::create_test_store, test_signer::test_signer},
         SigningAlg,

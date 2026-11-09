@@ -1,7 +1,7 @@
 // EXPERIMENT (local only, do not commit).
 //
 // The asset-io adapter against the handlers it replaces, through the same traits the SDK
-// uses, on every JPEG, PNG, SVG, RIFF, TIFF/DNG and PDF fixture.
+// uses, on every JPEG, PNG, SVG, RIFF, TIFF/DNG, MP3, FLAC, GIF and PDF fixture.
 //
 // Run with: cargo test --features asset_io asset_io_adapter
 
@@ -12,8 +12,8 @@ use std::{fs, io::Cursor, mem::discriminant, path::PathBuf};
 
 use crate::{
     asset_handlers::{
-        asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
-        svg_io::SvgIO, tiff_io::TiffIO,
+        asset_io_adapter::AssetIoAdapter, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
+        mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, ObjectType, C2PA_BOXHASH},
     Error,
@@ -85,6 +85,18 @@ fn fixtures() -> Vec<Fixture> {
             Some(ext @ ("tif" | "tiff" | "dng")) => (
                 Box::new(TiffIO::new(ext)),
                 Box::new(AssetIoAdapter::new(ext)),
+            ),
+            Some("mp3") => (
+                Box::new(Mp3IO::new("mp3")),
+                Box::new(AssetIoAdapter::new("mp3")),
+            ),
+            Some("flac") => (
+                Box::new(FlacIO::new("flac")),
+                Box::new(AssetIoAdapter::new("flac")),
+            ),
+            Some("gif") => (
+                Box::new(GifIO::new("gif")),
+                Box::new(AssetIoAdapter::new("gif")),
             ),
             _ => continue,
         };
@@ -331,6 +343,15 @@ fn written_manifests_read_back_with_either_reader() {
         let out = out.into_inner();
 
         for (who, h) in [("old", &old), ("new", &new)] {
+            // The legacy ID3 decoder stops at the malformed compressed frame;
+            // asset-io preserves it and can read the manifest after it.
+            if name == "id3v23_compression_underflow.mp3" && who == "old" {
+                assert!(matches!(
+                    h.get_reader().read_c2pa(&mut Cursor::new(&out)),
+                    Err(Error::JumbfNotFound)
+                ));
+                continue;
+            }
             match h.get_reader().read_c2pa(&mut Cursor::new(&out)) {
                 Ok(got) if got == s => {}
                 other => problems.push(format!(
@@ -359,7 +380,12 @@ fn written_manifests_read_back_with_either_reader() {
             .write_c2pa(&mut Cursor::new(&out), &mut replaced, &s2)
             .unwrap();
         let replaced = replaced.into_inner();
-        match old.get_reader().read_c2pa(&mut Cursor::new(&replaced)) {
+        let reader = if name == "id3v23_compression_underflow.mp3" {
+            &new
+        } else {
+            &old
+        };
+        match reader.get_reader().read_c2pa(&mut Cursor::new(&replaced)) {
             Ok(got) if got == s2 => {}
             other => problems.push(format!("{name}: replace: {:?}", other.map(|v| v.len()))),
         }
@@ -622,6 +648,16 @@ fn the_registry_resolves_formats_to_the_adapter() {
         "dng",
         "image/dng",
         "image/x-adobe-dng",
+        "mp3",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/x-mp3",
+        "audio/mpeg3",
+        "flac",
+        "audio/flac",
+        "audio/x-flac",
+        "gif",
+        "image/gif",
     ] {
         assert!(ctx.io().handler(f).is_some(), "{f}");
         assert!(ctx.io().writer(f).is_some(), "{f}");
@@ -630,6 +666,14 @@ fn the_registry_resolves_formats_to_the_adapter() {
     assert_eq!(ctx.io().mime_for("png"), Some("image/png"));
     assert_eq!(ctx.io().mime_for("tif"), Some("image/tiff"));
     assert_eq!(ctx.io().mime_for("dng"), Some("image/x-adobe-dng"));
+    assert_eq!(ctx.io().mime_for("mp3"), Some("audio/mpeg"));
+    assert_eq!(ctx.io().mime_for("flac"), Some("audio/flac"));
+    assert_eq!(ctx.io().mime_for("gif"), Some("image/gif"));
+    for format in ["mp3", "audio/x-mp3", "audio/mpeg3", "flac"] {
+        let handler = ctx.io().handler(format).unwrap();
+        assert!(handler.supported_types().contains(&"mp3"), "{format}");
+        assert!(handler.supported_types().contains(&"flac"), "{format}");
+    }
     assert!(!ctx.io().is_bmff_format("jpg"));
 
     // asset-io does not declare the raw formats, so TiffIO still reads them, and they
@@ -637,6 +681,68 @@ fn the_registry_resolves_formats_to_the_adapter() {
     for f in ["arw", "image/x-sony-arw", "nef", "image/x-nikon-nef"] {
         assert!(ctx.io().handler(f).is_some(), "{f}");
         assert!(ctx.io().writer(f).is_none(), "{f}");
+    }
+}
+
+#[test]
+fn new_formats_sign_and_validate() {
+    use crate::{utils::test::test_context, Builder, Reader, ValidationState};
+
+    for (format, bytes) in [
+        (
+            "mp3",
+            include_bytes!("../tests/fixtures/sample1.mp3").as_slice(),
+        ),
+        (
+            "flac",
+            include_bytes!("../tests/fixtures/sample1.flac").as_slice(),
+        ),
+        (
+            "gif",
+            include_bytes!("../tests/fixtures/sample1.gif").as_slice(),
+        ),
+    ] {
+        let adapter = AssetIoAdapter::new(format);
+        assert_eq!(
+            adapter.asset_box_hash_ref().is_some(),
+            format == "gif",
+            "{format}"
+        );
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(
+                &serde_json::json!({
+                    "claim_generator_info": [{"name": "asset_io_test"}],
+                    "title": format,
+                    "assertions": [{
+                        "label": "c2pa.actions",
+                        "data": {"actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]}
+                    }]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        let signer = crate::utils::test_signer::test_signer(crate::SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                signer.as_ref(),
+                format,
+                &mut Cursor::new(bytes),
+                &mut output,
+            )
+            .unwrap_or_else(|e| panic!("{format}: sign failed: {e}"));
+        let reader = Reader::from_context(test_context())
+            .with_stream(format, output)
+            .unwrap();
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "{format}: {:?}",
+            reader.validation_status()
+        );
     }
 }
 
