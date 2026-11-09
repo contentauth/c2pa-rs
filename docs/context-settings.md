@@ -117,6 +117,62 @@ End-to-end protection requires the binding or HTTP adapter to enforce a limit
 while receiving the response, before buffering or copying it.
 Increasing it allows correspondingly larger Store allocations.
 
+### Configuring time-stamp requests
+
+A blocking time-stamp request is retried after a transient failure (no answer, a timeout,
+or an HTTP 408, 429, 500, 502, 503 or 504 response), and each attempt has a time limit.
+Three `core` settings control this, independently for each `Context`:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `time_stamp_request_attempts` | `3` | Attempts before the last error is returned; `1` disables retries. Must be at least 1. |
+| `time_stamp_request_timeout_in_ms` | `10000` | Time limit of each attempt, applied by the built-in HTTP resolvers. Must be positive. |
+| `time_stamp_retry_delay_in_ms` | `500` | Pause before the second attempt, doubled before each later one. |
+
+For example, to try a slow time-stamp service once, for up to 30 seconds:
+
+```rust
+use c2pa::{Context, Result};
+
+fn main() -> Result<()> {
+    let context = Context::new()
+        .with_settings_value("core.time_stamp_request_attempts", 1u32)?
+        .with_settings_value("core.time_stamp_request_timeout_in_ms", 30_000u64)?;
+    Ok(())
+}
+```
+
+Equivalent JSON configuration:
+
+```json
+{
+  "core": {
+    "time_stamp_request_attempts": 1,
+    "time_stamp_request_timeout_in_ms": 30000
+  }
+}
+```
+
+Async time-stamp requests are sent once, with the same per-attempt time limit.
+Blocking requests on browser WASM are also sent once because that target cannot
+sleep between attempts. Native and WASI blocking requests honor the retry settings.
+
+Signing passes the caller's `Context` through to the timestamp provider, including custom
+HTTP resolvers and network policy. Redirects share one attempt's timeout budget rather
+than restarting it at each hop. Native reqwest and ureq enforce the timeout while receiving
+headers and the response body. Browser-based reqwest on WASM does not support this timeout;
+other/custom resolvers must enforce the `RequestTimeout` request extension themselves.
+
+### Breaking timestamp API migration
+
+`Signer::send_timestamp_request`, `AsyncSigner::send_timestamp_request`,
+`TimeStampProvider::send_time_stamp_request`, and `AsyncTimeStampProvider::send_time_stamp_request`
+now take `context: &Context` after `message: &[u8]`. Update custom implementations and
+forward this same context when delegating; their dispatch and header/body hooks are unchanged.
+Detached `sign_claim`/`sign_claim_async` now take `&Context` instead of `&Settings`.
+Construct the context with your settings and resolver once and pass it through rather
+than creating a default context inside a timestamp override.
+
 ## Using Context
 
 ### With Reader
@@ -266,7 +322,10 @@ Here's the `Settings` JSON with all default values:
     "backing_store_memory_threshold_in_mb": 512,
     "decode_identity_assertions": true,
     "allowed_network_hosts": null,
-    "max_decompressed_manifest_size_in_mb": 32
+    "max_decompressed_manifest_size_in_mb": 32,
+    "time_stamp_request_attempts": 3,
+    "time_stamp_request_timeout_in_ms": 10000,
+    "time_stamp_retry_delay_in_ms": 500
   },
   "signer": null,
   "trust":{ 
@@ -309,6 +368,34 @@ Here's the `Settings` JSON with all default values:
   }
 }
 ```
+
+### OCSP fetch response budget
+
+Sync and async OCSP fetching accept at most **1,000,000 response-body bytes**
+per responder, preserving the existing fetch-byte budget. The SDK ignores
+`Content-Length` when allocating and reading OCSP bodies, including missing,
+malformed, conflicting, or inaccurate lengths. A small body is not rejected
+merely because its advertised length exceeds the budget.
+
+The SDK reads at most **1,000,001 bytes** from each successful HTTP response body
+to detect overflow. It never returns a truncated prefix as a successful response.
+An oversized body is discarded and logged, and fetching can try the next AIA
+responder in order, honoring the progress/cancellation callback before each
+request. If no response can be fetched, existing OCSP-inaccessible reporting and
+fallback to other usable OCSP sources remain in effect; an oversized response
+does not establish certificate status.
+
+Response-vector capacity requests grow only with bytes actually read and never
+exceed **1,000,000 bytes**; the reader also uses an **8192-byte stack buffer**.
+These are per-response SDK bounds, not a bound on allocator overhead or transient
+memory during reallocation. They do not bound buffering performed inside a
+built-in or custom HTTP resolver before returning its body, network framing
+bytes, request count, elapsed time, or OCSP verification work. Resolvers remain
+responsible for their own buffering and may enforce stricter limits.
+
+This is a fixed fetch-side budget, not a new setting or a verification-side
+limit on stapled or certificate-status assertion responses. Verification-side
+resource budgeting is tracked separately in [#3026](https://github.com/contentauth/c2pa-rs/issues/3026).
 
 ## Configuration examples
 
@@ -402,6 +489,25 @@ Here's the `Settings` JSON with all default values:
 ```
 
 ### Production configuration
+
+By default, `trust.use_default_ekus` is `true`: the built-in EKUs, including
+`c2pa-kp-claimSigning`, remain enabled and `trust.trust_config` adds to them.
+To restrict claim signers to a configured set, set `trust.use_default_ekus` to
+`false` and supply the accepted OIDs in `trust.trust_config`. An empty or absent
+configuration with defaults disabled retains legacy emailProtection acceptance;
+it does not enable claimSigning or documentSigning. TSA and OCSP responder
+profiles require timeStamping and OCSPSigning, respectively, regardless of which
+claim-signer EKUs are accepted. Accepting an EKU does not install a trust anchor
+or make a certificate trusted.
+
+When `verify.verify_timestamp_trust` is enabled, a TSA certificate that fails its
+profile checks (including a missing or incorrect timeStamping EKU) causes the
+timestamp to be rejected with informational `timeStamp.untrusted` diagnostics.
+It does not produce claim-signer `signingCredential.invalid` failures. The claim
+signer is evaluated independently at the current time if no other valid timestamp
+is available; a rejected timestamp cannot rescue an expired signer or establish
+a trusted signing time for CAWG identity assertions. Claim-signature, certificate,
+revocation, and trust failures are still reported independently.
 
 ```json
 {

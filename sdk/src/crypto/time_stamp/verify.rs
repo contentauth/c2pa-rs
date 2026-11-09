@@ -183,6 +183,10 @@ fn received_signed_attributes(
 }
 
 /// Decode the TimeStampToken info and verify it against the supplied data and trust policy
+///
+/// RSA-PSS signatures must use PS256, PS384, or PS512 parameters. Legacy RSA
+/// PKCS#1 v1.5 timestamps remain supported. The CMS signature algorithm selects
+/// the scheme independently of the TSA certificate's public key algorithm.
 #[async_generic]
 pub fn verify_time_stamp(
     ts: &[u8],
@@ -260,33 +264,14 @@ pub fn verify_time_stamp(
     for signer_info in sd.signer_infos.to_vec().iter() {
         current_validation_log = StatusTracker::default(); // reset for latest results
 
-        // Find signer's cert.
-        let cert_pos = match certs_vec.iter().position(|cc| {
-            let c = match cc {
-                CertificateChoices::Certificate(c) => c,
-                _ => return false,
-            };
-
-            match &signer_info.sid {
-                SignerIdentifier::IssuerAndSerialNumber(sn) => {
-                    sn.issuer == c.tbs_certificate.issuer
-                        && sn.serial_number == c.tbs_certificate.serial_number
-                }
-
-                SignerIdentifier::SubjectKeyIdentifier(ski) => {
-                    if let Some(extensions) = &c.tbs_certificate.extensions {
-                        extensions.iter().any(|e| {
-                            if e.extn_id == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER {
-                                return *ski == e.extn_value;
-                            }
-                            false
-                        })
-                    } else {
-                        false
-                    }
-                }
-            }
-        }) {
+        // Preserve the existing first-match lookup for this SignerInfo. Unrelated
+        // certificates cannot win; only a matching issuer/serial or SKI can.
+        // If distinct certificates share that identifier, decoded SET OF order
+        // selects the candidate; this loop does not try every matching certificate.
+        let cert_pos = match certs_vec
+            .iter()
+            .position(|cc| signer_certificate_matches(cc, &signer_info.sid))
+        {
             Some(c) => c,
             None => continue,
         };
@@ -512,21 +497,23 @@ pub fn verify_time_stamp(
             continue;
         };
 
-        // algorithm used to sign the certificate
-        let Ok(sig_alg) = bcder::Oid::from_str(
-            &cert
-                .tbs_certificate
-                .subject_public_key_info
-                .algorithm
-                .algorithm
-                .to_string(),
-        ) else {
-            log_item!("", "timestamp bad tbs certificate alg", "verify_time_stamp")
+        let sig_alg = match timestamp_signature_algorithm(
+            signer_info,
+            &cert.tbs_certificate.subject_public_key_info.algorithm,
+        ) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                log_item!(
+                    "",
+                    "timestamp invalid signature algorithm or parameters",
+                    "verify_time_stamp"
+                )
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
 
-            last_err = TimeStampError::DecodeError("timestamp bad tbs certificate".to_string());
-            continue;
+                last_err = error;
+                continue;
+            }
         };
 
         // Verify signature of time stamp signature.
@@ -616,14 +603,39 @@ pub fn verify_time_stamp(
             // make sure this is a timestamping EKU
             adjusted_ctp.clear_ekus();
             adjusted_ctp.add_mandatory_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
-            if check_end_entity_certificate_profile(
+            let mut profile_log = StatusTracker::default();
+            let profile_result = check_end_entity_certificate_profile(
                 &ordered_cert_ders[0],
                 &adjusted_ctp,
-                &mut current_validation_log,
+                &mut profile_log,
                 Some(&tst),
-            )
-            .is_err()
-            {
+            );
+
+            let profile_failed = profile_result.is_err()
+                || profile_log
+                    .logged_items()
+                    .iter()
+                    .any(|item| item.kind == crate::status_tracker::LogKind::Failure);
+
+            // The shared profile checker uses claim-signer failure codes. TSA
+            // failures reject only the timestamp (C2PA 2.5, section 14.8.2).
+            for item in profile_log.logged_items_mut() {
+                item.kind = crate::status_tracker::LogKind::Informational;
+                item.validation_status = Some(
+                    if item.validation_status.as_deref()
+                        == Some(crate::validation_status::SIGNING_CREDENTIAL_EXPIRED)
+                    {
+                        TIMESTAMP_OUTSIDE_VALIDITY
+                    } else {
+                        TIMESTAMP_UNTRUSTED
+                    }
+                    .into(),
+                );
+            }
+
+            current_validation_log.append(&profile_log);
+
+            if profile_failed {
                 log_item!(
                     "",
                     format!("timestamp cert untrusted: {}", &common_name),
@@ -701,6 +713,7 @@ pub fn verify_time_stamp(
 
 /// Extract the TSA signer certificate (DER) from an RFC 3161 timestamp token.
 /// Does not verify the token; only parses it and returns the first signer's certificate.
+/// Supports both issuer-and-serial-number and subject-key-identifier signer IDs.
 pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, TimeStampError> {
     let Some(sd) = signed_data_from_time_stamp_response(ts)? else {
         return Ok(None);
@@ -727,35 +740,267 @@ pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, Time
     let Some(signer_info) = sd.signer_infos.to_vec().into_iter().next() else {
         return Ok(None);
     };
-    let Some(cert_pos) = certs_vec.iter().position(|cc| {
-        let c = match cc {
-            CertificateChoices::Certificate(c) => c,
-            _ => return false,
-        };
-        match &signer_info.sid {
-            SignerIdentifier::IssuerAndSerialNumber(sn) => {
-                sn.issuer == c.tbs_certificate.issuer
-                    && sn.serial_number == c.tbs_certificate.serial_number
-            }
-            SignerIdentifier::SubjectKeyIdentifier(ski) => {
-                if let Some(extensions) = &c.tbs_certificate.extensions {
-                    extensions.iter().any(|e| {
-                        if e.extn_id
-                            == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
-                        {
-                            return *ski == e.extn_value;
-                        }
-                        false
-                    })
-                } else {
-                    false
-                }
-            }
-        }
-    }) else {
+    let Some(cert_pos) = certs_vec
+        .iter()
+        .position(|cc| signer_certificate_matches(cc, &signer_info.sid))
+    else {
         return Ok(None);
     };
     Ok(Some(cert_ders[cert_pos].clone()))
+}
+
+fn signer_certificate_matches(choice: &CertificateChoices, sid: &SignerIdentifier) -> bool {
+    let CertificateChoices::Certificate(cert) = choice else {
+        return false;
+    };
+
+    match sid {
+        SignerIdentifier::IssuerAndSerialNumber(sn) => {
+            sn.issuer == cert.tbs_certificate.issuer
+                && sn.serial_number == cert.tbs_certificate.serial_number
+        }
+
+        SignerIdentifier::SubjectKeyIdentifier(ski) => cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .is_some_and(|extensions| {
+                extensions.iter().any(|extension| {
+                    extension.extn_id
+                        == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
+                        && subject_key_identifier_matches(&extension.extn_value, ski)
+                })
+            }),
+    }
+}
+
+fn subject_key_identifier_matches(encoded: &[u8], identifier: &[u8]) -> bool {
+    use asn1_rs::{Class, Tag};
+
+    asn1_rs::Any::from_der(encoded).is_ok_and(|(rest, value)| {
+        rest.is_empty()
+            && value.class() == Class::Universal
+            && value.tag() == Tag::OctetString
+            && !value.header.is_constructed()
+            && value.data == identifier
+    })
+}
+
+const RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
+const RSA_PSS: &str = "1.2.840.113549.1.1.10";
+const MGF1: &str = "1.2.840.113549.1.1.8";
+const EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
+const ED25519_SIGNATURE: &str = "1.3.101.112";
+const SHA1_DIGEST: &str = "1.3.14.3.2.26";
+const SHA256_DIGEST: &str = "2.16.840.1.101.3.4.2.1";
+const SHA384_DIGEST: &str = "2.16.840.1.101.3.4.2.2";
+const SHA512_DIGEST: &str = "2.16.840.1.101.3.4.2.3";
+const RSA_PKCS1_SHA1: &str = "1.2.840.113549.1.1.5";
+const RSA_PKCS1_SHA256: &str = "1.2.840.113549.1.1.11";
+const RSA_PKCS1_SHA384: &str = "1.2.840.113549.1.1.12";
+const RSA_PKCS1_SHA512: &str = "1.2.840.113549.1.1.13";
+const ECDSA_SHA1: &str = "1.2.840.10045.4.1";
+const ECDSA_SHA256: &str = "1.2.840.10045.4.3.2";
+const ECDSA_SHA384: &str = "1.2.840.10045.4.3.3";
+const ECDSA_SHA512: &str = "1.2.840.10045.4.3.4";
+
+struct PssParameters {
+    hash: String,
+    mgf_hash: String,
+    salt_length: u64,
+    trailer: u64,
+}
+
+fn pss_parameters(parameters: &types::Any) -> Result<PssParameters, TimeStampError> {
+    use asn1_rs::{Class, Tag};
+
+    let invalid = || TimeStampError::DecodeError("invalid timestamp RSA-PSS parameters".into());
+    let bytes = parameters.as_bytes();
+    let (rest, sequence) = asn1_rs::Any::from_der(bytes).map_err(|_| invalid())?;
+
+    if !rest.is_empty()
+        || sequence.class() != Class::Universal
+        || sequence.tag() != Tag::Sequence
+        || !sequence.header.is_constructed()
+    {
+        return Err(invalid());
+    }
+
+    // RFC 4055 defaults apply to fields omitted within the required sequence.
+    let mut result = PssParameters {
+        hash: SHA1_DIGEST.into(),
+        mgf_hash: SHA1_DIGEST.into(),
+        salt_length: 20,
+        trailer: 1,
+    };
+    let fields = timestamp_asn1_children(sequence.data).ok_or_else(invalid)?;
+    let mut previous = None;
+
+    for field in fields {
+        let tag = field.tag().0;
+
+        if field.class() != Class::ContextSpecific
+            || !field.header.is_constructed()
+            || tag > 3
+            || previous.is_some_and(|previous| tag <= previous)
+        {
+            return Err(invalid());
+        }
+
+        previous = Some(tag);
+        let (rest, _) = asn1_rs::Any::from_der(field.data).map_err(|_| invalid())?;
+
+        if !rest.is_empty() {
+            return Err(invalid());
+        }
+
+        match tag {
+            0 => result.hash = pss_hash_algorithm(field.data)?,
+            1 => {
+                let mgf: rasn_pkix::AlgorithmIdentifier =
+                    rasn::der::decode(field.data).map_err(|_| invalid())?;
+
+                if mgf.algorithm.to_string() != MGF1 {
+                    return Err(TimeStampError::UnsupportedAlgorithm);
+                }
+
+                let hash = mgf.parameters.ok_or_else(invalid)?;
+                result.mgf_hash = pss_hash_algorithm(hash.as_bytes())?;
+            }
+            2 => {
+                result.salt_length = pss_unsigned_integer(field.data)?;
+            }
+            3 => result.trailer = pss_unsigned_integer(field.data)?,
+            _ => return Err(invalid()),
+        }
+    }
+
+    Ok(result)
+}
+
+fn pss_unsigned_integer(bytes: &[u8]) -> Result<u64, TimeStampError> {
+    use asn1_rs::{Class, Tag};
+
+    let invalid = || TimeStampError::DecodeError("invalid timestamp RSA-PSS integer".into());
+    let (rest, value) = asn1_rs::Any::from_der(bytes).map_err(|_| invalid())?;
+
+    if !rest.is_empty()
+        || value.class() != Class::Universal
+        || value.tag() != Tag::Integer
+        || value.header.is_constructed()
+        || value.data.is_empty()
+        || value.data[0] & 0x80 != 0
+        || (value.data.len() > 1 && value.data[0] == 0 && value.data[1] & 0x80 == 0)
+    {
+        return Err(invalid());
+    }
+
+    value.data.iter().try_fold(0_u64, |integer, byte| {
+        integer
+            .checked_mul(256)
+            .and_then(|integer| integer.checked_add(u64::from(*byte)))
+            .ok_or_else(invalid)
+    })
+}
+
+fn pss_hash_algorithm(bytes: &[u8]) -> Result<String, TimeStampError> {
+    let invalid =
+        || TimeStampError::DecodeError("invalid timestamp RSA-PSS hash parameters".into());
+    let (rest, _) = asn1_rs::Any::from_der(bytes).map_err(|_| invalid())?;
+
+    if !rest.is_empty() {
+        return Err(invalid());
+    }
+
+    let algorithm: rasn_pkix::AlgorithmIdentifier =
+        rasn::der::decode(bytes).map_err(|_| invalid())?;
+
+    if algorithm
+        .parameters
+        .is_some_and(|parameters| parameters.as_bytes() != [0x05, 0x00])
+    {
+        return Err(invalid());
+    }
+
+    Ok(algorithm.algorithm.to_string())
+}
+
+fn timestamp_signature_algorithm(
+    signer: &rasn_cms::SignerInfo,
+    key: &rasn_pkix::AlgorithmIdentifier,
+) -> Result<bcder::Oid, TimeStampError> {
+    let signature = signer.signature_algorithm.algorithm.to_string();
+    let digest = signer.digest_algorithm.algorithm.to_string();
+    let key_algorithm = key.algorithm.to_string();
+    let mut validator_algorithm = signature.as_str();
+
+    if signature == RSA_PSS {
+        if key_algorithm != RSA_ENCRYPTION && key_algorithm != RSA_PSS {
+            return Err(TimeStampError::UnsupportedAlgorithm);
+        }
+
+        let parameters = signer
+            .signature_algorithm
+            .parameters
+            .as_ref()
+            .ok_or_else(|| {
+                TimeStampError::DecodeError("missing timestamp RSA-PSS parameters".into())
+            })?;
+        let pss = pss_parameters(parameters)?;
+        let salt_length = match pss.hash.as_str() {
+            SHA256_DIGEST => 32,
+            SHA384_DIGEST => 48,
+            SHA512_DIGEST => 64,
+            _ => return Err(TimeStampError::UnsupportedAlgorithm),
+        };
+
+        if pss.hash != digest
+            || pss.mgf_hash != digest
+            || pss.salt_length != salt_length
+            || pss.trailer != 1
+        {
+            return Err(TimeStampError::UnsupportedAlgorithm);
+        }
+
+        if key_algorithm == RSA_PSS {
+            if let Some(parameters) = &key.parameters {
+                let restrictions = pss_parameters(parameters)?;
+
+                // A PSS key's saltLength is a minimum, not an exact signature salt length.
+                if restrictions.hash != pss.hash
+                    || restrictions.mgf_hash != pss.mgf_hash
+                    || restrictions.salt_length > pss.salt_length
+                    || restrictions.trailer != pss.trailer
+                {
+                    return Err(TimeStampError::UnsupportedAlgorithm);
+                }
+            }
+        }
+    } else {
+        let compatible = match signature.as_str() {
+            RSA_ENCRYPTION => key_algorithm == RSA_ENCRYPTION,
+            RSA_PKCS1_SHA1 => key_algorithm == RSA_ENCRYPTION && digest == SHA1_DIGEST,
+            RSA_PKCS1_SHA256 => key_algorithm == RSA_ENCRYPTION && digest == SHA256_DIGEST,
+            RSA_PKCS1_SHA384 => key_algorithm == RSA_ENCRYPTION && digest == SHA384_DIGEST,
+            RSA_PKCS1_SHA512 => key_algorithm == RSA_ENCRYPTION && digest == SHA512_DIGEST,
+            ECDSA_SHA1 => key_algorithm == EC_PUBLIC_KEY && digest == SHA1_DIGEST,
+            ECDSA_SHA256 => key_algorithm == EC_PUBLIC_KEY && digest == SHA256_DIGEST,
+            ECDSA_SHA384 => key_algorithm == EC_PUBLIC_KEY && digest == SHA384_DIGEST,
+            ECDSA_SHA512 => key_algorithm == EC_PUBLIC_KEY && digest == SHA512_DIGEST,
+            ED25519_SIGNATURE => key_algorithm == signature,
+            _ => false,
+        };
+
+        if !compatible {
+            return Err(TimeStampError::UnsupportedAlgorithm);
+        }
+
+        if key_algorithm == RSA_ENCRYPTION {
+            validator_algorithm = RSA_ENCRYPTION;
+        }
+    }
+
+    bcder::Oid::from_str(validator_algorithm).map_err(|_| TimeStampError::UnsupportedAlgorithm)
 }
 
 fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> {
@@ -1003,6 +1248,10 @@ fn validate_timestamp_sig(
 }
 
 #[cfg(test)]
+#[path = "rsa_pss_ski_regression.rs"]
+mod rsa_pss_ski_regression;
+
+#[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
     use std::str::FromStr;
@@ -1202,6 +1451,20 @@ pub(crate) mod message_imprint_regression {
         build_token_with(imprint_oid, imprint_md, data, TokenOptions::default())
     }
 
+    pub(crate) fn build_token_at(data: &[u8], gen_time: &[u8]) -> Vec<u8> {
+        build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            data,
+            TokenOptions {
+                gen_time: Some(gen_time),
+                profile_extensions: true,
+                signed_attrs: true,
+                ..Default::default()
+            },
+        )
+    }
+
     #[derive(Default)]
     struct TokenOptions<'a> {
         gen_time: Option<&'a [u8]>,
@@ -1209,15 +1472,17 @@ pub(crate) mod message_imprint_regression {
         signed_time: Option<(u8, &'a [u8])>,
         signed_attrs: bool,
         profile_extensions: bool,
+        signer_eku: Option<&'a str>,
+        omit_eku: bool,
         cms_digest: Option<(&'a [u8], MessageDigest)>,
     }
 
-    fn build_token_with(
-        imprint_oid: &[u8],
-        imprint_md: MessageDigest,
-        data: &[u8],
-        options: TokenOptions<'_>,
-    ) -> Vec<u8> {
+    fn test_certificate(
+        purpose: Option<&str>,
+        profile_extensions: bool,
+        not_before: i64,
+        not_after: i64,
+    ) -> (PKey<openssl::pkey::Private>, openssl::x509::X509) {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
 
@@ -1233,13 +1498,18 @@ pub(crate) mod message_imprint_regression {
         cb.set_subject_name(&name).unwrap();
         cb.set_issuer_name(&name).unwrap();
         cb.set_pubkey(&key).unwrap();
-        cb.set_not_before(&Asn1Time::from_unix(1_500_000_000).unwrap())
+        cb.set_not_before(&Asn1Time::from_unix(not_before).unwrap())
             .unwrap();
-        cb.set_not_after(&Asn1Time::from_unix(1_900_000_000).unwrap())
+        cb.set_not_after(&Asn1Time::from_unix(not_after).unwrap())
             .unwrap();
-        cb.append_extension(ExtendedKeyUsage::new().time_stamping().build().unwrap())
-            .unwrap();
-        if options.profile_extensions {
+
+        if let Some(purpose) = purpose {
+            let mut eku = ExtendedKeyUsage::new();
+            eku.other(purpose);
+            cb.append_extension(eku.build().unwrap()).unwrap();
+        }
+
+        if profile_extensions {
             use openssl::x509::extension::{
                 AuthorityKeyIdentifier, KeyUsage, SubjectKeyIdentifier,
             };
@@ -1261,8 +1531,28 @@ pub(crate) mod message_imprint_regression {
                 .unwrap();
             cb.append_extension(aki).unwrap();
         }
+
         cb.sign(&key, MessageDigest::sha256()).unwrap();
-        let cert = cb.build();
+        (key, cb.build())
+    }
+
+    fn build_token_with(
+        imprint_oid: &[u8],
+        imprint_md: MessageDigest,
+        data: &[u8],
+        options: TokenOptions<'_>,
+    ) -> Vec<u8> {
+        let purpose = if options.omit_eku {
+            None
+        } else {
+            Some(options.signer_eku.unwrap_or(super::TIMESTAMP_OID_STR))
+        };
+        let (key, cert) = test_certificate(
+            purpose,
+            options.profile_extensions,
+            1_500_000_000,
+            1_900_000_000,
+        );
 
         let imprint_hash = hash(imprint_md, data).unwrap();
         let message_imprint = tlv(
@@ -1859,7 +2149,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
-    fn signer_lookup_matches_issuer_serial_and_current_raw_ski_convention() {
+    fn signer_lookup_matches_issuer_serial_and_decoded_ski() {
         use rasn_cms::{CertificateChoices, SignerIdentifier};
         let token = build_token_with(
             OID_SHA256,
@@ -1885,21 +2175,20 @@ pub(crate) mod message_imprint_regression {
                 .expect("test token contains a certificate");
             let ski = cert.tbs_certificate.extensions.as_ref().unwrap().iter().find(|e| e.extn_id == rasn::types::Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER).unwrap().extn_value.clone();
             let mut signer = sd.signer_infos.to_vec().remove(0).clone();
-            // Current lookup compares the DER-wrapped extension value rather
-            // than the decoded key identifier required by CMS.
             signer.sid = SignerIdentifier::SubjectKeyIdentifier(if raw_extension {
                 ski
             } else {
                 rasn::der::decode::<rasn::types::OctetString>(&ski).unwrap()
             });
+            signer.version = 3.into();
             sd.signer_infos = vec![signer].into();
             let token = encode_token(&sd);
             assert_eq!(
                 super::tsa_signer_cert_der_from_token(&token).unwrap(),
                 if raw_extension {
-                    Some(expected.clone())
-                } else {
                     None
+                } else {
+                    Some(expected.clone())
                 }
             );
             let result = verify_time_stamp(
@@ -1909,7 +2198,368 @@ pub(crate) mod message_imprint_regression {
                 &mut StatusTracker::default(),
                 false,
             );
-            assert_eq!(result.is_ok(), raw_extension);
+            assert_eq!(result.is_ok(), !raw_extension);
+        }
+    }
+
+    #[test]
+    fn timestamp_trust_requires_timestamp_signing_eku() {
+        use crate::{crypto::cose::TrustAnchorType, validation_status::SIGNING_CREDENTIAL_INVALID};
+
+        for purpose in [
+            Some("1.3.6.1.4.1.62558.2.1"),
+            Some("1.3.6.1.5.5.7.3.1"),
+            Some("1.3.6.1.5.5.7.3.4"),
+            Some("1.3.6.1.5.5.7.3.9"),
+            Some(super::TIMESTAMP_OID_STR),
+            None,
+        ] {
+            let token = build_token_with(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                TokenOptions {
+                    profile_extensions: true,
+                    signer_eku: purpose,
+                    omit_eku: purpose.is_none(),
+                    ..Default::default()
+                },
+            );
+            let cert = super::tsa_signer_cert_der_from_token(&token)
+                .unwrap()
+                .unwrap();
+            let pem = openssl::x509::X509::from_der(&cert)
+                .unwrap()
+                .to_pem()
+                .unwrap();
+            let mut policy = CertificateTrustPolicy::default();
+            policy
+                .add_trust_anchors(&pem, "test:tsa", TrustAnchorType::TSA, None)
+                .unwrap();
+            let mut log = StatusTracker::default();
+            let result = verify_time_stamp(&token, DATA, &policy, &mut log, true);
+            assert!(log.has_status(TIMESTAMP_VALIDATED));
+
+            if purpose == Some(super::TIMESTAMP_OID_STR) {
+                assert!(result.is_ok(), "{result:?}: {log:?}");
+                assert!(log.has_status(TIMESTAMP_TRUSTED));
+                assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
+            } else {
+                assert!(matches!(result, Err(TimeStampError::Untrusted)));
+                assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+                assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
+                assert!(!log.has_status(TIMESTAMP_TRUSTED));
+            }
+
+            let mut assertion_log = StatusTracker::default();
+            assert_eq!(
+                crate::crypto::cose::trusted_cawg_timestamp_token(
+                    &token,
+                    DATA,
+                    &policy,
+                    &mut assertion_log,
+                )
+                .is_some(),
+                purpose == Some(super::TIMESTAMP_OID_STR),
+            );
+            assert!(!assertion_log.has_status(SIGNING_CREDENTIAL_INVALID));
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn rejected_tsa_does_not_invalidate_trusted_manifest() {
+        use std::io::Cursor;
+
+        use coset::{cbor::value::Value, Label, SignatureContext, TaggedCborSerializable};
+
+        use crate::{
+            crypto::cose::{
+                parse_cose_sign1, sign, trusted_cawg_timestamp, RawSignerCoseSigner,
+                TimeStampStorage, TrustAnchorType,
+            },
+            utils::{
+                test::{create_test_store, create_test_streams},
+                test_signer::test_signer,
+            },
+            validation_status::{
+                CLAIM_SIGNATURE_MISMATCH, SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID,
+            },
+            Context, Reader, SigningAlg, ValidationState,
+        };
+
+        let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+        let mut store = create_test_store().unwrap();
+        store
+            .save_to_stream(
+                format,
+                &mut input,
+                &mut output,
+                test_signer(SigningAlg::Es256).as_ref(),
+                &Context::new(),
+            )
+            .unwrap();
+
+        const ATTESTED: i64 = 1_577_836_800; // 2020-01-01T00:00:00Z
+        const START: i64 = 1_500_000_000;
+        const END: i64 = 4_102_444_800; // 2100-01-01T00:00:00Z
+
+        for (claim_case, not_before, not_after, valid_now, valid_then) in [
+            ("valid", START, END, true, true),
+            ("expired", START, ATTESTED + 1, false, true),
+            ("future", END - 1, END, false, false),
+            ("at_not_before", ATTESTED, END, true, true),
+            ("before_not_before", ATTESTED + 1, END, true, false),
+            ("after_not_after", START, ATTESTED - 1, false, false),
+            ("bad_claim_eku", START, END, false, false),
+            ("bad_claim_signature", START, END, false, false),
+            ("untrusted_claim", START, END, true, true),
+        ] {
+            let purpose = if claim_case == "bad_claim_eku" {
+                "1.3.6.1.5.5.7.3.1"
+            } else {
+                "1.3.6.1.4.1.62558.2.1"
+            };
+            let (key, cert) = test_certificate(Some(purpose), true, not_before, not_after);
+            let raw_signer = c2pa_raw_crypto::signer_from_private_key(
+                &key.private_key_to_pem_pkcs8().unwrap(),
+                SigningAlg::Es256,
+            )
+            .unwrap();
+
+            let chain = vec![cert.to_der().unwrap()];
+            let data = store.provenance_claim().unwrap().data().unwrap();
+            let signature = sign(
+                &RawSignerCoseSigner::new(raw_signer.as_ref(), &chain),
+                &data,
+                None,
+                TimeStampStorage::V2_sigTst2_CTT,
+                &Context::new(),
+            )
+            .unwrap();
+
+            for timestamp_case in [
+                "wrong_eku",
+                "missing_eku",
+                "trusted",
+                "bad_imprint",
+                "untrusted",
+                "bad_signature",
+                "absent",
+            ] {
+                let mut sign1 =
+                    parse_cose_sign1(&signature, &data, &mut StatusTracker::default()).unwrap();
+
+                if claim_case == "bad_claim_signature" {
+                    sign1.signature[0] ^= 1;
+                }
+
+                let mut signature_cbor = Vec::new();
+                coset::cbor::into_writer(
+                    &Value::Bytes(sign1.signature.clone()),
+                    &mut signature_cbor,
+                )
+                .unwrap();
+
+                let tbs = coset::sig_structure_data(
+                    SignatureContext::CounterSignature,
+                    sign1.protected.clone(),
+                    None,
+                    &[],
+                    &signature_cbor,
+                );
+
+                let mut token = build_token_with(
+                    OID_SHA256,
+                    MessageDigest::sha256(),
+                    if timestamp_case == "bad_imprint" {
+                        b"unrelated"
+                    } else {
+                        &tbs
+                    },
+                    TokenOptions {
+                        profile_extensions: true,
+                        signer_eku: (timestamp_case == "wrong_eku").then_some("1.3.6.1.5.5.7.3.1"),
+                        omit_eku: timestamp_case == "missing_eku",
+                        ..Default::default()
+                    },
+                );
+
+                let tsa = super::tsa_signer_cert_der_from_token(&token)
+                    .unwrap()
+                    .unwrap();
+
+                let tsa_pem = openssl::x509::X509::from_der(&tsa)
+                    .unwrap()
+                    .to_pem()
+                    .unwrap();
+
+                if timestamp_case == "bad_signature" {
+                    let mut signed_data = decode_token(&token);
+                    let mut signer = signed_data.signer_infos.to_vec().remove(0).clone();
+                    let mut signature = signer.signature.to_vec();
+                    *signature.last_mut().unwrap() ^= 1;
+                    signer.signature = signature.into();
+                    signed_data.signer_infos = vec![signer].into();
+                    token = encode_token(&signed_data);
+                }
+
+                if timestamp_case != "absent" {
+                    sign1.unprotected.rest.push((
+                        Label::Text("sigTst2".into()),
+                        Value::Map(vec![(
+                            Value::Text("tstTokens".into()),
+                            Value::Array(vec![Value::Map(vec![(
+                                Value::Text("val".into()),
+                                Value::Bytes(token),
+                            )])]),
+                        )]),
+                    ));
+                }
+
+                let mut policy = CertificateTrustPolicy::default();
+                let mut anchors = Vec::new();
+
+                if claim_case != "untrusted_claim" {
+                    anchors.push(serde_json::json!({
+                        "trust_anchors": String::from_utf8(cert.to_pem().unwrap()).unwrap(),
+                        "trust_kind": "manifest",
+                        "trust_uri": "test:claim"
+                    }));
+                }
+
+                if timestamp_case != "untrusted" {
+                    policy
+                        .add_trust_anchors(&tsa_pem, "test:tsa", TrustAnchorType::TSA, None)
+                        .unwrap();
+                    anchors.push(serde_json::json!({
+                        "trust_anchors": String::from_utf8(tsa_pem).unwrap(),
+                        "trust_kind": "tsa",
+                        "trust_uri": "test:tsa"
+                    }));
+                }
+
+                assert_eq!(
+                    trusted_cawg_timestamp(&sign1, &data, &policy, &mut StatusTracker::default())
+                        .is_some(),
+                    timestamp_case == "trusted",
+                    "{claim_case}/{timestamp_case}: CAWG association",
+                );
+
+                store
+                    .provenance_claim_mut()
+                    .unwrap()
+                    .set_signature_val(sign1.to_tagged_vec().unwrap());
+
+                let manifest = store.to_jumbf_internal(0).unwrap();
+                let context = Context::new()
+                    .with_settings_value("verify.ocsp_fetch", false)
+                    .unwrap()
+                    .with_settings_value("verify.verify_timestamp_trust", true)
+                    .unwrap()
+                    .with_settings_value("verify.verify_trust", true)
+                    .unwrap()
+                    .with_settings_value("trust.anchors", anchors)
+                    .unwrap();
+
+                for asynchronous in [false, true] {
+                    let reader = Reader::from_context(
+                        Context::new()
+                            .with_settings(context.settings().clone())
+                            .unwrap(),
+                    );
+
+                    let stream = Cursor::new(output.get_ref().clone());
+                    let reader = if asynchronous {
+                        reader
+                            .with_manifest_data_and_stream_async(&manifest, format, stream)
+                            .await
+                    } else {
+                        reader.with_manifest_data_and_stream(&manifest, format, stream)
+                    }
+                    .unwrap();
+
+                    let expected_valid = if timestamp_case == "trusted" {
+                        valid_then
+                    } else {
+                        valid_now
+                    };
+
+                    assert_eq!(
+                        reader.validation_state(),
+                        if expected_valid {
+                            if claim_case == "untrusted_claim" {
+                                ValidationState::Valid
+                            } else {
+                                ValidationState::Trusted
+                            }
+                        } else {
+                            ValidationState::Invalid
+                        },
+                        "{claim_case}/{timestamp_case}, async={asynchronous}: {reader}",
+                    );
+
+                    let results =
+                        serde_json::to_value(reader.validation_results().unwrap()).unwrap();
+
+                    let active = &results["activeManifest"];
+                    let has = |kind: &str, code: &str| {
+                        active[kind]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|s| s["code"] == code)
+                    };
+
+                    assert_eq!(
+                        has("success", TIMESTAMP_TRUSTED),
+                        timestamp_case == "trusted"
+                    );
+
+                    assert_eq!(
+                        has("failure", SIGNING_CREDENTIAL_INVALID),
+                        claim_case == "bad_claim_eku"
+                    );
+
+                    if claim_case == "untrusted_claim" {
+                        assert!(has(
+                            "failure",
+                            crate::validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                        ));
+                        assert!(!has(
+                            "success",
+                            crate::validation_status::SIGNING_CREDENTIAL_TRUSTED
+                        ));
+                    }
+
+                    if matches!(
+                        timestamp_case,
+                        "wrong_eku" | "missing_eku" | "untrusted" | "bad_signature"
+                    ) {
+                        assert!(has("informational", TIMESTAMP_UNTRUSTED));
+                    }
+
+                    if timestamp_case == "bad_imprint" {
+                        assert!(
+                            has(
+                                "informational",
+                                crate::validation_status::TIMESTAMP_MISMATCH
+                            ),
+                            "{claim_case}/{timestamp_case}: {reader}",
+                        );
+                    }
+
+                    if !expected_valid
+                        && claim_case != "bad_claim_eku"
+                        && claim_case != "bad_claim_signature"
+                    {
+                        assert!(has("failure", SIGNING_CREDENTIAL_EXPIRED));
+                    }
+
+                    if claim_case == "bad_claim_signature" {
+                        assert!(has("failure", CLAIM_SIGNATURE_MISMATCH));
+                    }
+                }
+            }
         }
     }
 
@@ -2503,6 +3153,22 @@ mod signed_attrs_tests {
             encoded,
             rasn::der::encode(si.signed_attrs.as_ref().unwrap()).unwrap()
         );
+
+        let expected = tsa_signer_cert_der_from_token(TOKEN).unwrap().unwrap();
+        assert_eq!(
+            tsa_signer_cert_der_from_token(&token).unwrap(),
+            Some(expected)
+        );
+        let mut log = StatusTracker::default();
+        verify_time_stamp(
+            &token,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
     }
 
     // Duplicate signatures must be detected from the decoded SignerInfos even

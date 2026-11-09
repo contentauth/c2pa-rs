@@ -25,8 +25,15 @@ use crate::{
 /// using X.509 credentials as specified in [§8.2, X.509 certificates and COSE
 /// signatures].
 ///
+/// For the interim emailProtection trust model, the generator must arrange for
+/// a valid timestamp in the containing manifest or a subsequent timestamp
+/// manifest/assertion. This raw credential holder does not request timestamps.
+/// CAWG permits omission of the assertion-local timestamp only when a valid
+/// enclosing or subsequent timestamp is expected; an untimestamped assertion
+/// cannot retain interim trust after 31 March 2027.
+///
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
-/// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
+/// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.3/#_x_509_certificates_and_cose_signatures
 pub struct X509CredentialHolder {
     signer: Box<dyn RawSigner + Sync + Send + 'static>,
     cert_chain: Vec<Vec<u8>>,
@@ -72,6 +79,7 @@ impl CredentialHolder for X509CredentialHolder {
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(), // RawSignerCoseSigner has no timestamp service or network requests.
         )
         .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))
     }

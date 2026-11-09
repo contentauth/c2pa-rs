@@ -129,19 +129,17 @@ impl X509SignatureVerifier<'_> {
             match parse_cose_sign1(signature, &signer_payload_cbor, status_tracker) {
                 Ok(cose_sign1) => {
                     let verify_result = if _sync {
-                        self.cose_verifier.verify_signature(
+                        self.cose_verifier.verify_cawg_signature(
                             signature,
                             &signer_payload_cbor,
-                            &[],
                             None,
                             status_tracker,
                         )
                     } else {
                         self.cose_verifier
-                            .verify_signature_async(
+                            .verify_cawg_signature_async(
                                 signature,
                                 &signer_payload_cbor,
-                                &[],
                                 None,
                                 status_tracker,
                             )
@@ -512,9 +510,9 @@ mod tests {
     /// which is only possible if the caller's settings were consulted (the
     /// default policy would find it in the test trust anchors instead).
     /// Signs `CA.jpg` with the test claim signer (PS256) plus a CAWG X.509
-    /// identity assertion signed by the Ed25519 test credentials. Returns the
+    /// identity assertion signed by documentSigning test credentials. Returns the
     /// signed asset, rewound, and the identity certificate chain (PEM).
-    fn sign_with_ed25519_cawg_identity() -> (Cursor<Vec<u8>>, Vec<u8>) {
+    fn sign_with_document_signing_cawg_identity() -> (Cursor<Vec<u8>>, Vec<u8>) {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
@@ -530,12 +528,16 @@ mod tests {
 
         let mut c2pa_signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
 
-        let (cawg_cert_chain, cawg_private_key) =
-            cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
-
-        let cawg_raw_signer =
-            c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519)
-                .unwrap();
+        let cawg_cert_chain = [
+            include_bytes!("../../../tests/fixtures/crypto/cose/disallowed_eku.pub").as_slice(),
+            include_bytes!("../../../tests/fixtures/crypto/cose/key_usage_root.pub").as_slice(),
+        ]
+        .concat();
+        let cawg_raw_signer = c2pa_raw_crypto::signer_from_private_key(
+            include_bytes!("../../../tests/fixtures/crypto/cose/disallowed_eku.priv"),
+            SigningAlg::Es256,
+        )
+        .unwrap();
 
         let x509_holder = X509CredentialHolder::from_raw_signer(
             cawg_raw_signer,
@@ -555,7 +557,7 @@ mod tests {
     #[c2pa_test_async]
     async fn reader_uses_context_cawg_trust_settings() {
         let format = "image/jpeg";
-        let (mut dest, cawg_cert_chain) = sign_with_ed25519_cawg_identity();
+        let (mut dest, cawg_cert_chain) = sign_with_document_signing_cawg_identity();
 
         // Read back with the identity certificate on a CAWG allowed list.
         let mut settings = crate::settings::Settings::default();
@@ -655,7 +657,7 @@ mod tests {
 
     #[c2pa_test_async]
     async fn default_x509_verifier_respects_cawg_anchor_type() {
-        let (mut asset, cert_chain) = sign_with_ed25519_cawg_identity();
+        let (mut asset, cert_chain) = sign_with_document_signing_cawg_identity();
         let chain = String::from_utf8(cert_chain).unwrap();
         let ca = &chain[chain.rfind("-----BEGIN CERTIFICATE-----").unwrap()..];
         let reader = read_manifest("image/jpeg", &mut asset).await;
@@ -689,13 +691,13 @@ mod tests {
                 .validate(manifest, &mut async_log, &verifier)
                 .await
                 .unwrap();
-            assert_eq!(info.cert_info.alg, Some(SigningAlg::Ed25519));
+            assert_eq!(info.cert_info.alg, Some(SigningAlg::Es256));
 
             let mut sync_log = StatusTracker::default();
             let info = verifier
                 .check_signature(&identity.signer_payload, &identity.signature, &mut sync_log)
                 .unwrap();
-            assert_eq!(info.cert_info.alg, Some(SigningAlg::Ed25519));
+            assert_eq!(info.cert_info.alg, Some(SigningAlg::Es256));
 
             for log in [&async_log, &sync_log] {
                 let trusted = kind == TrustAnchorType::CAWG;
@@ -732,7 +734,7 @@ mod tests {
     /// the trust must be credited to the CAWG anchor supplied here.
     #[c2pa_test_async]
     async fn cawg_trust_anchor_trusts_x509_identity() {
-        let (mut asset, cawg_cert_chain) = sign_with_ed25519_cawg_identity();
+        let (mut asset, cawg_cert_chain) = sign_with_document_signing_cawg_identity();
         let codes = cawg_identity_codes(
             &mut asset,
             &cawg_cert_chain,
@@ -757,7 +759,7 @@ mod tests {
     /// identity signer trusted: the two lists are separate.
     #[c2pa_test_async]
     async fn manifest_trust_anchor_does_not_trust_x509_identity() {
-        let (mut asset, cawg_cert_chain) = sign_with_ed25519_cawg_identity();
+        let (mut asset, cawg_cert_chain) = sign_with_document_signing_cawg_identity();
         let codes = cawg_identity_codes(
             &mut asset,
             &cawg_cert_chain,

@@ -434,7 +434,7 @@ impl Store {
 
         // sign the claim
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
 
         // update the provenance claim with the signature so it gets saved in the manifest
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -529,9 +529,9 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size(), settings)
+            self.sign_claim(pc, signer, signer.reserve_size(), context)
         } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size(), settings)
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context)
                 .await
         }?;
 

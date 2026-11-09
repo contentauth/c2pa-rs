@@ -256,8 +256,21 @@ mod tests {
             .unwrap();
         assert_eq!(
             manifest_store.validation_state(),
-            crate::ValidationState::Trusted
+            crate::ValidationState::Valid
         );
+        // The emailProtection fixture has no accepted S/MIME certificate policy.
+        // Its signature is valid, but adding its CA must not make it trusted.
+        let statuses = manifest_store
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap();
+        assert!(statuses.failure().iter().any(|status| {
+            status.code() == crate::validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED
+        }));
+        assert!(!statuses.success().iter().any(|status| {
+            status.code() == crate::validation_status::CAWG_X509_CREDENTIAL_TRUSTED
+        }));
 
         let manifest = manifest_store.active_manifest().unwrap();
         assert!(manifest
@@ -304,7 +317,7 @@ mod tests {
             b"claim",
             signer.reserve_size(),
             crate::crypto::cose::TimeStampStorage::V2_sigTst2_CTT,
-            &crate::Settings::default(),
+            &crate::Context::new(),
         )
         .unwrap();
         let cose = coset::CoseSign1::from_tagged_slice(&signed).unwrap();

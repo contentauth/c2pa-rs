@@ -85,16 +85,14 @@ pub trait Signer {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    /// `context` supplies the caller's HTTP resolver, network policy and retry/timeout settings.
+    fn send_timestamp_request(&self, message: &[u8], context: &Context) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                // TODO: This is not a recommended practice to create the Context object this way.
-                // Context should always be created using the settings set from the underlying application.
-                let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request(
-                        &url, headers, &body, message, &context,
+                        &url, headers, &body, message, context,
                     )
                     .map_err(|e| e.into()),
                 );
@@ -206,16 +204,18 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    /// `context` supplies the caller's HTTP resolver, network policy and timeout settings.
+    async fn send_timestamp_request(
+        &self,
+        message: &[u8],
+        context: &Context,
+    ) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                // TODO: This is not a recommended practice to create the Context object this way.
-                // Context should always be created using the settings set from the underlying application.
-                let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request_async(
-                        &url, headers, &body, message, &context,
+                        &url, headers, &body, message, context,
                     )
                     .await
                     .map_err(|e| e.into()),
@@ -303,8 +303,8 @@ impl<T: ?Sized + Signer> Signer for Box<T> {
         (**self).timestamp_request_body(message)
     }
 
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        (**self).send_timestamp_request(message)
+    fn send_timestamp_request(&self, message: &[u8], context: &Context) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message, context)
     }
 }
 
@@ -341,8 +341,12 @@ impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
         (**self).timestamp_request_body(message)
     }
 
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        (**self).send_timestamp_request(message).await
+    async fn send_timestamp_request(
+        &self,
+        message: &[u8],
+        context: &Context,
+    ) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message, context).await
     }
 
     async fn ocsp_val(&self) -> Option<Vec<u8>> {
@@ -417,8 +421,8 @@ impl Signer for OcspStapledSigner {
         self.signer.timestamp_request_body(message)
     }
 
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        self.signer.send_timestamp_request(message)
+    fn send_timestamp_request(&self, message: &[u8], context: &Context) -> Option<Result<Vec<u8>>> {
+        self.signer.send_timestamp_request(message, context)
     }
 }
 
@@ -560,7 +564,11 @@ mod tests {
             Ok([b"body:".as_slice(), message].concat())
         }
 
-        fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        fn send_timestamp_request(
+            &self,
+            message: &[u8],
+            _context: &Context,
+        ) -> Option<Result<Vec<u8>>> {
             Some(Signer::timestamp_request_body(self, message))
         }
     }
@@ -661,7 +669,10 @@ mod tests {
             b"body:message"
         );
         assert_eq!(
-            signer.send_timestamp_request(b"message").unwrap().unwrap(),
+            signer
+                .send_timestamp_request(b"message", &Context::new())
+                .unwrap()
+                .unwrap(),
             b"body:message"
         );
         assert!(matches!(
@@ -669,7 +680,7 @@ mod tests {
             Err(crate::Error::BadParam(message)) if message == "empty timestamp message"
         ));
         assert!(matches!(
-            signer.send_timestamp_request(b""),
+            signer.send_timestamp_request(b"", &Context::new()),
             Some(Err(crate::Error::BadParam(message))) if message == "empty timestamp message"
         ));
     }
