@@ -149,12 +149,11 @@ impl C2PAMerkleTree {
         let mut proof: Vec<Vec<u8>> = Vec::new();
         let mut index = leaf_indx;
 
-        for i in 0..self.layers.len() {
+        for layer in &self.layers {
             if proofs_left == 0 {
                 break;
             }
 
-            let layer = &self.layers[i];
             let is_right = index % 2 == 1;
 
             if is_right {
