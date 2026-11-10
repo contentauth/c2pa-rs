@@ -48,11 +48,26 @@ pub struct SignerPayload {
     pub sig_type: String,
 
     /// Roles associated with the named actor
+    ///
+    /// When present, `role` is a non-empty array of non-empty text strings
+    /// (§5.2 CDDL); an empty array is rejected when decoding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[serde(rename = "role")]
+    #[serde(rename = "role", deserialize_with = "deserialize_roles")]
     pub roles: Vec<String>,
     // TO DO: Add expected_* fields.
     // (https://github.com/contentauth/c2pa-rs/issues/816)
+}
+
+/// `? "role": [1* (tstr .size (1..max-tstr-length))]`
+fn deserialize_roles<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let roles = Vec::<String>::deserialize(d)?;
+    if roles.is_empty() {
+        return Err(serde::de::Error::custom("role must not be an empty array"));
+    }
+    if roles.iter().any(String::is_empty) {
+        return Err(serde::de::Error::custom("role entries must not be empty"));
+    }
+    Ok(roles)
 }
 
 impl SignerPayload {
@@ -265,6 +280,29 @@ mod tests {
         status_tracker::{ErrorBehavior, StatusTracker},
         HashedUri,
     };
+
+    /// §5.2 CDDL: `role`, when present, has at least one non-empty entry.
+    #[test]
+    fn role_must_be_a_non_empty_array_of_non_empty_strings() {
+        let payload = |role: serde_json::Value| {
+            let mut v = serde_json::json!({
+                "referenced_assertions": [],
+                "sig_type": "cawg.x509.cose",
+            });
+            if !role.is_null() {
+                v["role"] = role;
+            }
+            let cbor = c2pa_cbor::to_vec(&v).unwrap();
+            c2pa_cbor::from_slice::<SignerPayload>(&cbor)
+        };
+        assert!(payload(serde_json::Value::Null).unwrap().roles.is_empty());
+        assert_eq!(
+            payload(serde_json::json!(["cawg.creator"])).unwrap().roles,
+            vec!["cawg.creator"]
+        );
+        assert!(payload(serde_json::json!([])).is_err());
+        assert!(payload(serde_json::json!([""])).is_err());
+    }
 
     #[test]
     fn mismatch_is_logged_and_propagated() {
