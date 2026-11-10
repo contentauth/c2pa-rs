@@ -612,11 +612,18 @@ impl Context {
     /// Custom handlers registered on this Context are searched
     /// before the built-in global registry; last-registered wins when two handlers claim the
     /// same format.
+    #[cfg(feature = "asset_io")]
     pub fn io(&self) -> &HandlerRegistry {
         &self.io
     }
 
+    #[cfg(not(feature = "asset_io"))]
+    pub(crate) fn io(&self) -> &HandlerRegistry {
+        &self.io
+    }
+
     /// Returns this Context's registry for registering asset-io container handlers.
+    #[cfg(feature = "asset_io")]
     pub fn io_mut(&mut self) -> &mut HandlerRegistry {
         &mut self.io
     }

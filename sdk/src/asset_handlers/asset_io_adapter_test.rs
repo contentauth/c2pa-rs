@@ -691,15 +691,15 @@ fn new_formats_sign_and_validate() {
     for (format, bytes) in [
         (
             "mp3",
-            include_bytes!("../tests/fixtures/sample1.mp3").as_slice(),
+            include_bytes!("../../tests/fixtures/sample1.mp3").as_slice(),
         ),
         (
             "flac",
-            include_bytes!("../tests/fixtures/sample1.flac").as_slice(),
+            include_bytes!("../../tests/fixtures/sample1.flac").as_slice(),
         ),
         (
             "gif",
-            include_bytes!("../tests/fixtures/sample1.gif").as_slice(),
+            include_bytes!("../../tests/fixtures/sample1.gif").as_slice(),
         ),
     ] {
         let adapter = AssetIoAdapter::new(format);

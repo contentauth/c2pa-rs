@@ -34,6 +34,11 @@ which does not distinguish metadata formats. Reads use `read_content()` to decod
 transfer encodings such as SVG base64. Same-size manifest replacement uses
 `patch_exact()` so signing preserves the layout used for hashing.
 
+The `asset_io_*_test` modules live alongside the handlers because they exercise
+crate-private handler and signing internals. They are unit tests enabled only
+with `asset_io`; public registry integration tests remain in
+[`sdk/tests/handler_registry.rs`](../../tests/handler_registry.rs).
+
 ### Lookup functions
 
 | Function | Returns | Purpose |

@@ -4,6 +4,8 @@
 // or the MIT license (http://opensource.org/licenses/MIT),
 // at your option.
 
+#![cfg(feature = "asset_io")]
+
 use c2pa::{Context, HandlerRegistry};
 
 #[test]
@@ -18,7 +20,6 @@ fn context_registry_is_public() {
     assert_eq!(registry.mime_for("png"), Some("image/png"));
 }
 
-#[cfg(feature = "asset_io")]
 #[test]
 fn public_registry_accepts_asset_io_handlers() {
     use std::sync::Arc;

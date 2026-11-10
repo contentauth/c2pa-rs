@@ -107,7 +107,7 @@ crate-type = ["lib"]
 
 [dependencies]
 # EXPERIMENT: asset-io integration.
-asset-io = { version = "0.4.0", optional = true, default-features = false, features = ["jpeg", "png", "svg", "riff", "pdf", "tiff", "id3", "gif"] }
+asset-io = { version = "0.4.0", optional = true, default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf", "tiff", "id3", "gif"] }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
@@ -271,8 +271,6 @@ web-sys = { version = "0.3.99", features = [
 ] }
 
 [dev-dependencies]
-# EXPERIMENT: asset-io integration.
-asset-io = { version = "0.4.0", default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf", "tiff", "id3", "gif"] }
 anyhow = "1.0.103"
 env_logger = "0.11.10"
 flate2 = "1.1.10"
@@ -298,8 +296,6 @@ rustls-pki-types = "1.12"
 httpmock = "0.8.3"
 tokio = { version = "1.52.3", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "6.0.0" }
-dhat = "0.3.3"
-memory-stats = "1.2.0"
 
 # WASM/WASI doesn't support default criterion features.
 # https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md

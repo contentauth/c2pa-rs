@@ -696,14 +696,16 @@ pub trait ComposedManifestRef {
 /// Legacy SDK handler traits remain internal.
 ///
 /// ```
+/// # #[cfg(feature = "asset_io")]
+/// # {
 /// # use c2pa::{Context, HandlerRegistry};
 /// let mut context = Context::new();
 /// let registry: &HandlerRegistry = context.io();
 /// assert_eq!(registry.mime_for("jpg"), Some("image/jpeg"));
-/// # #[cfg(feature = "asset_io")]
 /// context
 ///     .io_mut()
 ///     .extend(&asset_io::HandlerRegistry::builtin());
+/// # }
 /// ```
 ///
 /// Legacy handlers cannot be implemented or registered through the public API:
