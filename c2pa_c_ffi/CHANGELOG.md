@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.24](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.23...c2pa-c-ffi-v0.90.24)
+_10 November 2026_
+
+### Fixed
+
+* Resolve new Rust 1.98.0 Clippy lint (chunks_exact_to_as_chunks) (backport #2528) ([#2531](https://github.com/contentauth/c2pa-rs/pull/2531))
+* Revert release ([#2372](https://github.com/contentauth/c2pa-rs/pull/2372))
+* Emscripten build which lost its header (backport #2395) ([#2396](https://github.com/contentauth/c2pa-rs/pull/2396))
+
 ## [0.90.23](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.22...c2pa-c-ffi-v0.90.23)
 _10 November 2026_
 

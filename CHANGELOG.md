@@ -9,6 +9,76 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.24](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.23...c2pa-v0.90.24)
+_10 November 2026_
+
+### Added
+
+* Add ZIP support (+ EPUB, Office Open XML, Open Document, and OpenXPS) and Collection Data Hash assertion (backport #499) ([#2596](https://github.com/contentauth/c2pa-rs/pull/2596))
+* Add `Error::AssertionEncoding` error source to error message (backport #2544) ([#2549](https://github.com/contentauth/c2pa-rs/pull/2549))
+* *(sdk)* Read support for c2md (JUMBF data) manifests (backport #2380) ([#2461](https://github.com/contentauth/c2pa-rs/pull/2461))
+* New builder method to combine filtering of actions and ingredients ([#2379](https://github.com/contentauth/c2pa-rs/pull/2379)) ([#2401](https://github.com/contentauth/c2pa-rs/pull/2401))
+* *(sdk)* Gate Builder action/ingredient filtering behind experimental feature flag (backport #2340) ([#2342](https://github.com/contentauth/c2pa-rs/pull/2342))
+* *(sdk)* Add Builder action/ingredient removal API (backport #2281) ([#2337](https://github.com/contentauth/c2pa-rs/pull/2337))
+
+### Documented
+
+* Doc how to generate bench fixtures (backport #2366) ([#2370](https://github.com/contentauth/c2pa-rs/pull/2370))
+
+### Fixed
+
+* Allow large errors across v0.90 Clippy targets
+* Allow large SDK errors in remaining v0.90 targets
+* Allow large SDK errors in v0.90 tooling
+* Backport eMudhra TLS distrust updates to v0.90 ([#3043](https://github.com/contentauth/c2pa-rs/pull/3043))
+* Make v0.90 buildable with current tooling ([#3047](https://github.com/contentauth/c2pa-rs/pull/3047))
+* Normalize path URIs on collection hash (backport #2605) ([#2625](https://github.com/contentauth/c2pa-rs/pull/2625))
+* Identity assertion validation uses the caller's cawg_trust settings (stable backport, #2599) ([#2604](https://github.com/contentauth/c2pa-rs/pull/2604))
+* Handling ingredient manifest label collisions (spec v2.4, 18.16.12) (backport #2585) ([#2595](https://github.com/contentauth/c2pa-rs/pull/2595))
+* Harden against invalid  labels as CAWG identity hard bindings (backport #2538) ([#2581](https://github.com/contentauth/c2pa-rs/pull/2581))
+* Merge vulnerability fixes ([#2579](https://github.com/contentauth/c2pa-rs/pull/2579))
+* Do not log::error! validation error when hashed URI is dangling, instead log::debug! (backport #2555) ([#2565](https://github.com/contentauth/c2pa-rs/pull/2565))
+* Remove `validationResults` requires `activeManifest` when serializing v3 ingredients (backport #2429) ([#2537](https://github.com/contentauth/c2pa-rs/pull/2537))
+* Remove dbg! call used for testing (backport #2551) ([#2552](https://github.com/contentauth/c2pa-rs/pull/2552))
+* Filter functions did not consider `ingredient` parameter (backport #2541) ([#2546](https://github.com/contentauth/c2pa-rs/pull/2546))
+* Reject BMFF Merkle map location that overflows u32 chunk index (CAI-12884) (backport #2445) ([#2500](https://github.com/contentauth/c2pa-rs/pull/2500))
+* Hardening against potential deep recursion in update manifests with parent cycles (backport #2493) ([#2501](https://github.com/contentauth/c2pa-rs/pull/2501))
+* Diamond inputTo manifest exponential reverifications depending on ingredient paths reachability (backport #2492) ([#2498](https://github.com/contentauth/c2pa-rs/pull/2498))
+* *(sdk)* Parse PEM cert chain to DER for RemoteSigner (backport #2414) ([#2481](https://github.com/contentauth/c2pa-rs/pull/2481))
+* Preserve identity assertions in split-signing paths (backport #2421) ([#2465](https://github.com/contentauth/c2pa-rs/pull/2465))
+* Avoid QoS runtime detection warning (backport #2467) ([#2482](https://github.com/contentauth/c2pa-rs/pull/2482))
+* *(sdk)* Validate inputTo ingredients against manifest tampering (#2… ([#2476](https://github.com/contentauth/c2pa-rs/pull/2476))
+* *(sdk)* Prevent panic on out-of-range timestamp in GeneralizedTime conversion (backport #2469) ([#2474](https://github.com/contentauth/c2pa-rs/pull/2474))
+* Relax field restriction requirements on ingredients (backport #2450) ([#2458](https://github.com/contentauth/c2pa-rs/pull/2458))
+* `created` and `kind` flags should roundtrip in Builder archives (backport #2460) ([#2464](https://github.com/contentauth/c2pa-rs/pull/2464))
+* Ensure inception action is only auto-added once (backport #2438) ([#2444](https://github.com/contentauth/c2pa-rs/pull/2444))
+* Chain resources in `Builder::add_ingredient_from_stream` (backport #2432) ([#2442](https://github.com/contentauth/c2pa-rs/pull/2442))
+* Gate lopdf's rayon feature by real thread availability (backport #2428) ([#2439](https://github.com/contentauth/c2pa-rs/pull/2439))
+* *(sdk)* Reject did:web documents whose id doesn't match the requested DID (backport #2411) ([#2427](https://github.com/contentauth/c2pa-rs/pull/2427))
+* Upgrade lopdf to 0.44.0 and drop ttf-parser advisory exemption (backport #2417) ([#2418](https://github.com/contentauth/c2pa-rs/pull/2418))
+* Make sure the closure variables are evaluated at the right time in filter_ingredients (unstable_builder_filter) (backport #2413) ([#2415](https://github.com/contentauth/c2pa-rs/pull/2415))
+* Integer underflow panic in read_desc_box via JUMD toggle-driven field size mismatch (backport #2334) ([#2385](https://github.com/contentauth/c2pa-rs/pull/2385))
+* No-op change to re-trigger release PR
+* Make URI checks for (data)boxes when going through redactions mo… ([#2404](https://github.com/contentauth/c2pa-rs/pull/2404))
+* Remove archive assertions when constructing builder from archive (backport #2374) ([#2408](https://github.com/contentauth/c2pa-rs/pull/2408))
+* Thumbnails silently dropped when format string has uppercase mimetype (backport #2365) ([#2407](https://github.com/contentauth/c2pa-rs/pull/2407))
+* Unify partially-applied feature name change
+* Replace mp4 crate with hardened native BMFF sample reader (CAI-12277) (backport #2357) ([#2402](https://github.com/contentauth/c2pa-rs/pull/2402))
+* Reject timed-media BMFF Merkle maps that verify against no track (backport #2369) ([#2400](https://github.com/contentauth/c2pa-rs/pull/2400))
+* Validate c2pa.translated action for source and target languages params (backport #2378) ([#2393](https://github.com/contentauth/c2pa-rs/pull/2393))
+* Harden against integer underflow attacks in  ID3 v2.3 frame decoder (backport #2284) ([#2389](https://github.com/contentauth/c2pa-rs/pull/2389))
+* Harden against integer overflow attacks in exclusion subsets checks in BMFF hash processing (backport #2359) ([#2360](https://github.com/contentauth/c2pa-rs/pull/2360))
+* Reject loopback and DNS-rebinding hosts in did:web resolution (CAI-10364) (backport #2349) ([#2353](https://github.com/contentauth/c2pa-rs/pull/2353))
+* Harden against memory amplification attacks in copy of strip, tile and big table of TIFF file (backport #2282) ([#2348](https://github.com/contentauth/c2pa-rs/pull/2348))
+* Terminate crJSON b64' byte-string values with closing quote (backport #2333) ([#2339](https://github.com/contentauth/c2pa-rs/pull/2339))
+* Repair broken intra-doc link in Settings doc comment (backport #2331) ([#2332](https://github.com/contentauth/c2pa-rs/pull/2332))
+* Harden against arbitrary Local file read and exfiltration via manifest relative path traversal attacks (backport #2271) ([#2326](https://github.com/contentauth/c2pa-rs/pull/2326))
+* Support additional MP3 mime_types for compatibility (backport #2320) ([#2325](https://github.com/contentauth/c2pa-rs/pull/2325))
+
+### Updated dependencies
+
+* Bump sha1 from 0.10.7 to 0.11.0 (backport #2456) ([#2473](https://github.com/contentauth/c2pa-rs/pull/2473))
+
 ## [0.90.23](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.22...c2pa-v0.90.23)
 _10 November 2026_
 
