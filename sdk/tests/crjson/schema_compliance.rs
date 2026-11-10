@@ -574,8 +574,11 @@ fn test_signature_structure() -> Result<()> {
 #[test]
 fn test_validation_results_structure() -> Result<()> {
     let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let native =
-        serde_json::to_value(reader.validation_results().expect("native validation results"))?;
+    let native = serde_json::to_value(
+        reader
+            .validation_results()
+            .expect("native validation results"),
+    )?;
     let expected_version = native["specVersion"]
         .as_str()
         .expect("native validator specVersion");
@@ -658,8 +661,11 @@ fn test_validation_results_no_extra_fields() -> Result<()> {
 #[test]
 fn test_validation_results_spec_version_wrong_value() -> Result<()> {
     let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let native =
-        serde_json::to_value(reader.validation_results().expect("native validation results"))?;
+    let native = serde_json::to_value(
+        reader
+            .validation_results()
+            .expect("native validation results"),
+    )?;
     let expected_version = native["specVersion"]
         .as_str()
         .expect("native validator specVersion");
@@ -691,8 +697,11 @@ fn test_crjson_version_matches_native_validator_with_v1_settings() -> Result<()>
         settings.verify.strict_v1_validation = strict_v1;
         let reader = Reader::from_context(Context::new().with_settings(settings)?)
             .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-        let native =
-            serde_json::to_value(reader.validation_results().expect("native validation results"))?;
+        let native = serde_json::to_value(
+            reader
+                .validation_results()
+                .expect("native validation results"),
+        )?;
         let expected_version = native["specVersion"]
             .as_str()
             .expect("native validator specVersion");
@@ -708,7 +717,9 @@ fn test_crjson_version_matches_native_validator_with_v1_settings() -> Result<()>
             let manifests = report["manifests"].as_array().expect("crJSON manifests");
             assert!(!manifests.is_empty(), "{api}: nonempty fixture report");
             assert!(
-                manifests.iter().any(|manifest| manifest["claim"].is_object()),
+                manifests
+                    .iter()
+                    .any(|manifest| manifest["claim"].is_object()),
                 "{api}: fixture must exercise a v1 claim"
             );
             for manifest in manifests {
