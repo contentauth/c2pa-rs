@@ -710,7 +710,7 @@ fn new_formats_sign_and_validate() {
         );
         let mut builder = Builder::from_context(test_context())
             .with_definition(
-                &serde_json::json!({
+                serde_json::json!({
                     "claim_generator_info": [{"name": "asset_io_test"}],
                     "title": format,
                     "assertions": [{
