@@ -371,11 +371,53 @@ mod tests {
             );
         }
 
-        // A valid identity assertion is still reported as well-formed.
+        // A valid identity assertion is still reported as validated. Under the
+        // CAWG interim certificate rules its test credential isn't trusted, so
+        // that is `well-formed`, alongside `cawg.x509.credential.untrusted`.
         const VALID: &[u8] = include_bytes!("../../tests/fixtures/C_with_CAWG_data.jpg");
         let (success, failures) = identity_codes(VALID).await;
-        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(failures, vec!["cawg.x509.credential.untrusted"]);
         assert!(success.iter().any(|c| c == "cawg.identity.well-formed"));
+        assert!(!success.iter().any(|c| c == "cawg.identity.trusted"));
+    }
+
+    /// CAWG Identity 1.3 §7.2: a validated ICA credential from a trusted issuer
+    /// is `cawg.identity.trusted`; from an issuer not on the allow-list it is
+    /// `cawg.identity.well-formed`.
+    #[c2pa_test_async]
+    async fn ica_reports_trusted_or_well_formed() {
+        const ICA_SUCCESS: &[u8] =
+            include_bytes!("tests/fixtures/claim_aggregation/ica_validation/success.jpg");
+
+        async fn success_codes(context: crate::Context) -> Vec<String> {
+            let reader = Reader::from_context(context)
+                .with_stream_async("image/jpeg", Cursor::new(ICA_SUCCESS))
+                .await
+                .unwrap();
+            let results = reader.validation_results().unwrap();
+            let statuses = results.active_manifest().unwrap();
+            statuses
+                .success()
+                .iter()
+                .map(|s| s.code().to_string())
+                .collect()
+        }
+
+        // This context trusts the fixture's issuer.
+        let success = success_codes(crate::identity::tests::ica_test_context()).await;
+        assert!(
+            success.iter().any(|c| c == "cawg.identity.trusted"),
+            "{success:?}"
+        );
+        assert!(!success.iter().any(|c| c == "cawg.identity.well-formed"));
+
+        let success = success_codes(crate::Context::new()).await;
+        assert!(
+            success.iter().any(|c| c == "cawg.identity.well-formed"),
+            "{success:?}"
+        );
+        assert!(!success.iter().any(|c| c == "cawg.identity.trusted"));
+        assert!(!success.iter().any(|c| c == "cawg.ica.credential_valid"));
     }
 
     /// An X.509 identity signature from an expired certificate is rejected
