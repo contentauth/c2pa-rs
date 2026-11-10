@@ -204,6 +204,7 @@ release-emscripten:
 	rustup target add --toolchain nightly wasm32-unknown-emscripten
 	EMCC_CFLAGS="-fwasm-exceptions -pthread" \
 	RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals" \
+	C2PA_HEADER_DIR="$(abspath $(TARGET_DIR)/wasm32-unknown-emscripten/release)" \
 		cargo +nightly build -Z build-std=std,panic_abort --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN)
 	@$(call make_zip_emscripten,$(TARGET_DIR)/wasm32-unknown-emscripten/release,wasm32-unknown-emscripten)
 
