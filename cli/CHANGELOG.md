@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.23](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.22...c2patool-v0.27.23)
+_10 November 2026_
+
+### Fixed
+
+* Allow large errors across v0.90 Clippy targets
+* Allow large SDK errors in remaining v0.90 targets
+
 ## [0.27.22](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.21...c2patool-v0.27.22)
 _10 September 2026_
 
