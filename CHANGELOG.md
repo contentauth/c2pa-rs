@@ -9,6 +9,17 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.23](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.22...c2pa-v0.90.23)
+_10 November 2026_
+
+### Fixed
+
+* Allow large errors across v0.90 Clippy targets
+* Allow large SDK errors in remaining v0.90 targets
+* Allow large SDK errors in v0.90 tooling
+* Backport eMudhra TLS distrust updates to v0.90 ([#3043](https://github.com/contentauth/c2pa-rs/pull/3043))
+* Make v0.90 buildable with current tooling ([#3047](https://github.com/contentauth/c2pa-rs/pull/3047))
+
 ## [0.90.22](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.21...c2pa-v0.90.22)
 _10 September 2026_
 
