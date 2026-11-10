@@ -10,21 +10,39 @@ We use the pre-packaged [release-plz GitHub Actions wrapper](https://github.com/
 
 For additional information, please read the [release-plz documentation for GitHub Action](https://release-plz.dev/docs/github/quickstart).
 
-The combined release automation in `release.yml` is triggered for each commit to
-the `main` branch.
+On the `v0.87` maintenance branch, both release workflows are manual-only and
+reject dispatches on other refs. Pushes and pull request events do not create
+release PRs or publish releases. Tier 1A checks still run on pull requests and pushes.
 
-This task uses the organization-owned `RELEASE_PLZ_ORG_TOKEN` for GitHub access and
-`CRATES_IO_ORG_TOKEN` for crates.io publishing, as on the v0.90 maintenance line.
-The `v0.87` branch runs Tier 1A checks on pull requests and pushes. Its separate
-[`release-pr.yml`](../.github/workflows/release-pr.yml) workflow opens or updates a
-release PR on each push to `v0.87`, or when manually dispatched on that branch.
-It runs only `release-plz release-pr` and has no crates.io publishing token.
+The [`release-pr.yml`](../.github/workflows/release-pr.yml) workflow opens or updates
+a release PR by running only `release-plz release-pr`. It uses the organization-owned
+`RELEASE_PLZ_ORG_TOKEN` for GitHub access and has no crates.io publishing token.
 Release PR branches use the `v0.87-release-plz-` prefix so other release lines'
 stale `release-plz-*` branch cleanup does not delete them.
 
-Publishing from `v0.87` remains manual: merging its release PR does not publish
-crates, create release tags, or run the binary-publishing jobs. The existing
-`release.yml` publishing trigger remains restricted to `main`.
+The [`release.yml`](../.github/workflows/release.yml) workflow runs only
+`release-plz release`, using `RELEASE_PLZ_ORG_TOKEN` and `CRATES_IO_ORG_TOKEN`.
+It publishes eligible crates and creates release tags and GitHub releases.
+If it releases `c2patool`, its dependent jobs publish the binaries and SBOMs.
+It does not create release PRs or delete remote branches. Both workflows share
+a concurrency group so preparation and publishing cannot run simultaneously.
+
+To release from `v0.87`, manually dispatch these workflows in order:
+
+1. Run `gh workflow run release-pr.yml --repo contentauth/c2pa-rs --ref v0.87`.
+2. Review and merge the generated release PR.
+3. Run `gh workflow run release.yml --repo contentauth/c2pa-rs --ref v0.87`.
+4. Wait for publication and binary jobs to finish before preparing another release.
+
+You can also dispatch through GitHub Actions by selecting the workflow and
+choosing `v0.87` in the **Run workflow** branch selector.
+
+> [!IMPORTANT]
+> Do not rerun release-PR preparation between merging a release PR and publishing
+> that release. Release-plz compares against the latest registry release, which
+> can belong to a newer release line, and can incorrectly bump an unpublished
+> maintenance version again. Manual-only triggers prevent merges from
+> automatically starting this loop; they do not fix the upstream comparison.
 
 ### Create a release pull request
 
@@ -50,15 +68,19 @@ For each project that is to be updated, release-plz will generate the following 
 > It _is_ permissible to manually edit the proposed changelog in the PR, but be aware those changes will be overwritten if another update is triggered. release-plz uses force-push to update any existing release PR.
 
 > [!IMPORTANT]
-> If the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), this job will NOT run. See the next section, "Publish new crates."
+> Publish the merged maintenance release before preparing the next release PR.
+> An unpublished `v0.87` version is not reliably detected when crates.io contains
+> a newer release line. See the manual sequence above.
 
 ### Publish new crates
 
-For each crate in the repo, if the version number of the crate in `main` is _different_ from the version number on [crates.io](https://crates.io), release-plz will attempt to publish the crate to [crates.io](https://crates.io). This typically occurs after a maintainer has merged a release PR as generated in the previous step.
+After a maintainer merges a release PR into `v0.87`, manually dispatch
+`release.yml` on that branch to publish eligible unpublished crate versions
+to [crates.io](https://crates.io).
 
-Specifically, it performs the following steps for each commit to `main`:
+Specifically, the manually dispatched workflow performs these steps:
 
-* **Verifies that the most recent commit to `main` is from a release-plz PR.** If not, skips the rest of this process.
+* **Verifies that the most recent commit to `v0.87` is from a release-plz PR.** If not, skips the rest of this process (`release_always = false`).
 * **Compares the crate version in `Cargo.toml` to what is published on [crates.io](https://crates.io).** If the versions match, skips the rest of this process.
 * **Runs [`cargo publish`](https://doc.rust-lang.org/cargo/commands/cargo-publish.html)** for the crate and waits for notification that the crate has been successfully uploaded.
 * **Creates a [GitHub release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)** for the uploaded crate. This creates an annotated git tag of the form `(crate-name)-v(version-number)`, which – among other things – is used to drive the previous-version comparison for future release PRs. This also creates a ZIP archive of the source at this crate version which is stored on GitHub with the release.

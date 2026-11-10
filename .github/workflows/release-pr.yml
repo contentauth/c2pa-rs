@@ -5,19 +5,16 @@ permissions:
   contents: write
 
 on:
-  push:
-    branches:
-      - v0.87
   workflow_dispatch:
 
 concurrency:
-  group: release-pr-${{ github.ref }}
+  group: release-plz-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release-pr:
     name: Prepare v0.87 release PR
-    if: github.ref == 'refs/heads/v0.87'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v0.87'
     runs-on: ubuntu-latest
 
     steps:
