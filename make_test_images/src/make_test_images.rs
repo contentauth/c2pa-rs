@@ -12,6 +12,8 @@
 // each license.
 
 //! Constructs a set of test images using a configuration script
+#![allow(clippy::result_large_err)]
+
 use std::{
     collections::HashMap,
     fs,
