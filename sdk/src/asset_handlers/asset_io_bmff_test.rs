@@ -21,7 +21,7 @@ use crate::{
 };
 
 fn fixtures() -> Vec<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let dir = crate::utils::test::fixture_path("");
     let mut v: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap()
         .flatten()

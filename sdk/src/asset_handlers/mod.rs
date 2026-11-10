@@ -14,6 +14,16 @@
 // EXPERIMENT (local only, do not commit)
 #[cfg(feature = "asset_io")]
 pub(crate) mod asset_io_adapter;
+#[cfg(all(test, feature = "asset_io"))]
+mod asset_io_adapter_test;
+#[cfg(all(test, feature = "asset_io"))]
+mod asset_io_bmff_test;
+#[cfg(all(test, feature = "asset_io"))]
+mod asset_io_equivalence_test;
+#[cfg(all(test, feature = "asset_io"))]
+mod asset_io_perf_test;
+#[cfg(all(test, feature = "asset_io"))]
+mod asset_io_riff_test;
 pub mod bmff_io;
 pub mod c2pa_io;
 pub mod flac_io;

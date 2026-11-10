@@ -1444,15 +1444,6 @@ impl Store {
         target_len: Option<usize>,
     ) -> Result<Vec<u8>> {
         let signer = context.signer()?;
-        self.sign_manifest_with_signer(context, signer, target_len)
-    }
-
-    pub(crate) fn sign_manifest_with_signer(
-        &mut self,
-        context: &Context,
-        signer: &dyn Signer,
-        target_len: Option<usize>,
-    ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash

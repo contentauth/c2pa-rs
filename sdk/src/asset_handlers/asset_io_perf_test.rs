@@ -17,8 +17,8 @@
 // manifest URL and replacing an existing embedded manifest. `ASSET_IO_PERF_FILE=1`
 // uses temporary files for its input and intermediate/output streams; otherwise it
 // uses memory-backed streams. `ASSET_IO_PERF_CASE=<filename>` limits it to one fixture.
-// RSS is sampled every 250 us during a separate, repeated memory pass and includes the
-// test process and input buffers, not just allocations made by the handler.
+// Use an external profiler (e.g. Instruments or heaptrack) for memory comparisons.
+// Process-wide peak RSS from /usr/bin/time includes both handlers and the test harness.
 //
 // Rows prefixed `floor` are not handlers: a plain memcpy, and `io::copy` through `dyn`
 // streams. They bound what any handler can do for the same bytes.
@@ -37,21 +37,20 @@ use std::{
     hint::black_box,
     io::{self, Cursor, Seek, Write},
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
-    thread,
     time::{Duration, Instant},
 };
 
 use crate::{
     asset_handlers::{
-        asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
-        svg_io::SvgIO, tiff_io::TiffIO,
+        asset_io_adapter::AssetIoAdapter,
+        asset_io_adapter_test::{fixture_paths, store},
+        jpeg_io::JpegIO,
+        png_io::PngIO,
+        riff_io::RiffIO,
+        svg_io::SvgIO,
+        tiff_io::TiffIO,
     },
     asset_io::AssetIO,
-    asset_io_adapter_test::{fixture_paths, store},
     read_seek::{ReadSeek, ReadWriteSeek},
 };
 
@@ -233,46 +232,6 @@ fn update_workflow(
     Ok(())
 }
 
-struct MemoryMeasurement {
-    baseline_rss: Option<usize>,
-    peak_rss: Option<usize>,
-}
-
-fn measure_workflow_memory(
-    f: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<MemoryMeasurement> {
-    let baseline_rss = memory_stats::memory_stats().map(|stats| stats.physical_mem);
-    let peak = Arc::new(AtomicUsize::new(baseline_rss.unwrap_or_default()));
-    let sampled = Arc::new(AtomicBool::new(baseline_rss.is_some()));
-    let stop = Arc::new(AtomicBool::new(false));
-
-    let (thread_peak, thread_sampled, thread_stop) =
-        (Arc::clone(&peak), Arc::clone(&sampled), Arc::clone(&stop));
-    let monitor = thread::spawn(move || {
-        while !thread_stop.load(Ordering::Relaxed) {
-            if let Some(stats) = memory_stats::memory_stats() {
-                thread_sampled.store(true, Ordering::Relaxed);
-                thread_peak.fetch_max(stats.physical_mem, Ordering::Relaxed);
-            }
-            thread::sleep(Duration::from_micros(250));
-        }
-    });
-
-    let result = f();
-    stop.store(true, Ordering::Relaxed);
-    monitor
-        .join()
-        .map_err(|_| anyhow::anyhow!("RSS sampling thread panicked"))?;
-    result?;
-
-    Ok(MemoryMeasurement {
-        baseline_rss,
-        peak_rss: sampled
-            .load(Ordering::Relaxed)
-            .then(|| peak.load(Ordering::Relaxed)),
-    })
-}
-
 fn workflow_extension(path: &std::path::Path) -> Option<&'static str> {
     match path
         .extension()
@@ -337,18 +296,6 @@ fn prepare_workflow_seed(
 fn median_duration(mut samples: Vec<Duration>) -> Duration {
     samples.sort_unstable();
     samples[samples.len() / 2]
-}
-
-fn rss_mib(bytes: Option<usize>) -> String {
-    bytes
-        .map(|n| format!("{:.1}", n as f64 / (1024.0 * 1024.0)))
-        .unwrap_or_else(|| "n/a".to_string())
-}
-
-fn rss_kib(bytes: Option<usize>) -> String {
-    bytes
-        .map(|n| format!("{:.1}", n as f64 / 1024.0))
-        .unwrap_or_else(|| "n/a".to_string())
 }
 
 fn handlers(ext: &str) -> (Box<dyn AssetIO>, Box<dyn AssetIO>) {
@@ -544,7 +491,7 @@ struct Row {
 }
 
 #[test]
-#[ignore = "reports end-to-end update timings and sampled RSS; run with --release --ignored --nocapture"]
+#[ignore = "reports end-to-end update timings; run with --release --ignored --nocapture"]
 fn asset_io_update_workflow_perf() {
     let file_backed = std::env::var_os("ASSET_IO_PERF_FILE").is_some();
     let requested_case = std::env::var_os("ASSET_IO_PERF_CASE");
@@ -554,7 +501,7 @@ fn asset_io_update_workflow_perf() {
     let mut compared = 0;
 
     println!(
-        "update workflow: {}, RSS sampling interval: 250 us",
+        "update workflow: {}",
         if file_backed {
             "file-backed streams using temporary files"
         } else {
@@ -562,16 +509,8 @@ fn asset_io_update_workflow_perf() {
         }
     );
     println!(
-        "{:<8} {:<32} {:>9} {:>10} {:>10} {:>12} {:>12} {:>11} {:>11}",
-        "format",
-        "file",
-        "asset MiB",
-        "old ms",
-        "new ms",
-        "old peak RSS",
-        "new peak RSS",
-        "old inc KiB",
-        "new inc KiB"
+        "{:<8} {:<32} {:>9} {:>10} {:>10}",
+        "format", "file", "asset MiB", "old ms", "new ms"
     );
 
     for path in fixture_paths() {
@@ -628,40 +567,12 @@ fn asset_io_update_workflow_perf() {
         let old_time = median_duration(time_one(&*old));
         let new_time = median_duration(time_one(&*new));
 
-        let memory_reps = (Duration::from_millis(30).as_secs_f64()
-            / old_time.max(new_time).as_secs_f64())
-        .ceil()
-        .clamp(1.0, 100.0) as usize;
-        let old_memory = measure_workflow_memory(|| {
-            for _ in 0..memory_reps {
-                update_workflow(&*old, input, &updated_store, false)?;
-            }
-            Ok(())
-        })
-        .unwrap_or_else(|e| panic!("{} legacy memory pass: {e}", path.display()));
-        let new_memory = measure_workflow_memory(|| {
-            for _ in 0..memory_reps {
-                update_workflow(&*new, input, &updated_store, false)?;
-            }
-            Ok(())
-        })
-        .unwrap_or_else(|e| panic!("{} asset-io memory pass: {e}", path.display()));
-        let delta = |m: &MemoryMeasurement| {
-            m.peak_rss
-                .zip(m.baseline_rss)
-                .map(|(peak, baseline)| peak.saturating_sub(baseline))
-        };
-
         println!(
-            "{ext:<8} {:<32} {:>9.2} {:>10.3} {:>10.3} {:>12} {:>12} {:>11} {:>11}",
+            "{ext:<8} {:<32} {:>9.2} {:>10.3} {:>10.3}",
             path.file_name().unwrap().to_string_lossy(),
             asset_size as f64 / (1024.0 * 1024.0),
             old_time.as_secs_f64() * 1_000.0,
             new_time.as_secs_f64() * 1_000.0,
-            rss_mib(old_memory.peak_rss),
-            rss_mib(new_memory.peak_rss),
-            rss_kib(delta(&old_memory)),
-            rss_kib(delta(&new_memory)),
         );
         compared += 1;
     }

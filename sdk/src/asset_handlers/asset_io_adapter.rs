@@ -17,7 +17,7 @@ use aio::{
 use crate::{
     asset_io::{
         AllowedExclusion, AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter,
-        ComposedManifestRef, ObjectLocations, ObjectType, WriteXmp, C2PA_BOXHASH,
+        ComposedManifestRef, ExclusionKind, ObjectLocations, ObjectType, WriteXmp, C2PA_BOXHASH,
     },
     error::{Error, Result},
     read_seek::{ReadSeek, ReadWriteSeek},
@@ -32,6 +32,7 @@ const C2PA_STORE_UUID: [u8; 16] = [
 const PLACEHOLDER: [u8; 8] = [0, 0, 0, 8, b'j', b'u', b'm', b'b'];
 
 const TIFF_READ_ONLY_TYPES: [&str; 4] = ["arw", "image/x-sony-arw", "nef", "image/x-nikon-nef"];
+const MP3_COMPAT_TYPES: [&str; 2] = ["audio/x-mp3", "audio/mpeg3"];
 
 fn is_tiff_read_only_type(asset_type: &str) -> bool {
     matches!(
@@ -70,6 +71,9 @@ impl AssetIoAdapter {
             .collect();
         if handler.id() == aio::containers::tiff::ID {
             types.extend(TIFF_READ_ONLY_TYPES);
+        }
+        if handler.id() == aio::containers::id3::ID {
+            types.extend(MP3_COMPAT_TYPES);
         }
         Self {
             handler: Some(handler),
@@ -111,9 +115,12 @@ impl AssetIoAdapter {
     }
 
     /// Whether a hash excludes only the manifest's payload, not the whole segment
-    /// holding it. SVG keeps its `<c2pa:manifest>` tags in the hashed asset.
+    /// holding it. SVG tags and ID3 frame headers stay in the hashed asset.
     fn excludes_payload_only(&self) -> bool {
-        self.container() == Some(aio::containers::svg::ID)
+        matches!(
+            self.container(),
+            Some(aio::containers::svg::ID | aio::containers::id3::ID)
+        )
     }
 }
 
@@ -423,7 +430,35 @@ impl AssetBoxHash for AssetIoAdapter {
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         let mut input = input_stream;
         let s = self.parse(&mut *input)?;
-        let mut out = box_map_from_layout(&s, &mut *input)?;
+        let mut out = if self.container() == Some(aio::containers::gif::ID) {
+            s.c2pa_boxes(&mut input)
+                .map_err(err)?
+                .into_iter()
+                .map(|b| {
+                    let mut map =
+                        BoxMap::new(vec![b.name.into_owned()], b.range.offset(), b.range.len());
+                    if map.names == [C2PA_BOXHASH] {
+                        map = map.with_allowed_exclusions(vec![AllowedExclusion::whole_box(
+                            b.range.len(),
+                        )]);
+                    } else if !b.metadata.is_empty() {
+                        map = map.with_allowed_exclusions(
+                            b.metadata
+                                .iter()
+                                .map(|range| AllowedExclusion {
+                                    start: range.offset() - b.range.offset(),
+                                    length: range.len(),
+                                    kind: ExclusionKind::AssetMetadata,
+                                })
+                                .collect(),
+                        );
+                    }
+                    map
+                })
+                .collect()
+        } else {
+            box_map_from_layout(&s, &mut *input)?
+        };
 
         // With no manifest, a zero-length excluded placeholder marks where it will
         // go, so the list of boxes matches the file once it is embedded.
@@ -466,9 +501,15 @@ impl AssetIO for AssetIoAdapter {
         let handler = registry
             .handler(asset_type)
             .or_else(|| {
-                is_tiff_read_only_type(asset_type)
-                    .then(|| registry.handler("tif"))
-                    .flatten()
+                if is_tiff_read_only_type(asset_type) {
+                    registry.handler("tif")
+                } else if MP3_COMPAT_TYPES
+                    .contains(&asset_type.trim().to_ascii_lowercase().as_str())
+                {
+                    registry.handler("mp3")
+                } else {
+                    None
+                }
             })
             .cloned();
         match handler {
@@ -515,6 +556,13 @@ impl AssetIO for AssetIoAdapter {
                     ("nef".to_owned(), "image/x-nikon-nef".to_owned()),
                 ]);
             }
+            if h.id() == aio::containers::id3::ID {
+                types.extend(
+                    MP3_COMPAT_TYPES
+                        .iter()
+                        .map(|alias| (alias.to_string(), "audio/mpeg".to_owned())),
+                );
+            }
             types
         })
     }
@@ -530,13 +578,18 @@ impl AssetIO for AssetIoAdapter {
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
         self.handler
             .as_ref()
-            .filter(|handler| handler.id() != aio::containers::tiff::ID)
+            .filter(|handler| {
+                !matches!(
+                    handler.id(),
+                    aio::containers::tiff::ID | aio::containers::id3::ID
+                )
+            })
             .map(|_| self as &dyn AssetBoxHash)
     }
 
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
-        // An SVG manifest is excluded from hashes by its payload, which a composed
-        // placeholder (the whole element) cannot say, so SVG does not offer one.
+        // A composed placeholder cannot express the payload-only exclusion used
+        // by SVG and ID3.
         (!self.excludes_payload_only()).then_some(self as &dyn ComposedManifestRef)
     }
 }

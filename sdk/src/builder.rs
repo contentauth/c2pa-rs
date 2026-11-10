@@ -3944,7 +3944,7 @@ fn rewrite_action_ingredient_urls(
 // EXPERIMENT (local only, do not commit): raw-JUMBF accessors for the asset-io
 // equivalence test. A real API would expose these (e.g. placeholder_jumbf /
 // sign_jumbf) so the caller's container code can compose the manifest itself.
-#[cfg(test)]
+#[cfg(all(test, feature = "asset_io"))]
 impl Builder {
     /// Composed placeholder (as `placeholder()` returns) plus the raw JUMBF.
     pub(crate) fn exp_placeholder(&mut self, format: &str) -> Result<(Vec<u8>, Vec<u8>)> {
