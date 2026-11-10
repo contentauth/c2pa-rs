@@ -11,7 +11,6 @@
 // each license.
 
 #![doc = include_str!("../README.md")]
-#![allow(clippy::result_large_err)]
 
 /// Tool to display and create C2PA manifests.
 ///

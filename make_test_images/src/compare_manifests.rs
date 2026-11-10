@@ -12,8 +12,6 @@
 // each license.
 
 //! Compares two manifest stores and prints out the differences.
-#![allow(clippy::result_large_err)]
-
 use std::{
     collections::{BTreeMap, HashMap},
     fs,

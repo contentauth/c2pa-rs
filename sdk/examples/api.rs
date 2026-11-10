@@ -12,8 +12,6 @@
 // each license.
 
 //! Example App showing how to use the new v2 API
-#![allow(clippy::result_large_err)]
-
 use std::io::{Cursor, Seek};
 
 use anyhow::Result;
