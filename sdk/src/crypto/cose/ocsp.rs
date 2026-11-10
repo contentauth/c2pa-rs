@@ -511,3 +511,49 @@ pub fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    #[c2pa_test_async]
+    async fn test_process_invalid_ocsp_responses() {
+        let sign1 = CoseSign1::default();
+        let trust_policy = CertificateTrustPolicy::default();
+        let settings = Settings::new();
+        for responses in [Vec::new(), vec![Vec::new(), vec![0x30, 0x00]]] {
+            let mut validation_log = StatusTracker::default();
+            let sync_response = process_ocsp_responses(
+                &sign1,
+                b"content",
+                &trust_policy,
+                &responses,
+                None,
+                &mut validation_log,
+                &settings,
+            )
+            .unwrap();
+            let async_response = process_ocsp_responses_async(
+                &sign1,
+                b"content",
+                &trust_policy,
+                &responses,
+                None,
+                &mut validation_log,
+                &settings,
+            )
+            .await
+            .unwrap();
+            assert!(sync_response.ocsp_certs.is_none());
+            assert!(async_response.ocsp_certs.is_none());
+            assert!(!validation_log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+            assert!(!validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        }
+    }
+}

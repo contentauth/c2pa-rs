@@ -1175,7 +1175,7 @@ impl Builder {
                 if index >= builder.definition.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
                         "Invalid ingredient index {index}"
-                    )))))?; // todo add specific error
+                    ))))); // todo add specific error
                 }
                 builder.definition.ingredients[index]
                     .resources_mut()
@@ -1796,7 +1796,7 @@ impl Builder {
             }
 
             // If a "ComponentOf" ingredient doesn't have an associated "c2pa.placed" action, create it here.
-            for (_id, (relationship, uri)) in ingredient_map.iter() {
+            for (relationship, uri) in ingredient_map.values() {
                 if *relationship == &Relationship::ComponentOf
                     && !referenced_uris.contains(&uri.url())
                 {
@@ -9687,6 +9687,76 @@ mod tests {
             Error::TooManyAssertions {
                 max: MAX_ASSERTIONS
             }
+        ));
+    }
+
+    fn legacy_archive_with_entries(
+        entries: &[(&str, &[u8])],
+        ingredients: Vec<Ingredient>,
+    ) -> Cursor<Vec<u8>> {
+        let mut builder = Builder::default();
+        builder.definition.ingredients = ingredients;
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("manifest.json", options).unwrap();
+        zip.write_all(&serde_json::to_vec(&builder).unwrap())
+            .unwrap();
+        for (name, data) in entries {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        let mut archive = zip.finish().unwrap();
+        archive.rewind().unwrap();
+        archive
+    }
+
+    #[test]
+    fn test_legacy_archive_resources_and_ingredients() {
+        let ingredient = Ingredient::new_v2("child", "image/jpeg");
+        let archive = legacy_archive_with_entries(
+            &[
+                ("resources/resource.txt", b"resource"),
+                ("manifests/unmatched.c2pa", b"manifest"),
+                ("ingredients/0/legacy.txt", b"legacy"),
+            ],
+            vec![ingredient],
+        );
+        let loaded = Builder::old_from_archive(archive).unwrap();
+        assert_eq!(
+            loaded.resources.get("resource.txt").unwrap().as_ref(),
+            b"resource"
+        );
+        assert_eq!(
+            loaded.definition.ingredients[0]
+                .resources()
+                .get("legacy.txt")
+                .unwrap()
+                .as_ref(),
+            b"legacy"
+        );
+    }
+
+    #[test]
+    fn test_legacy_archive_rejects_invalid_paths_and_indices() {
+        for path in [
+            "resources/../escape.txt",
+            "manifests/../escape.c2pa",
+            "ingredients/0/../escape.txt",
+            "ingredients/not-an-index/resource.txt",
+        ] {
+            let archive = legacy_archive_with_entries(&[(path, b"data")], Vec::new());
+            assert!(matches!(
+                Builder::old_from_archive(archive),
+                Err(Error::BadParam(_))
+            ));
+        }
+
+        let archive =
+            legacy_archive_with_entries(&[("ingredients/0/resource.txt", b"data")], Vec::new());
+        assert!(matches!(
+            Builder::old_from_archive(archive),
+            Err(Error::OtherError(error)) if error.to_string() == "Invalid ingredient index 0"
         ));
     }
 

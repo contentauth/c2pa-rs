@@ -200,10 +200,10 @@ impl Display for ManifestParts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_v1 {
             if let Some(vendor) = &self.cgi {
-                let mp = format!("{}:urn:uuid:{}", vendor, &self.guid);
+                let mp = format!("{}:urn:uuid:{}", vendor, self.guid);
                 write!(f, "{mp}")
             } else {
-                let mp = format!("urn:uuid:{}", &self.guid);
+                let mp = format!("urn:uuid:{}", self.guid);
                 write!(f, "{mp}")
             }
         } else {

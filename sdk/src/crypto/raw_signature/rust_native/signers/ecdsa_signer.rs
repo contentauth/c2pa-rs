@@ -189,6 +189,41 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_private_keys() {
+        let cert_chain =
+            include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es512.pub");
+        for (algorithm, curve) in [
+            (SigningAlg::Es256, "ES256"),
+            (SigningAlg::Es384, "ES384"),
+            (SigningAlg::Es512, "ES512"),
+        ] {
+            let result = EcdsaSigner::from_cert_chain_and_private_key(
+                cert_chain,
+                b"not a PEM private key",
+                algorithm,
+                None,
+            );
+            match result {
+                Err(RawSignerError::InvalidSigningCredentials(message)) => {
+                    assert!(message.starts_with(&format!("invalid {curve} private key:")));
+                }
+                _ => panic!("Expected invalid {curve} private key error"),
+            }
+        }
+
+        assert!(matches!(
+            EcdsaSigner::from_cert_chain_and_private_key(
+                cert_chain,
+                &[0xff],
+                SigningAlg::Es512,
+                None,
+            ),
+            Err(RawSignerError::InvalidSigningCredentials(message))
+                if message.starts_with("invalid private key:")
+        ));
+    }
+
+    #[test]
     fn test_other_not_supported() {
         let cert_chain =
             include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/ps256.pub");

@@ -137,7 +137,7 @@ impl SignConfig {
 
         if let Some(path) = self.private_key.as_deref() {
             private_key =
-                Some(std::fs::read(path).context(format!("Reading private key: {:?}", &path))?);
+                Some(std::fs::read(path).context(format!("Reading private key: {:?}", path))?);
         }
 
         if private_key.is_none() {
@@ -148,7 +148,7 @@ impl SignConfig {
 
         if let Some(path) = self.sign_cert.as_deref() {
             sign_cert =
-                Some(std::fs::read(path).context(format!("Reading sign cert: {:?}", &path))?);
+                Some(std::fs::read(path).context(format!("Reading sign cert: {:?}", path))?);
         }
 
         if sign_cert.is_none() {

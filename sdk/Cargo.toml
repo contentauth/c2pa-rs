@@ -36,7 +36,7 @@ json_schema = ["dep:schemars"]
 openssl = [
     "dep:openssl",
 ]
-pdf = ["dep:lopdf"]
+pdf = ["dep:lopdf", "dep:time"]
 rust_native_crypto = [
     "dep:const-oid",
     "dep:ecdsa",
@@ -95,7 +95,7 @@ crate-type = ["lib"]
 [dependencies]
 asn1-rs = "0.7.2"
 async-generic = "1.1"
-async-trait = "0.1.89"
+async-trait = "0.1.92"
 atree = "0.5.4"
 base64 = "0.22.1"
 bcder = "0.7.6"
@@ -127,7 +127,7 @@ img-parts = "0.4.0"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.30"
-lopdf = { version = "0.39.0", optional = true }
+lopdf = { version = "0.44.0", optional = true, default-features = false }
 lazy_static = "1.5.0"
 memchr = "2.8.1"
 mp4 = "0.14.0"
@@ -146,7 +146,7 @@ pem = "3.0.6"
 pkcs1 = { version = "0.7.5", optional = true }
 pkcs8 = "0.10.2"
 png_pong = "0.10.0"
-quick-xml = "0.39.4"
+quick-xml = "0.41.0"
 rand = "0.8.6"
 rand_chacha = { version = "0.9.0", features = ["os_rng"] }
 range-set = "0.1.0"
@@ -169,6 +169,8 @@ spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
+# lopdf 0.44 uses FormatItem::StringLiteral, absent from older time releases.
+time = { version = "0.3.55", optional = true }
 toml = "1.1.2"
 url = "2.5.8"
 uuid = { version = "1.23.2", features = ["serde", "v4"] }
@@ -189,6 +191,10 @@ sha2 = "0.10.6"
 # Apply the "asm" feature only for macOS on AArch64.
 [target.'cfg(all(target_arch = "aarch64", target_os = "macos"))'.dependencies]
 sha2 = { version = "0.10.6", features = ["asm"] }
+
+# lopdf's rayon needs real threads: native always has them, WASM only with atomics.
+[target.'cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))'.dependencies]
+lopdf = { version = "0.44.0", optional = true }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.28", default-features = false, features = [
@@ -289,7 +295,7 @@ web-sys = { version = "0.3.99", features = [
 ] }
 
 [dev-dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 env_logger = "0.11.10"
 glob = "0.3.3"
 hex-literal = "1.1.0"
