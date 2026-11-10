@@ -12,7 +12,10 @@ For additional information, please read the [release-plz documentation for GitHu
 
 In this repo, the build automation is triggered for each commit to the `main` branch.
 
-This task runs using a GitHub access token tied to Eric's `@scouten-adobe` account, which is why all PRs and releases are under Eric's name. (See ticket CAI-7621 for moving this to a team-owned bot account.)
+This task uses the organization-owned `RELEASE_PLZ_ORG_TOKEN` for GitHub access and
+`CRATES_IO_ORG_TOKEN` for crates.io publishing, as on the v0.90 maintenance line.
+The `v0.87` branch runs Tier 1A checks on pull requests and pushes; creating the
+maintenance branch does not enable automatic publishing from it.
 
 ### Create a release pull request
 

@@ -2,6 +2,41 @@
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
+## v0.87 maintenance backport scope
+
+This maintenance branch starts at `c2pa-v0.87.0` and backports only the changes
+introduced in `c2pa-v0.90.23`: eMudhra TLS distrust, coordinated Rust-native ECDSA
+dependency updates, ZIP archive compatibility, and the accompanying tooling,
+documentation, and release-credential fixes. It does not import newer SDK
+features or all security fixes from the intervening releases. The public API and
+Rust 1.88 minimum are unchanged. Native consumers must rebuild and redistribute
+their binaries to receive the TLS updates; see [usage](usage.md).
+
+### Older known issues not addressed by this backport
+
+The retained v0.87 dependency set still fails
+`cargo deny --all-features check advisories bans licenses sources`:
+
+| Dependency | Retained version | Known issue |
+| --- | --- | --- |
+| `crossbeam-epoch` | 0.9.18 | [RUSTSEC-2026-0204](https://rustsec.org/advisories/RUSTSEC-2026-0204): invalid pointer dereference in pointer formatting |
+| `h2` | 0.4.14 | [RUSTSEC-2026-0258](https://rustsec.org/advisories/RUSTSEC-2026-0258): unbounded empty DATA frames |
+| `lopdf` | 0.39.0 | [RUSTSEC-2026-0187](https://rustsec.org/advisories/RUSTSEC-2026-0187): stack overflow on deeply nested PDF objects |
+| `quick-xml` | 0.39.4 | [RUSTSEC-2026-0194](https://rustsec.org/advisories/RUSTSEC-2026-0194) and [RUSTSEC-2026-0195](https://rustsec.org/advisories/RUSTSEC-2026-0195): XML CPU and memory exhaustion |
+| `ttf-parser` | 0.25.1 | [RUSTSEC-2026-0192](https://rustsec.org/advisories/RUSTSEC-2026-0192): unmaintained |
+| `spin` | 0.9.8 | Yanked dependency version |
+
+Earlier ID3 decoder and BMFF sample-reader hardening from the v0.90 line is also
+outside this backport. This branch is not security-equivalent to v0.90.23 and is
+not a substitute for upgrading to a supported release containing those fixes.
+No advisory exemptions are added.
+
+Current warning-denied Clippy checks also report older formatting-borrow,
+iteration, and control-flow lints outside the backported OCSP fix. The
+warning-denied docs.rs build encounters an older redundant `TextSelector` link
+in `sdk/src/assertions/region_of_interest.rs`. These pre-existing issues remain
+outside this backport.
+
 ## Version 0.79.4
 
 ### Deprecation of thread-local settings APIs

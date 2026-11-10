@@ -15,6 +15,7 @@ on:
     branches:
       - main
       - v1_api
+      - v0.87
     types:
       - opened
       - reopened
@@ -24,6 +25,7 @@ on:
     branches:
       - main
       - v1_api
+      - v0.87
 
 jobs:
   get-features:
@@ -542,7 +544,8 @@ jobs:
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo clippy --features "$FEATURES" --all-targets -- -Dwarnings
+          # Keep the maintenance line's public Error API unchanged on newer Clippy.
+          cargo clippy --features "$FEATURES" --all-targets -- -Dwarnings -Aclippy::result_large_err
 
   cargo_fmt:
     name: Enforce Rust code format

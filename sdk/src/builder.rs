@@ -9719,7 +9719,7 @@ mod tests {
 
             for i in 0..zip_in.len() {
                 let mut entry = zip_in.by_index(i).unwrap();
-                let name = entry.name().to_string();
+                let name = entry.name().unwrap().into_owned();
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf).unwrap();
 
