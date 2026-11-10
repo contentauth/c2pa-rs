@@ -10,12 +10,21 @@ We use the pre-packaged [release-plz GitHub Actions wrapper](https://github.com/
 
 For additional information, please read the [release-plz documentation for GitHub Action](https://release-plz.dev/docs/github/quickstart).
 
-In this repo, the build automation is triggered for each commit to the `main` branch.
+The combined release automation in `release.yml` is triggered for each commit to
+the `main` branch.
 
 This task uses the organization-owned `RELEASE_PLZ_ORG_TOKEN` for GitHub access and
 `CRATES_IO_ORG_TOKEN` for crates.io publishing, as on the v0.90 maintenance line.
-The `v0.87` branch runs Tier 1A checks on pull requests and pushes; creating the
-maintenance branch does not enable automatic publishing from it.
+The `v0.87` branch runs Tier 1A checks on pull requests and pushes. Its separate
+[`release-pr.yml`](../.github/workflows/release-pr.yml) workflow opens or updates a
+release PR on each push to `v0.87`, or when manually dispatched on that branch.
+It runs only `release-plz release-pr` and has no crates.io publishing token.
+Release PR branches use the `v0.87-release-plz-` prefix so other release lines'
+stale `release-plz-*` branch cleanup does not delete them.
+
+Publishing from `v0.87` remains manual: merging its release PR does not publish
+crates, create release tags, or run the binary-publishing jobs. The existing
+`release.yml` publishing trigger remains restricted to `main`.
 
 ### Create a release pull request
 

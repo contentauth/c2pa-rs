@@ -35,6 +35,8 @@ commit_parsers = [
 [workspace]
 dependencies_update = true
 features_always_increment_minor = false
+# Keep maintenance PRs outside other release lines' global release-plz-* cleanup.
+pr_branch_prefix = "v0.87-release-plz-"
 pr_labels = ["release"]
 release_always = false
 # TODO: https://github.com/contentauth/c2pa-rs/issues/2229

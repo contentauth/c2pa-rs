@@ -1,0 +1,39 @@
+name: Release-plz PR
+
+permissions:
+  pull-requests: write
+  contents: write
+
+on:
+  push:
+    branches:
+      - v0.87
+  workflow_dispatch:
+
+concurrency:
+  group: release-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Prepare v0.87 release PR
+    if: github.ref == 'refs/heads/v0.87'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz (release-pr only)
+        uses: MarcoIeni/release-plz-action@v0.5.129
+        with:
+          command: release-pr
+          verbose: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
