@@ -173,13 +173,13 @@ As a backstop to the proactive check above, a scheduled job, [`reconciliation.ym
 
 ### Release-train cut
 
-[`release-train-cut.yml`](../.github/workflows/release-train-cut.yml) runs every Monday and gates on a date check so it only acts on the second Monday of an odd-numbered month (or when dispatched manually with `force: true`). When it fires it computes the next breaking version, applies skip-if-empty, and — if there's breaking work to ship — pushes a new `0.(x+1).0-rc` candidate branch from `main`, kicks off its first build by dispatching [`release-rc.yml`](#release-candidate-builds), **advances `main` to the next `0.(x+2).0-dev` cycle** (committed directly, no PR), and opens a `release-train` tracking issue describing the bake and the manual-promotion step. The `main` bump happens after the RC branch is cut, so the candidate is taken from pre-bump `main`. (Committing to `main` directly requires the `RELEASE_PLZ_TOKEN` to be allowed to bypass `main`'s pull-request rule; see [branch protection](#branch-protection).)
+[`release-train-cut.yml`](../.github/workflows/release-train-cut.yml) runs every Monday and gates on a date check so it only acts on the second Monday of an odd-numbered month (or when dispatched manually with `force: true`). When it fires it computes the next breaking version, applies skip-if-empty, and — if there's breaking work to ship — pushes a new `0.(x+1).0-rc` candidate branch from `main`, kicks off its first build by dispatching [`release-rc.yml`](#release-candidate-builds), **advances `main` to the next `0.(x+2).0-dev` cycle** (committed directly, no PR), and opens a `release-train` tracking issue describing the bake and the manual-promotion step. The `main` bump happens after the RC branch is cut, so the candidate is taken from pre-bump `main`. (Committing to `main` directly requires the `RELEASE_PLZ_ORG_TOKEN` to be allowed to bypass `main`'s pull-request rule; see [branch protection](#branch-protection).)
 
 ### Release-candidate builds
 
 [`release-rc.yml`](../.github/workflows/release-rc.yml) cuts a numbered candidate **build** (`-rc.1`, `-rc.2`, …) from a candidate **branch** (`0.N.0-rc`). It sets the `-rc.N` versions on the branch (bumping `c2pa`/`c2pa-c-ffi` and `c2patool` in lockstep on the build number), commits, and pushes the `c2pa-v…-rc.N` and `c2patool-v…-rc.N` tags. Those tags trigger the tag-driven binary workflows above, which publish **prerelease** GitHub releases with binaries. Nothing here reaches crates.io — the build exists so downstream projects that consume pre-built binaries (rather than building from source) can validate the candidate during its bake.
 
-The first build (`-rc.1`) is cut automatically when the train is cut. A maintainer re-runs this workflow (via `workflow_dispatch` on the RC branch) to cut a fresh build after bugfixes have been cherry-picked onto the branch during the bake. Tags are pushed with a PAT (`RELEASE_PLZ_TOKEN`) so the tag-driven binary workflows actually run — pushes made with the default `GITHUB_TOKEN` do not cascade into other workflows.
+The first build (`-rc.1`) is cut automatically when the train is cut. A maintainer re-runs this workflow (via `workflow_dispatch` on the RC branch) to cut a fresh build after bugfixes have been cherry-picked onto the branch during the bake. Tags are pushed with a PAT (`RELEASE_PLZ_ORG_TOKEN`) so the tag-driven binary workflows actually run — pushes made with the default `GITHUB_TOKEN` do not cascade into other workflows.
 
 ### Cross-repo canary
 
@@ -262,7 +262,7 @@ The upstream-first guarantees rely on release-line and release-candidate branche
 
 Branch-name patterns (`v0.*`, `*-rc*`) can be covered with a single ruleset each so new release lines and candidates are protected automatically.
 
-Some release automation pushes directly to protected branches and so must be on the ruleset **bypass list** — grant this to the identity behind `RELEASE_PLZ_TOKEN`:
+Some release automation pushes directly to protected branches and so must be on the ruleset **bypass list** — grant this to the identity behind `RELEASE_PLZ_ORG_TOKEN`:
 
 * [`release-train-cut.yml`](#release-train-cut) commits the next-dev-cycle bump straight to `main`, and [`release-rc.yml`](#release-candidate-builds) commits `-rc.N` version bumps straight to the RC branch. Both bypass the pull-request rule by design (they are mechanical version bumps, not reviewed changes).
 
