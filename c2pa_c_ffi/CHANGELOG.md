@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.87.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.1...c2pa-c-ffi-v0.87.2)
+_10 November 2026_
+
+### Fixed
+
+* Restore Emscripten release header generation
+* Backport v0.90.23 security and tooling fixes to v0.87 ([#3058](https://github.com/contentauth/c2pa-rs/pull/3058))
+
 ## [0.87.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.87.1)
 _10 November 2026_
 
