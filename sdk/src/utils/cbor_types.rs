@@ -139,7 +139,7 @@ impl fmt::Display for BytesT {
         write!(
             f,
             "{}",
-            format!("{:02x?}", &self.0.to_vec()).replace(',', "")
+            format!("{:02x?}", self.0.to_vec()).replace(',', "")
         )
     }
 }

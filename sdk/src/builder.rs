@@ -1100,15 +1100,18 @@ impl Builder {
             let mut file = zip
                 .by_index(i)
                 .map_err(|e| Error::OtherError(Box::new(e)))?;
+            let file_name = file
+                .name()
+                .map_err(|e| Error::OtherError(Box::new(e)))?
+                .into_owned();
 
-            if file.name().starts_with("resources/") && file.name() != "resources/" {
+            if file_name.starts_with("resources/") && file_name != "resources/" {
                 // Validate the full path from the archive to prevent path traversal
-                let _sanitized_path = sanitize_archive_path(file.name())?;
+                let _sanitized_path = sanitize_archive_path(&file_name)?;
 
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
-                let id = file
-                    .name()
+                let id = file_name
                     .split('/')
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
@@ -1122,14 +1125,13 @@ impl Builder {
 
             // Load the c2pa_manifests.
             // Adds the manifest data to any ingredient that has a matching active_manfiest label.
-            if file.name().starts_with("manifests/") && file.name() != "manifests/" {
+            if file_name.starts_with("manifests/") && file_name != "manifests/" {
                 // Validate the full path from the archive to prevent path traversal
-                let _sanitized_path = sanitize_archive_path(file.name())?;
+                let _sanitized_path = sanitize_archive_path(&file_name)?;
 
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
-                let manifest_label = file
-                    .name()
+                let manifest_label = file_name
                     .split('/')
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid manifest path".to_string()))?;
@@ -1149,20 +1151,19 @@ impl Builder {
 
             // Keep this for temporary unstable api support (un-versioned).
             // Earlier method used numbered library folders instead of manifests.
-            if file.name().starts_with("ingredients/") && file.name() != "ingredients/" {
+            if file_name.starts_with("ingredients/") && file_name != "ingredients/" {
                 // Validate the full path from the archive to prevent path traversal
-                let _sanitized_path = sanitize_archive_path(file.name())?;
+                let _sanitized_path = sanitize_archive_path(&file_name)?;
 
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
-                let index: usize = file
-                    .name()
+                let index: usize = file_name
                     .split('/')
                     .nth(1)
                     .ok_or_else(|| Error::BadParam("Invalid ingredient path".to_string()))?
                     .parse::<usize>()
                     .map_err(|_| Error::BadParam("Invalid ingredient path".to_string()))?;
-                let id = file.name().split('/').nth(2).unwrap_or_default();
+                let id = file_name.split('/').nth(2).unwrap_or_default();
 
                 // Sanitize id to prevent path traversal via stored key
                 let sanitized_id = if !id.is_empty() {
@@ -1174,7 +1175,7 @@ impl Builder {
                 if index >= builder.definition.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
                         "Invalid ingredient index {index}"
-                    )))))?; // todo add specific error
+                    ))))); // todo add specific error
                 }
                 builder.definition.ingredients[index]
                     .resources_mut()
@@ -1795,7 +1796,7 @@ impl Builder {
             }
 
             // If a "ComponentOf" ingredient doesn't have an associated "c2pa.placed" action, create it here.
-            for (_id, (relationship, uri)) in ingredient_map.iter() {
+            for (relationship, uri) in ingredient_map.values() {
                 if *relationship == &Relationship::ComponentOf
                     && !referenced_uris.contains(&uri.url())
                 {
@@ -9689,6 +9690,76 @@ mod tests {
         ));
     }
 
+    fn legacy_archive_with_entries(
+        entries: &[(&str, &[u8])],
+        ingredients: Vec<Ingredient>,
+    ) -> Cursor<Vec<u8>> {
+        let mut builder = Builder::default();
+        builder.definition.ingredients = ingredients;
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("manifest.json", options).unwrap();
+        zip.write_all(&serde_json::to_vec(&builder).unwrap())
+            .unwrap();
+        for (name, data) in entries {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        let mut archive = zip.finish().unwrap();
+        archive.rewind().unwrap();
+        archive
+    }
+
+    #[test]
+    fn test_legacy_archive_resources_and_ingredients() {
+        let ingredient = Ingredient::new_v2("child", "image/jpeg");
+        let archive = legacy_archive_with_entries(
+            &[
+                ("resources/resource.txt", b"resource"),
+                ("manifests/unmatched.c2pa", b"manifest"),
+                ("ingredients/0/legacy.txt", b"legacy"),
+            ],
+            vec![ingredient],
+        );
+        let loaded = Builder::old_from_archive(archive).unwrap();
+        assert_eq!(
+            loaded.resources.get("resource.txt").unwrap().as_ref(),
+            b"resource"
+        );
+        assert_eq!(
+            loaded.definition.ingredients[0]
+                .resources()
+                .get("legacy.txt")
+                .unwrap()
+                .as_ref(),
+            b"legacy"
+        );
+    }
+
+    #[test]
+    fn test_legacy_archive_rejects_invalid_paths_and_indices() {
+        for path in [
+            "resources/../escape.txt",
+            "manifests/../escape.c2pa",
+            "ingredients/0/../escape.txt",
+            "ingredients/not-an-index/resource.txt",
+        ] {
+            let archive = legacy_archive_with_entries(&[(path, b"data")], Vec::new());
+            assert!(matches!(
+                Builder::old_from_archive(archive),
+                Err(Error::BadParam(_))
+            ));
+        }
+
+        let archive =
+            legacy_archive_with_entries(&[("ingredients/0/resource.txt", b"data")], Vec::new());
+        assert!(matches!(
+            Builder::old_from_archive(archive),
+            Err(Error::OtherError(error)) if error.to_string() == "Invalid ingredient index 0"
+        ));
+    }
+
     // Verify that `base_path` in manifest.json is ignored during archive deserialization.
     // An attacker embedding "base_path": "/" must not be able to redirect resource
     // resolution to an arbitrary filesystem root (file exfiltration via archive).
@@ -9718,7 +9789,7 @@ mod tests {
 
             for i in 0..zip_in.len() {
                 let mut entry = zip_in.by_index(i).unwrap();
-                let name = entry.name().to_string();
+                let name = entry.name().unwrap().into_owned();
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf).unwrap();
 

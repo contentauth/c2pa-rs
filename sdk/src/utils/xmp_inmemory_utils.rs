@@ -79,7 +79,9 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
                 } else if e.name() == QName(key.as_bytes()) {
                     // tag case
                     if let Ok(s) = reader.read_text(e.name()) {
-                        return Some(s.to_string());
+                        if let Ok(s) = s.decode() {
+                            return Some(s.into_owned());
+                        }
                     }
                 }
             }
@@ -286,6 +288,16 @@ mod tests {
 
     const PROVENANCE: &str =
         "self#jumbf=c2pa/contentauth:urn:uuid:a58065fb-79ae-4eb3-87b9-a19830860059/c2pa.claim";
+
+    #[test]
+    fn read_xmp_tag_preserves_text() {
+        for value in ["urn:test:&amp;literal", "urn:test:\u{e9}"] {
+            let xmp = format!(
+                r#"<xmpMM:DocumentID xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/">{value}</xmpMM:DocumentID>"#
+            );
+            assert_eq!(extract_document_id(&xmp).as_deref(), Some(value));
+        }
+    }
 
     #[test]
     fn read_xmp() {

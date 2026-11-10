@@ -411,7 +411,7 @@ pub mod tests {
                 ..Default::default()
             });
 
-        println!("{:}", &original);
+        println!("{:}", original);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
         assert_eq!(assertion.label(), AssertionMetadata::LABEL);

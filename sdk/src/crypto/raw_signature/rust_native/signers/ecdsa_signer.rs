@@ -11,22 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::str::FromStr;
-
-use asn1_rs::{Any, BitString, DerSequence, FromDer, Sequence};
-use der::{Decode, Encode};
 use ecdsa::signature::Signer;
-use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
+use p256::{
+    ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey},
+    pkcs8::DecodePrivateKey,
+};
 use p384::ecdsa::{Signature as P384Signature, SigningKey as P384SigningKey};
 use p521::ecdsa::{Signature as P512Signature, SigningKey as P512SigningKey};
-use pkcs8::{DecodePrivateKey, ObjectIdentifier, PrivateKeyInfo};
 use x509_parser::{error::PEMError, pem::Pem};
 
 use crate::crypto::{
-    raw_signature::{
-        oids::{EC_PUBLICKEY_OID, SECP521R1_OID},
-        RawSigner, RawSignerError, SigningAlg,
-    },
+    raw_signature::{RawSigner, RawSignerError, SigningAlg},
     time_stamp::TimeStampProvider,
 };
 
@@ -94,7 +89,11 @@ impl EcdsaSigner {
                 (EcdsaSigningKey::Es384(key), EcdsaSigningAlg::Es384)
             }
             SigningAlg::Es512 => {
-                let key = es512_from_pkcs8_pem(private_key_pem)?;
+                let key = P512SigningKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
+                    RawSignerError::InvalidSigningCredentials(format!(
+                        "invalid ES512 private key: {e}"
+                    ))
+                })?;
                 (EcdsaSigningKey::Es512(key), EcdsaSigningAlg::Es512)
             }
             _ => {
@@ -156,68 +155,6 @@ impl TimeStampProvider for EcdsaSigner {
     }
 }
 
-#[derive(DerSequence)]
-struct ECPrivateKey<'a> {
-    version: u32,
-    private_key: &'a [u8], // OCTET STRING content
-    parameters: Option<Any<'a>>,
-    public_key: Option<BitString<'a>>,
-}
-
-fn es512_from_pkcs8_pem(private_key_pem: &str) -> Result<P512SigningKey, RawSignerError> {
-    let pem = pem::parse(private_key_pem).map_err(|e| {
-        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 private key PEM: {e}"))
-    })?;
-    let pk_info = PrivateKeyInfo::try_from(pem.contents()).map_err(|e| {
-        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 PKCS#8 structure: {e}"))
-    })?;
-
-    // Check OID is id-ecPublicKey (1.2.840.10045.2.1)
-    if pk_info.algorithm.oid.as_bytes() != EC_PUBLICKEY_OID.as_bytes() {
-        return Err(RawSignerError::InvalidSigningCredentials(format!(
-            "Unexpected OID: {}, expected id-ecPublicKey {}",
-            pk_info.algorithm.oid, EC_PUBLICKEY_OID
-        )));
-    }
-
-    let params = pk_info
-        .algorithm
-        .parameters
-        .as_ref()
-        .ok_or_else(|| {
-            RawSignerError::InvalidSigningCredentials("Missing algorithm parameters".to_string())
-        })?
-        .to_der()
-        .map_err(|_| {
-            RawSignerError::InvalidSigningCredentials(
-                "Algorithm parameters are not a valid OID".to_string(),
-            )
-        })?;
-    // Parse the parameters as an ASN.1 OID
-    let curve_oid = ObjectIdentifier::from_der(&params).map_err(|_| {
-        RawSignerError::InvalidSigningCredentials(
-            "Algorithm parameters are not a valid OID".to_string(),
-        )
-    })?;
-
-    // Parse ECPrivateKey ASN.1 structure using asn1-rs
-    let ec_private_key = ECPrivateKey::from_der(pk_info.private_key).map_err(|e| {
-        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 ECPrivateKey ASN.1: {e}"))
-    })?;
-
-    // Check version is 1
-    if ec_private_key.1.version != 1 {
-        return Err(RawSignerError::InvalidSigningCredentials(format!(
-            "ECPrivateKey ASN.1 version is {}, expected 1",
-            ec_private_key.1.version
-        )));
-    }
-
-    P512SigningKey::from_slice(ec_private_key.1.private_key).map_err(|e| {
-        RawSignerError::InvalidSigningCredentials(format!("invalid ES512 private key: {e}"))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -249,6 +186,41 @@ mod tests {
         } else {
             unreachable!("Expected InvalidSigningCredentials error");
         }
+    }
+
+    #[test]
+    fn test_invalid_private_keys() {
+        let cert_chain =
+            include_bytes!("../../../../../tests/fixtures/crypto/raw_signature/es512.pub");
+        for (algorithm, curve) in [
+            (SigningAlg::Es256, "ES256"),
+            (SigningAlg::Es384, "ES384"),
+            (SigningAlg::Es512, "ES512"),
+        ] {
+            let result = EcdsaSigner::from_cert_chain_and_private_key(
+                cert_chain,
+                b"not a PEM private key",
+                algorithm,
+                None,
+            );
+            match result {
+                Err(RawSignerError::InvalidSigningCredentials(message)) => {
+                    assert!(message.starts_with(&format!("invalid {curve} private key:")));
+                }
+                _ => panic!("Expected invalid {curve} private key error"),
+            }
+        }
+
+        assert!(matches!(
+            EcdsaSigner::from_cert_chain_and_private_key(
+                cert_chain,
+                &[0xff],
+                SigningAlg::Es512,
+                None,
+            ),
+            Err(RawSignerError::InvalidSigningCredentials(message))
+                if message.starts_with("invalid private key:")
+        ));
     }
 
     #[test]

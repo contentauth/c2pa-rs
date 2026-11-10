@@ -1162,7 +1162,7 @@ impl Ingredient {
 
         debug!(
             "Adding Ingredient {:?} {:?}",
-            ingredient_assertion.title, &active_manifest
+            ingredient_assertion.title, active_manifest
         );
 
         // keep track of the assertion label for this ingredient.

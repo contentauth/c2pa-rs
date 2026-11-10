@@ -543,12 +543,12 @@ impl MakeTestImages {
             image::open(Path::new(src_path)).context(format!("loading OGP image{src_path:?}"))?;
         img = img.grayscale();
         img.save(&dst_path)
-            .context(format!("saving OGP image{:?}", &dst_path))?;
+            .context(format!("saving OGP image{:?}", dst_path))?;
         let image = std::fs::read(&dst_path).context("reading OGP image")?;
         let mut dest = std::fs::File::create(&dst_path).context("creating OGP image")?;
         // write the original claim data to the edited image
         save_jumbf_to_stream(&format, &mut Cursor::new(image), &mut dest, &jumbf)
-            .context(format!("OGP save_jumbf_to_file {:?}", &dst_path))?;
+            .context(format!("OGP save_jumbf_to_file {:?}", dst_path))?;
         // The image library does not preserve any metadata so we have to write it ourselves.
         // todo: should preserve all metadata and update instanceId.
         Ok(dst_path)

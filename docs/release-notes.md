@@ -2,6 +2,54 @@
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
+## v0.87 maintenance backport scope
+
+This maintenance branch starts at `c2pa-v0.87.0` and backports the changes
+introduced in `c2pa-v0.90.23`: eMudhra TLS distrust, coordinated Rust-native ECDSA
+dependency updates, ZIP archive compatibility, and the accompanying tooling,
+documentation, and release-credential fixes. It does not import newer SDK
+features or all security fixes from the intervening releases. It additionally
+updates the dependencies needed to pass the security audit and repairs
+compatibility with the current CI toolchain. The public API and Rust 1.88 minimum
+are unchanged. Native consumers must rebuild and redistribute their binaries to
+receive the TLS updates; see [usage](usage.md).
+
+### Additional dependency-security and CI fixes
+
+The maintenance lockfile now resolves the following older dependency issues,
+without advisory exemptions:
+
+| Dependency | Previous version | Resolved version | Known issue |
+| --- | --- | --- | --- |
+| `anyhow` | 1.0.102 | 1.0.104 | [RUSTSEC-2026-0190](https://rustsec.org/advisories/RUSTSEC-2026-0190) |
+| `crossbeam-epoch` | 0.9.18 | 0.9.21 | [RUSTSEC-2026-0204](https://rustsec.org/advisories/RUSTSEC-2026-0204): invalid pointer dereference in pointer formatting |
+| `h2` | 0.4.14 | 0.4.20 | [RUSTSEC-2026-0258](https://rustsec.org/advisories/RUSTSEC-2026-0258): unbounded empty DATA frames |
+| `lopdf` | 0.39.0 | 0.44.0 | [RUSTSEC-2026-0187](https://rustsec.org/advisories/RUSTSEC-2026-0187): stack overflow on deeply nested PDF objects |
+| `quick-xml` | 0.39.4 | 0.41.0 | [RUSTSEC-2026-0194](https://rustsec.org/advisories/RUSTSEC-2026-0194) and [RUSTSEC-2026-0195](https://rustsec.org/advisories/RUSTSEC-2026-0195): XML CPU and memory exhaustion |
+| `ttf-parser` | 0.25.1 | Removed through `lopdf` update | [RUSTSEC-2026-0192](https://rustsec.org/advisories/RUSTSEC-2026-0192): unmaintained |
+| `spin` | 0.9.8 | 0.9.9 | Yanked dependency version |
+
+The PDF feature also requires `time` 0.3.55 so consumers with older lockfiles do
+not select a version lacking `lopdf`'s required date-formatting API. Native and
+atomics-enabled WebAssembly builds retain `lopdf`'s parallel processing;
+single-threaded WebAssembly and WASI disable its default features to avoid
+thread-spawn panics. XMP text extraction is adapted to `quick-xml` 0.41 while
+preserving UTF-8 decoding and the existing escaped-entity behavior.
+
+`async-trait` 0.1.92 fixes generated `must_use` attributes rejected by the current
+Clippy. Other fixes remove redundant formatting borrows, simplify iteration and
+control flow, and correct the redundant `TextSelector` rustdoc link. The existing
+Clippy size-warning allowances are retained rather than boxing public enum
+variants or changing the error API. Regression tests cover legacy archive
+resources, invalid paths and indices, invalid ECDSA private keys, invalid stapled
+OCSP responses in both sync and async paths, and XMP text compatibility.
+
+### Older known issues not addressed by this backport
+
+Earlier ID3 decoder and BMFF sample-reader hardening from the v0.90 line is also
+outside this backport. This branch is not security-equivalent to v0.90.23 and is
+not a substitute for upgrading to a supported release containing those fixes.
+
 ## Version 0.79.4
 
 ### Deprecation of thread-local settings APIs
