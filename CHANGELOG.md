@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.87.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.87.2...c2pa-v0.87.3)
+_10 November 2026_
+
+### Fixed
+
+* Backport v0.90.23 security and tooling fixes to v0.87 ([#3058](https://github.com/contentauth/c2pa-rs/pull/3058))
+
 ## [0.87.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.87.1...c2pa-v0.87.2)
 _10 November 2026_
 
