@@ -23,6 +23,8 @@
 // This approach supports dynamic assertions (e.g., CAWG) and gives clients
 // full control over the embedding and hashing process.
 
+#![allow(clippy::result_large_err)]
+
 use std::{
     io::{Cursor, Seek, Write},
     path::PathBuf,
