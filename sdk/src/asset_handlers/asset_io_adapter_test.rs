@@ -37,15 +37,10 @@ pub(crate) fn fixture_paths() -> Vec<PathBuf> {
         }
     }
     let mut paths = Vec::new();
-    // On WASI, Wasmtime preopens the SDK directory at `/`; host paths from
-    // `CARGO_MANIFEST_DIR` are not available inside the test module.
-    #[cfg(target_os = "wasi")]
-    let fixture_dir = PathBuf::from("/");
-    #[cfg(not(target_os = "wasi"))]
-    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture_dir = crate::utils::test::fixture_path("");
 
     // The fixtures folder itself, as before; the corpus, all the way down.
-    walk(&fixture_dir.join("tests/fixtures"), 0, 0, &mut paths);
+    walk(&fixture_dir, 0, 0, &mut paths);
     if let Some(dir) = std::env::var_os("ASSET_IO_CORPUS") {
         walk(std::path::Path::new(&dir), 0, 32, &mut paths);
     }
