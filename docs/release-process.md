@@ -131,6 +131,18 @@ We use [`release-plz`](https://release-plz.dev) (via the [GitHub Action wrapper]
 
 Both workflows share the `release-plz-${{ github.ref }}` concurrency group, with cancellation disabled, so preparation and publication for the same ref cannot run simultaneously.
 
+Both commands use a generated configuration with a branch-specific
+`pr_branch_prefix`: `stable-release-plz-` on `stable`, `v0.90-release-plz-` on
+`v0.90`, and so on. The tracked configuration is unchanged; the generated copy
+lives in the runner's temporary directory. Release-plz only manages PRs matching
+this prefix. This prevents a stable run from adopting a retired line's PR and
+carrying that line's history into a new release PR after a failed rebase.
+
+When migrating from the shared `release-plz-` prefix, close outstanding old-prefix
+release PRs and regenerate them from their intended release-line branches.
+Do not merge a PR whose history includes unrelated maintenance-line commits;
+changing the workflow does not repair an already-contaminated PR.
+
 #### Manual releases on retired lines
 
 For `v0.90`, dispatch preparation and publication separately, in this order:
