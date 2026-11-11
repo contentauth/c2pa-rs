@@ -33,11 +33,14 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
-    assertions::Metadata,
+    assertions::{Actions, Metadata},
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    jumbf::labels::{
+        assertion_label_from_uri, manifest_label_from_uri, to_absolute_uri, to_assertion_uri,
+        to_relative_uri,
+    },
     log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
@@ -1134,6 +1137,50 @@ impl Reader {
                         .label()
                         .starts_with(crate::assertions::labels::ARCHIVE_METADATA)
                     {
+                        continue;
+                    }
+                    // An action's references to this manifest's ingredients carry the hashes of
+                    // those assertions as signed, but the rebuilt manifest adds them again with
+                    // fresh salts. Turn the references back into ingredient ids, so the builder
+                    // references the new assertions.
+                    if assertion.label().starts_with(Actions::LABEL) {
+                        let mut actions: Actions = assertion.to_assertion()?;
+                        for action in actions.actions_mut() {
+                            let Some(parameters) = action.parameters.as_mut() else {
+                                continue;
+                            };
+                            let ids: Option<Vec<String>> = parameters
+                                .ingredients
+                                .iter()
+                                .flatten()
+                                .map(|reference| {
+                                    let url = reference.url();
+                                    let target = assertion_label_from_uri(&url)?;
+                                    let canonical = to_assertion_uri(label, &target);
+                                    if url != canonical && url != to_relative_uri(&canonical) {
+                                        return None; // another manifest's ingredient
+                                    }
+                                    builder
+                                        .definition
+                                        .ingredients
+                                        .iter()
+                                        .find(|ingredient| {
+                                            ingredient.label() == Some(target.as_str())
+                                        })
+                                        .map(Ingredient::effective_id_internal)
+                                })
+                                .collect();
+                            if let Some(ids) = ids.filter(|ids| !ids.is_empty()) {
+                                parameters.ingredients = None;
+                                action.set_parameter_ref("ingredientIds", ids)?;
+                            }
+                        }
+                        builder.add_assertion_impl(
+                            assertion.label(),
+                            &actions,
+                            None,
+                            assertion.created(),
+                        )?;
                         continue;
                     }
                     // For archive roundtrip: keep created/gathered attribution and kind
