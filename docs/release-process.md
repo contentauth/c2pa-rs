@@ -128,6 +128,18 @@ We use [`release-plz`](https://release-plz.dev) (via the [GitHub Action wrapper]
 1. `release-plz release` publishes any merged release PR to crates.io, creates GitHub releases, and tags them `(crate-name)-v(version)`.
 2. After publishing completes, a fresh checkout runs `release-plz release-pr`: for each published crate it inspects commits since the last tag and opens or updates a **release PR** that bumps the version and updates the changelog. Running this second is essential: after a release PR merges, it must see the tag created by the publish job rather than calculating another release from the previous tag. Because the generated PR targets a release-line branch, it runs the full Tier 1A + 1B + 2 suite (see [validation gating](#validation-gating)).
 
+Both commands use a generated configuration with a branch-specific
+`pr_branch_prefix`: `stable-release-plz-` on `stable`, `v0.91-release-plz-` on
+`v0.91`, and so on. The tracked configuration is unchanged; the generated copy
+lives in the runner's temporary directory. Release-plz only manages PRs matching
+this prefix. This prevents a stable run from adopting a retired line's PR and
+carrying that line's history into a new release PR after a failed rebase.
+
+When migrating from the shared `release-plz-` prefix, close outstanding old-prefix
+release PRs and regenerate them from their intended release-line branches.
+Do not merge a PR whose history includes unrelated maintenance-line commits;
+changing the workflow does not repair an already-contaminated PR.
+
 Retired `v0.*` release lines are **manual-only**: pushes, backport merges, and release-PR merges do not prepare release PRs or publish crates. For a `v0.91` backport, dispatch these workflows in order:
 
 1. Run `gh workflow run release-pr.yml --repo contentauth/c2pa-rs --ref v0.91` to prepare or update the release PR.

@@ -72,6 +72,9 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
 
+      - name: Scope release-plz to this release line
+        run: python3 .github/scripts/release_plz_config.py
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
@@ -90,6 +93,7 @@ jobs:
         uses: MarcoIeni/release-plz-action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5.133
         with:
           command: release
+          config: ${{ runner.temp }}/release-plz.toml
           verbose: true
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
@@ -142,6 +146,9 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
 
+      - name: Scope release-plz to this release line
+        run: python3 .github/scripts/release_plz_config.py
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
@@ -151,6 +158,7 @@ jobs:
         uses: MarcoIeni/release-plz-action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5.133
         with:
           command: release-pr
+          config: ${{ runner.temp }}/release-plz.toml
           verbose: true
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
