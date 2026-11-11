@@ -5,7 +5,99 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.92.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.11...c2pa-c-ffi-v0.92.0)
+_11 November 2026_
+
+### Added
+
+* Staple OCSP responses for the signing certificate chain ([#2954](https://github.com/contentauth/c2pa-rs/pull/2954))
+* [**breaking**] Remove APIs that were marked deprecated in 0.91 ([#2751](https://github.com/contentauth/c2pa-rs/pull/2751))
+* Expose a dedicated (C FFI) API to set a label on the Builder ([#2781](https://github.com/contentauth/c2pa-rs/pull/2781))
+
+### Fixed
+
+* Pin Emscripten to the last-green Rust nightly ([#2987](https://github.com/contentauth/c2pa-rs/pull/2987))
+* *(c2pa_c_ffi)* Validate callback signature length ([#2758](https://github.com/contentauth/c2pa-rs/pull/2758))
+* Bump id3 to 1.17.2 to cap decompressed ID3v2 frame size ([#2699](https://github.com/contentauth/c2pa-rs/pull/2699))
+* Use scrambled opaque IDs instead of real addresses for c_ffi handles ([#2559](https://github.com/contentauth/c2pa-rs/pull/2559))
+
+### Other
+
+* Fix miri errors in `c2pa-c-ffi` tests ([#3013](https://github.com/contentauth/c2pa-rs/pull/3013))
+
+## [0.91.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.7...c2pa-c-ffi-v0.91.8)
+_02 November 2026_
+
+### Fixed
+
+* Pin Emscripten to the last-green Rust nightly (backport #2987) ([#2988](https://github.com/contentauth/c2pa-rs/pull/2988))
+* *(c2pa_c_ffi)* Validate callback signature length (backport #2758) ([#2947](https://github.com/contentauth/c2pa-rs/pull/2947))
+
+## [0.91.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.2...c2pa-c-ffi-v0.91.3)
+_16 October 2026_
+
+### Added
+
+* Expose a dedicated (C FFI) API to set a label on the Builder (backport #2781) ([#2788](https://github.com/contentauth/c2pa-rs/pull/2788))
+
+## [0.91.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.0...c2pa-c-ffi-v0.91.1)
+_26 September 2026_
+
+### Fixed
+
+* Bump id3 to 1.17.2 to cap decompressed ID3v2 frame size (backport #2699) ([#2716](https://github.com/contentauth/c2pa-rs/pull/2716))
+
+## [0.91.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.22...c2pa-c-ffi-v0.91.0)
+_21 September 2026_
+
+### Added
+
+* Credential-holder identity signer in the C API ([#2603](https://github.com/contentauth/c2pa-rs/pull/2603))
+* Clean up asset_io, rename things, share common code, and add private registry through `Context` ([#2491](https://github.com/contentauth/c2pa-rs/pull/2491))
+* [**breaking**] Update for C2PA 2.3 spec ([#2545](https://github.com/contentauth/c2pa-rs/pull/2545))
+
+### Fixed
+
+* Resolve new Rust 1.98.0 Clippy lint (chunks_exact_to_as_chunks) ([#2528](https://github.com/contentauth/c2pa-rs/pull/2528))
+* Emscripten build which lost its header ([#2395](https://github.com/contentauth/c2pa-rs/pull/2395))
+* Builder style c_ffi_api functions will now consistently consume the self parameter ([#2344](https://github.com/contentauth/c2pa-rs/pull/2344))
+* [**breaking**] Enforce trusted-issuer allow-list for CAWG ICA credentials (CAI-11347) ([#2209](https://github.com/contentauth/c2pa-rs/pull/2209))
+
+### Other
+
+* Revert "chore: release v0.91.0 ([#2690](https://github.com/contentauth/c2pa-rs/pull/2690))"
+
+### Breaking changes
+
+* **Trust-list settings restructured for multiple named trust lists** ([#2545](https://github.com/contentauth/c2pa-rs/pull/2545)) — the top-level `cawg_trust` settings section is gone. C2PA claim-generator, CAWG, and TSA trust configuration now live together under `trust.anchors`, an array of `{ trust_uri, trust_kind, trust_anchors, trust_config, allowed_list, trusted_ica_issuers }` entries distinguished by `trust_kind` (e.g. `"manifest"`), replacing the old single `trust.trust_anchors` / `trust.trust_config` / `trust.user_anchors` / `trust.allowed_list` fields. If you configure trust via the `Settings` JSON passed through the C API, update it to the new `trust.anchors[]` shape — see [`docs/context-settings.md`](../docs/context-settings.md) for the current schema.
+* **CAWG ICA issuers must be explicitly trusted** ([#2209](https://github.com/contentauth/c2pa-rs/pull/2209)) — the new `trusted_ica_issuers` list (part of `trust.anchors[]`, see above) defaults to empty, so no CAWG claims-aggregation issuer is trusted until you list it explicitly; a previously-accepted, unlisted issuer now fails with `cawg.ica.untrusted_issuer`.
+
+> [!NOTE]
+> This release also carries roughly 70 `#[deprecated]` items accumulated in the Rust SDK since the last breaking-changes train. Per our [deprecation policy](../docs/deprecation-policy.md), the next breaking-changes release — planned for mid-November 2026 — will delete every API still marked deprecated at that point.
+
+## [0.90.23](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.22...c2pa-c-ffi-v0.90.23)
+_10 November 2026_
+
+## [0.90.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.15...c2pa-c-ffi-v0.90.16)
+_27 August 2026_
+
+### Fixed
+
+* Resolve new Rust 1.98.0 Clippy lint (chunks_exact_to_as_chunks) (backport #2528) ([#2531](https://github.com/contentauth/c2pa-rs/pull/2531))
+
+## [0.90.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.3...c2pa-c-ffi-v0.90.4)
+_04 August 2026_
+
+### Fixed
+
+* Emscripten build which lost its header (backport #2395) ([#2396](https://github.com/contentauth/c2pa-rs/pull/2396))
+
+## [0.90.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.89.3...c2pa-c-ffi-v0.90.0)
+_16 July 2026_
+
+### Changed
+
+* Transition release onto the new scheduled breaking-change release train (see [release process](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-process.md)). This is a version-only bump: there are no `c2pa-c-ffi` library code changes since 0.89.3 ([#2250](https://github.com/contentauth/c2pa-rs/pull/2250)).
 
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
 _11 June 2026_
