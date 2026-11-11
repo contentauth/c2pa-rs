@@ -29,7 +29,7 @@ Most changes never wait for the train: anything additive ships fairly quickly by
 | `v0.x` (e.g. `v0.89`) | A long-lived branch for a **retired** release line, snapshotted from `stable` when that line is retired. A potential target if a security or other critical bug fix is made to a retired line. | Yes (rare backports) |
 | `0.(x+1).0-rc` (release-candidate branch) | A transient breaking candidate, cut from `main`, that bakes before promotion. Its name ends in `-rc` so it is validated by CI but **never** matches a crates.io publish trigger. Individual **builds** cut from it (`-rc.1`, `-rc.2`, …) are tagged and get *prerelease* GitHub releases with binaries, but are never published to crates.io. | crates.io: **No**; GitHub-release binaries: **yes** |
 
-The branch-name conventions are also the crates.io publish guard: the publish workflow only ever runs on `stable` and `v0.*`, and the `-rc`-named candidate branch matches neither, so a candidate can never be published to crates.io by construction. (Its build tags carry the `-rc.` prerelease marker and drive binary-only GitHub releases; see [RC builds](#release-candidate-builds).)
+The branch-name conventions are also the crates.io publish guard: the publish workflow runs automatically only on `stable`; `v0.*` lines require manual dispatch. Both release workflows reject dispatches on `main` and release-candidate refs, so a candidate cannot be published to crates.io. (Its build tags carry the `-rc.` prerelease marker and drive binary-only GitHub releases; see [RC builds](#release-candidate-builds).)
 
 Two rules keep this coherent:
 
@@ -123,10 +123,51 @@ Cutting a release is mostly a CI action rather than manual toil. The pieces:
 
 ### release-plz
 
-We use [`release-plz`](https://release-plz.dev) (via the [GitHub Action wrapper](https://github.com/release-plz/action)), configured by [`release-plz.toml`](https://github.com/contentauth/c2pa-rs/blob/main/release-plz.toml). Its two responsibilities run as ordered jobs in [`release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release.yml) on release-line branches, never on `main` or release-candidate branches:
+We use [`release-plz`](https://release-plz.dev) (via the [GitHub Action wrapper](https://github.com/release-plz/action)), configured by [`release-plz.toml`](https://github.com/contentauth/c2pa-rs/blob/main/release-plz.toml). On each push to `stable`, its two responsibilities run automatically as ordered jobs in [`release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release.yml), never on `main` or release-candidate branches:
 
 1. `release-plz release` publishes any merged release PR to crates.io, creates GitHub releases, and tags them `(crate-name)-v(version)`.
 2. After publishing completes, a fresh checkout runs `release-plz release-pr`: for each published crate it inspects commits since the last tag and opens or updates a **release PR** that bumps the version and updates the changelog. Running this second is essential: after a release PR merges, it must see the tag created by the publish job rather than calculating another release from the previous tag. Because the generated PR targets a release-line branch, it runs the full Tier 1A + 1B + 2 suite (see [validation gating](#validation-gating)).
+
+Both commands use a generated configuration with a branch-specific
+`pr_branch_prefix`: `stable-release-plz-` on `stable`, `v0.90-release-plz-` on
+`v0.90`, and so on. The tracked configuration is unchanged; the generated copy
+lives in the runner's temporary directory. Release-plz only manages PRs matching
+this prefix. This prevents a stable run from adopting a retired line's PR and
+carrying that line's history into a new release PR after a failed rebase.
+
+When migrating from the shared `release-plz-` prefix, close outstanding old-prefix
+release PRs and regenerate them from their intended release-line branches.
+Do not merge a PR whose history includes unrelated maintenance-line commits;
+changing the workflow does not repair an already-contaminated PR.
+
+#### Retired release lines: manual-only
+
+Pushes and pull request events on retired `v0.*` lines do not prepare release PRs
+or publish crates. To release a backport, manually dispatch these workflows on
+the target line (replace `v0.90` with the branch being released):
+
+1. Run `gh workflow run release-pr.yml --repo contentauth/c2pa-rs --ref v0.90`.
+2. Review and merge the generated release PR.
+3. Run `gh workflow run release.yml --repo contentauth/c2pa-rs --ref v0.90`.
+4. Wait for publication and tag-driven binary builds before preparing another release.
+
+The separate [`release-pr.yml`](../.github/workflows/release-pr.yml) workflow runs
+only `release-plz release-pr`, using `RELEASE_PLZ_ORG_TOKEN` with no crates.io
+publishing token. A manual dispatch of `release.yml` runs only the publishing
+job, using `RELEASE_PLZ_ORG_TOKEN` and `CRATES_IO_ORG_TOKEN`; it does not prepare
+another release PR. Both workflows share a per-ref concurrency group without
+cancelling in-progress releases, and neither deletes other lines' release branches.
+Manual dispatches on `stable` are also available, but its normal push-triggered
+publish-then-prepare sequence remains automatic.
+
+> [!IMPORTANT]
+> Do not rerun release-PR preparation between merging and publishing a retired
+> line's release. Release-plz compares against the latest registry release, which
+> may belong to a newer line, and can incorrectly bump an unpublished maintenance
+> version again. Manual-only triggers prevent automatic reruns; they do not fix
+> the upstream comparison.
+
+#### Release artifacts and version selection
 
 The `c2pa-v*` tag then drives the binary build ([`library-release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/library-release.yml)): `release.yml` no longer builds binaries itself, which is what lets release-candidate builds produce the same binaries from the same tag (see [RC builds](#release-candidate-builds)).
 
