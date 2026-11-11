@@ -301,6 +301,9 @@ pub struct C2paHttpRequest {
     pub body: *const c_uchar,
     /// Length of `body` in bytes
     pub body_len: usize,
+    /// Total time limit for this request in milliseconds, or 0 if none.
+    /// The callback must enforce it, including receiving the response body.
+    pub timeout_ms: u64,
 }
 
 /// HTTP response filled in by the resolver callback.
@@ -328,6 +331,7 @@ struct OwnedC2paHttpRequest {
     method: std::ffi::CString,
     headers: std::ffi::CString,
     body: Vec<u8>,
+    timeout_ms: u64,
 }
 
 impl TryFrom<c2pa::http::http::Request<Vec<u8>>> for OwnedC2paHttpRequest {
@@ -349,6 +353,13 @@ impl TryFrom<c2pa::http::http::Request<Vec<u8>>> for OwnedC2paHttpRequest {
             .collect();
         let headers =
             CString::new(headers_str).map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+        // Round up so a sub-millisecond remainder is not reported as 0 (no limit).
+        let timeout_ms = request
+            .extensions()
+            .get::<c2pa::http::RequestTimeout>()
+            .map_or(0, |c2pa::http::RequestTimeout(timeout)| {
+                u64::try_from(timeout.as_nanos().div_ceil(1_000_000)).unwrap_or(u64::MAX)
+            });
         let body = request.into_body();
 
         Ok(Self {
@@ -356,6 +367,7 @@ impl TryFrom<c2pa::http::http::Request<Vec<u8>>> for OwnedC2paHttpRequest {
             method,
             headers,
             body,
+            timeout_ms,
         })
     }
 }
@@ -375,6 +387,7 @@ impl OwnedC2paHttpRequest {
             headers: self.headers.as_ptr(),
             body,
             body_len,
+            timeout_ms: self.timeout_ms,
         }
     }
 }
@@ -409,7 +422,8 @@ impl TryFrom<C2paHttpResponse> for c2pa::http::http::Response<Box<dyn std::io::R
 /// Callback type for custom HTTP request resolution.
 ///
 /// Called synchronously by Rust when an HTTP request is needed
-/// (remote manifest fetch, OCSP, timestamp, etc.).
+/// (remote manifest fetch, OCSP, timestamp, etc.). The SDK cannot interrupt
+/// the callback, so it must enforce `request->timeout_ms` when non-zero.
 ///
 /// Returns 0 on success, non-zero on error. On error, call
 /// `c2pa_error_set_last()` before returning.
@@ -2771,6 +2785,95 @@ mod tests {
         ($path:expr) => {
             concat!("../../sdk/tests/fixtures/", $path)
         };
+    }
+
+    unsafe extern "C" fn capture_timeout(
+        context: *mut c_void,
+        request: *const C2paHttpRequest,
+        response: *mut C2paHttpResponse,
+    ) -> c_int {
+        unsafe {
+            *(context as *mut u64) = (*request).timeout_ms;
+            (*response).status = 200;
+        }
+        0
+    }
+
+    #[test]
+    fn test_http_resolver_callback_receives_timeout_ms() {
+        use std::time::Duration;
+
+        use c2pa::http::{RequestTimeout, SyncHttpResolver};
+
+        for (timeout, expected) in [
+            (None, 0),
+            (Some(Duration::from_millis(2_000)), 2_000),
+            (Some(Duration::from_micros(1)), 1),
+            (Some(Duration::from_micros(1_500)), 2),
+            (Some(Duration::MAX), u64::MAX),
+        ] {
+            let mut seen = u64::MAX - 1;
+            let resolver = C2paHttpResolver {
+                context: &mut seen as *mut u64 as *const c_void,
+                callback: capture_timeout,
+            };
+            let mut request = c2pa::http::http::Request::get("https://example.com/manifest");
+            if let Some(timeout) = timeout {
+                request = request.extension(RequestTimeout(timeout));
+            }
+            let response = resolver.http_resolve(request.body(Vec::new()).unwrap());
+            assert_eq!(response.unwrap().status(), 200);
+            assert_eq!(seen, expected);
+        }
+    }
+
+    #[test]
+    fn test_remote_manifest_timeout_reaches_c_callback() {
+        for (setting, expected) in [(None, 10_000), (Some("2500"), 2_500)] {
+            let mut seen = 0u64;
+            let builder = unsafe { c2pa_context_builder_new() };
+            if let Some(setting) = setting {
+                let settings = unsafe { c2pa_settings_new() };
+                let path = CString::new("verify.remote_manifest_request_timeout_in_ms").unwrap();
+                let value = CString::new(setting).unwrap();
+                assert_eq!(
+                    unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) },
+                    0
+                );
+                assert_eq!(
+                    unsafe { c2pa_context_builder_set_settings(builder, settings) },
+                    0
+                );
+                assert_eq!(unsafe { c2pa_free(settings as *const c_void) }, 0);
+            }
+            let resolver = unsafe {
+                c2pa_http_resolver_create(&mut seen as *mut u64 as *const c_void, capture_timeout)
+            };
+            assert_eq!(
+                unsafe { c2pa_context_builder_set_http_resolver(builder, resolver) },
+                0
+            );
+            let context = unsafe { c2pa_context_builder_build(builder) };
+            assert!(!context.is_null());
+
+            let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
+            let format = CString::new("image/jpeg").unwrap();
+            let reader = unsafe {
+                c2pa_reader_with_stream(
+                    c2pa_reader_from_context(context),
+                    format.as_ptr(),
+                    stream.as_ptr(),
+                )
+            };
+            if !reader.is_null() {
+                assert_eq!(unsafe { c2pa_free(reader as *const c_void) }, 0);
+            }
+            assert_eq!(unsafe { c2pa_free(context as *const c_void) }, 0);
+            assert!(
+                (expected - 100..=expected).contains(&seen),
+                "expected about {expected} ms, got {seen}"
+            );
+        }
     }
 
     /// Helper to create a signer and builder for testing

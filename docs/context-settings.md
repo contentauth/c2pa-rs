@@ -117,6 +117,34 @@ End-to-end protection requires the binding or HTTP adapter to enforce a limit
 while receiving the response, before buffering or copying it.
 Increasing it allows correspondingly larger Store allocations.
 
+### Configuring remote manifest timeouts
+
+`verify.remote_manifest_request_timeout_in_ms` sets the total time limit for a
+remote manifest fetch in **milliseconds**. The default is **10,000 ms** (10 seconds).
+The value must be positive; zero does not disable the timeout. It applies when the
+`fetch_remote_manifests` feature is enabled.
+
+For example, to limit each fetch to two seconds:
+
+```rust
+use c2pa::{Context, Result};
+
+fn main() -> Result<()> {
+  let context = Context::new()
+    .with_settings_value("verify.remote_manifest_request_timeout_in_ms", 2_000u64)?;
+  Ok(())
+}
+```
+
+Native built-in reqwest and ureq resolvers enforce the limit while receiving
+headers and the response body. SDK-managed redirects share the same budget.
+Timeouts return `Error::RemoteManifestFetch`. Custom resolvers must honor the
+`c2pa::http::RequestTimeout` request extension themselves. C and C++ HTTP resolver
+callbacks receive the remaining limit as `C2paHttpRequest.timeout_ms` (0 means no
+limit) and must apply it to their HTTP client; the SDK cannot interrupt a callback.
+The browser-based reqwest resolver on WASM cannot enforce this timeout. This is a per-fetch limit,
+not an overall deadline or cancellation mechanism for reading an asset.
+
 ### Configuring time-stamp requests
 
 A blocking time-stamp request is retried after a transient failure (no answer, a timeout,
@@ -350,6 +378,7 @@ Here's the `Settings` JSON with all default values:
     "ocsp_fetch": false,
     "ocsp_fetch_should_override": false,
     "remote_manifest_fetch": true,
+    "remote_manifest_request_timeout_in_ms": 10000,
     "max_manifest_response_size": 10485760,
     "skip_ingredient_conflict_resolution": false,
     "strict_v1_validation": false

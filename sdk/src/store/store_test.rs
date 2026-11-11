@@ -5887,12 +5887,15 @@ mod remote_manifest_response_tests {
     use super::*;
     use crate::{
         http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
-        settings::DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
+        settings::{
+            DEFAULT_MAX_MANIFEST_RESPONSE_SIZE, DEFAULT_REMOTE_MANIFEST_REQUEST_TIMEOUT_IN_MS,
+        },
     };
 
     const TEST_RESPONSE_SIZE: u64 = 16;
 
     struct Resolver {
+        expected_timeout_in_ms: u64,
         content_length: Option<&'static str>,
         body_length: u64,
         error_after: Option<u64>,
@@ -5940,8 +5943,14 @@ mod remote_manifest_response_tests {
     impl SyncHttpResolver for Resolver {
         fn http_resolve(
             &self,
-            _request: http::Request<Vec<u8>>,
+            request: http::Request<Vec<u8>>,
         ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+            assert_eq!(
+                request.extensions().get::<crate::http::RequestTimeout>(),
+                Some(&crate::http::RequestTimeout(
+                    std::time::Duration::from_millis(self.expected_timeout_in_ms,)
+                ))
+            );
             let mut response = http::Response::builder().status(200);
             if let Some(len) = self.content_length {
                 response = response.header(http::header::CONTENT_LENGTH, len);
@@ -5990,6 +5999,10 @@ mod remote_manifest_response_tests {
     ) -> (Result<Vec<u8>>, usize) {
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let resolver = Arc::new(Resolver {
+            expected_timeout_in_ms: context
+                .settings()
+                .verify
+                .remote_manifest_request_timeout_in_ms,
             content_length,
             body_length,
             error_after,
@@ -6015,11 +6028,96 @@ mod remote_manifest_response_tests {
     }
 
     #[c2pa_test_async]
+    async fn test_remote_manifest_request_timeout_reaches_custom_resolvers() {
+        for use_async in [false, true] {
+            for timeout_in_ms in [1, 250, 10_000] {
+                let context = Context::new()
+                    .with_settings_value(
+                        "verify.remote_manifest_request_timeout_in_ms",
+                        timeout_in_ms,
+                    )
+                    .unwrap();
+                let (result, bytes_read) =
+                    fetch_with_context(context, None, 3, None, use_async).await;
+                assert_eq!(result.unwrap(), b"xxx");
+                assert_eq!(bytes_read, 3);
+            }
+        }
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(feature = "http_ureq", feature = "http_reqwest_blocking")
+    ))]
+    #[test]
+    fn test_remote_manifest_sync_timeout_bounds_headers_and_body() {
+        use std::time::{Duration, Instant};
+
+        for delay_body in [false, true] {
+            let (url, server) = crate::http::tests::slow_server(delay_body);
+            let context = Context::new()
+                .with_settings_value("verify.remote_manifest_request_timeout_in_ms", 100u64)
+                .unwrap();
+            let started = Instant::now();
+            let result = Store::fetch_remote_manifest(&url, &context);
+            let elapsed = started.elapsed();
+            server.join().unwrap();
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(_))),
+                "{result:?}"
+            );
+            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
+            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+        }
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "http_reqwest"))]
+    #[tokio::test]
+    async fn test_remote_manifest_async_timeout_bounds_headers_and_body() {
+        use std::time::{Duration, Instant};
+
+        for delay_body in [false, true] {
+            let (url, server) = crate::http::tests::slow_server(delay_body);
+            let context = Context::new()
+                .with_settings_value("verify.remote_manifest_request_timeout_in_ms", 100u64)
+                .unwrap();
+            let started = Instant::now();
+            let result = Store::fetch_remote_manifest_async(&url, &context).await;
+            let elapsed = started.elapsed();
+            server.join().unwrap();
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(_))),
+                "{result:?}"
+            );
+            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
+            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_directly_mutated_zero_timeout_rejected() {
+        for use_async in [false, true] {
+            let mut context = Context::new();
+            context
+                .settings_mut()
+                .verify
+                .remote_manifest_request_timeout_in_ms = 0;
+            let (result, bytes_read) = fetch_with_context(context, None, 1, None, use_async).await;
+            assert!(
+                matches!(result, Err(Error::BadParam(ref msg)) if msg.contains("remote_manifest_request_timeout_in_ms")),
+                "expected invalid timeout error, got {result:?}"
+            );
+            assert_eq!(bytes_read, 0);
+        }
+    }
+
+    #[c2pa_test_async]
     async fn test_remote_manifest_overflow_probe_retries_interrupted() {
         for use_async in [false, true] {
             for body_length in [TEST_RESPONSE_SIZE, TEST_RESPONSE_SIZE + 1] {
                 let bytes_read = Arc::new(AtomicUsize::new(0));
                 let resolver = Arc::new(Resolver {
+                    expected_timeout_in_ms: DEFAULT_REMOTE_MANIFEST_REQUEST_TIMEOUT_IN_MS,
                     content_length: None,
                     body_length,
                     error_after: None,

@@ -601,7 +601,7 @@ pub mod tests {
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn slow_server(delay_body: bool) -> (String, std::thread::JoinHandle<()>) {
+    pub(crate) fn slow_server(delay_body: bool) -> (String, std::thread::JoinHandle<()>) {
         use std::{
             io::{BufRead, BufReader, Write},
             net::TcpListener,

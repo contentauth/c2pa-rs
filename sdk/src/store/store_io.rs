@@ -1065,7 +1065,16 @@ impl Store {
         let max_response_size = context.settings().verify.max_manifest_response_size;
         context.check_progress(ProgressPhase::FetchingRemoteManifest, 1, 1)?;
 
-        let request = http::Request::get(url).body(Vec::new())?;
+        let request = http::Request::get(url)
+            .extension(crate::http::RequestTimeout(
+                std::time::Duration::from_millis(
+                    context
+                        .settings()
+                        .verify
+                        .remote_manifest_request_timeout_in_ms,
+                ),
+            ))
+            .body(Vec::new())?;
         let response = if _sync {
             context.resolver().http_resolve(request)
         } else {
