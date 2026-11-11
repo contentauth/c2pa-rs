@@ -12,10 +12,17 @@ members = [
 
 # members in this workspace can share this version setting
 [workspace.package]
+<<<<<<< Updated upstream
 version = "0.90.23"
 
 [workspace.dependencies]
 c2pa = { path = "sdk", version = "0.90.23", default-features = false }
+=======
+version = "0.92.0"
+
+[workspace.dependencies]
+c2pa = { path = "sdk", version = "0.92.0", default-features = false }
+>>>>>>> Stashed changes
 
 [profile.dev]
 opt-level = 1          # allows test code to run faster at a small compile time cost
