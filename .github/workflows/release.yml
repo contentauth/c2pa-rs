@@ -5,8 +5,9 @@ name: Release-plz publish
 # Under the open-source release process (see docs/release-process.md), crates
 # are published ONLY from release-line branches -- never from `main` (which is
 # nightly-like and intentionally unpublished) and never from release-candidate
-# branches (which bake before promotion). A push to a release-line branch
-# happens when a release-plz release PR (see release-pr.yml) is merged.
+# branches (which bake before promotion). Stable publishes automatically when
+# a release-plz release PR (see release-pr.yml) is merged. Retired v0.x lines
+# publish only by manual dispatch after their release PR is merged.
 #
 # release-plz creates the `c2pa-v*` and `c2patool-v*` tags here; those tags then
 # drive the binary builds in library-release.yml and c2patool-release.yml. This
@@ -15,14 +16,18 @@ name: Release-plz publish
 # same binaries via release-rc.yml's tags.
 
 permissions:
-  pull-requests: write
+  pull-requests: read
   contents: write
 
 on:
   push:
     branches:
       - stable # currently-active release line
-      - 'v0.*' # long-lived per-line branches (backports to retired lines)
+  workflow_dispatch:
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # Refuse to publish if a [patch]/git dependency is present. Such deps are used
@@ -32,16 +37,22 @@ jobs:
   # published version.
   guard-no-patch-deps:
     name: Guard against patch/git dependencies
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/stable') ||
+      (github.event_name == 'workflow_dispatch' &&
+      (github.ref == 'refs/heads/stable' || startsWith(github.ref, 'refs/heads/v0.')) &&
+      !contains(github.ref_name, '-rc'))
     uses: ./.github/workflows/check-no-patch-deps.yml
 
   release-plz:
     name: Release-plz
     runs-on: ubuntu-latest
     needs: guard-no-patch-deps
-    # Defense in depth: release-candidate branches must never publish, even if
-    # one were ever added to the triggers above. RC branches are named
-    # `<version>-rc` (no numeric suffix), so match on `-rc` rather than `-rc.`.
-    if: ${{ !contains(github.ref_name, '-rc') }}
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/stable') ||
+      (github.event_name == 'workflow_dispatch' &&
+      (github.ref == 'refs/heads/stable' || startsWith(github.ref, 'refs/heads/v0.')) &&
+      !contains(github.ref_name, '-rc'))
 
     steps:
       - name: Checkout repository
@@ -80,3 +91,32 @@ jobs:
           echo "=== Release-plz releases ==="
           echo "$RELEASES"
           echo "==========================="
+
+  release-pr:
+    name: Prepare next stable release PR
+    needs: release-plz
+    if: github.event_name == 'push' && github.ref == 'refs/heads/stable'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Run release-plz (release-pr)
+        uses: MarcoIeni/release-plz-action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
+        with:
+          command: release-pr
+          verbose: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
