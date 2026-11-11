@@ -2662,6 +2662,189 @@ fn add_ingredient_assertion_to_claim(
     Ok(())
 }
 
+#[c2pa_test_async]
+async fn test_redacted_ingredient_signature_binding() {
+    use crate::{
+        hashed_uri::HashedUri,
+        jumbf::labels::to_signature_uri,
+        utils::test::{create_test_store, create_test_store_v1},
+        ValidationResults,
+    };
+
+    let context = Context::new();
+    let signer = test_signer(SigningAlg::Ps256);
+
+    for version in [1, 2] {
+        let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+        let mut store = if version == 1 {
+            create_test_store_v1().unwrap()
+        } else {
+            create_test_store().unwrap()
+        };
+        store
+            .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+        output.rewind().unwrap();
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let store = Store::from_stream(format, &mut output, &mut report, &context).unwrap();
+        let child = store.provenance_claim().unwrap();
+        assert_eq!(child.version(), version);
+        let hashes = store.get_manifest_box_hashes(child);
+
+        for ingredient_version in [1, 2, 3] {
+            for (redacted, manifest_matches, signature_hash, expected_status) in [
+                (
+                    true,
+                    true,
+                    Some(vec![0; hashes.signature_box_hash.len()]),
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH),
+                ),
+                (
+                    true,
+                    true,
+                    Some(hashes.signature_box_hash.clone()),
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_VALIDATED),
+                ),
+                (
+                    true,
+                    true,
+                    None,
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING),
+                ),
+                (
+                    false,
+                    true,
+                    None,
+                    Some(validation_status::INGREDIENT_MANIFEST_VALIDATED),
+                ),
+                (
+                    false,
+                    false,
+                    None,
+                    Some(validation_status::INGREDIENT_MANIFEST_MISMATCH),
+                ),
+            ] {
+                if ingredient_version < 3 && signature_hash.is_some() {
+                    continue;
+                }
+
+                let expected_status = if ingredient_version < 3 && redacted {
+                    None
+                } else {
+                    expected_status
+                };
+                let mut parent = Claim::new("redaction binding test", Some("test"), 2);
+                parent.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+                let manifest_hash = if manifest_matches {
+                    hashes.manifest_box_hash.clone()
+                } else {
+                    vec![0; hashes.manifest_box_hash.len()]
+                };
+                let manifest = HashedUri::new(
+                    store.provenance_path().unwrap(),
+                    Some(child.alg().to_owned()),
+                    &manifest_hash,
+                );
+                let signature = signature_hash.map(|hash| {
+                    HashedUri::new(
+                        to_signature_uri(child.label()),
+                        Some(child.alg().to_owned()),
+                        &hash,
+                    )
+                });
+                let ingredient = if ingredient_version < 3 {
+                    let mut ingredient = if ingredient_version == 1 {
+                        Ingredient::new("legacy ingredient", format, "test-instance-id", None)
+                    } else {
+                        Ingredient::new_v2("legacy ingredient", format)
+                    };
+                    ingredient.c2pa_manifest = Some(manifest);
+                    ingredient
+                } else {
+                    Ingredient::new_v3(Relationship::ComponentOf)
+                        .set_active_manifests_and_signature_from_hashed_uri(
+                            Some(manifest),
+                            signature,
+                        )
+                        .set_validation_results(Some(ValidationResults::from_store(
+                            &store, &report,
+                        )))
+                };
+                parent.add_assertion(&ingredient).unwrap();
+                let mut svi = StoreValidationInfo::default();
+                if redacted {
+                    svi.redactions
+                        .push(to_assertion_uri(child.label(), labels::SCHEMA_ORG_INTERNAL));
+                }
+
+                for synchronous in [true, false] {
+                    let mut validation_log =
+                        StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                    let mut visited = HashSet::new();
+                    let result = if synchronous {
+                        Store::ingredient_checks(
+                            &store,
+                            &parent,
+                            &svi,
+                            &mut validation_log,
+                            0,
+                            &context,
+                            &mut visited,
+                        )
+                    } else {
+                        Store::ingredient_checks_async(
+                            &store,
+                            &parent,
+                            &svi,
+                            &mut validation_log,
+                            0,
+                            &context,
+                            &mut visited,
+                        )
+                        .await
+                    };
+                    if let Some(expected_status) = expected_status {
+                        assert!(
+                            validation_log.has_status(expected_status),
+                            "ingredient-v{ingredient_version}, Claim-v{version}, \
+                         redacted={redacted}, sync={synchronous}: \
+                         expected {expected_status}, got {result:?}"
+                        );
+                    } else {
+                        for status in [
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING,
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH,
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_VALIDATED,
+                            validation_status::INGREDIENT_MANIFEST_VALIDATED,
+                        ] {
+                            assert!(
+                                !validation_log.has_status(status),
+                                "legacy redacted ingredient must not report {status}"
+                            );
+                        }
+                    }
+
+                    let should_fail = matches!(
+                        expected_status,
+                        Some(
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH
+                                | validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING
+                                | validation_status::INGREDIENT_MANIFEST_MISMATCH
+                        )
+                    );
+                    assert_eq!(
+                        result.is_err(),
+                        should_fail,
+                        "ingredient-v{ingredient_version}, Claim-v{version}, \
+                     redacted={redacted}, sync={synchronous}, \
+                     expected {expected_status:?}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn test_ingredient_conflict_with_current_manifest() {
     use crate::{
@@ -5925,6 +6108,30 @@ mod remote_manifest_response_tests {
     };
 
     const TEST_RESPONSE_SIZE: u64 = 16;
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_direct_metadata_url_blocked() {
+        for allow_redirects in [true, false] {
+            let context = Context::new()
+                .with_settings_value("core.allow_redirects", allow_redirects)
+                .unwrap();
+            for url in [
+                "http://169.254.169.254/latest/meta-data/",
+                "http://[fe80::1]/",
+                "http://[fd00:ec2::254]/",
+            ] {
+                for result in [
+                    Store::fetch_remote_manifest(url, &context),
+                    Store::fetch_remote_manifest_async(url, &context).await,
+                ] {
+                    assert!(
+                        matches!(&result, Err(Error::RemoteManifestFetch(msg)) if msg.contains("link-local") && msg.contains("cloud-metadata")),
+                        "expected the metadata guard error for {url}, got {result:?}"
+                    );
+                }
+            }
+        }
+    }
 
     struct Resolver {
         content_length: Option<&'static str>,
