@@ -9,6 +9,116 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.92.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.11...c2pa-v0.92.0)
+_11 November 2026_
+
+### Added
+
+* [**breaking**] Configure timestamp retries through the signing context ([#3012](https://github.com/contentauth/c2pa-rs/pull/3012))
+* Refactor is_zero implementation ([#1615](https://github.com/contentauth/c2pa-rs/pull/1615))
+* Add verify.ocsp_fetch_should_override to force live OCSP retrieval ([#2787](https://github.com/contentauth/c2pa-rs/pull/2787))
+* Staple OCSP responses for the signing certificate chain ([#2954](https://github.com/contentauth/c2pa-rs/pull/2954))
+* Adopt c2pa_raw_crypto 0.2.0 and updated ECDSA stack ([#2908](https://github.com/contentauth/c2pa-rs/pull/2908))
+* [**breaking**] Remove APIs that were marked deprecated in 0.91 ([#2751](https://github.com/contentauth/c2pa-rs/pull/2751))
+* Implement pdf manifest writing ([#2666](https://github.com/contentauth/c2pa-rs/pull/2666))
+
+### Documented
+
+* *(sdk)* Note that missing and non-UTF8 Organization both become None ([#2665](https://github.com/contentauth/c2pa-rs/pull/2665))
+* *(sdk)* Add example using an archived ingredient as the parent ([#2871](https://github.com/contentauth/c2pa-rs/pull/2871))
+
+### Fixed
+
+* Compile with Rust version 1.100 (backport #3042) ([#3044](https://github.com/contentauth/c2pa-rs/pull/3044))
+* [**breaking**] Collection data hash type definition ([#3018](https://github.com/contentauth/c2pa-rs/pull/3018))
+* *(sdk)* Isolate rejected TSA profile diagnostics ([#3031](https://github.com/contentauth/c2pa-rs/pull/3031))
+* *(sdk)* Bound OCSP fetch allocation and reject oversized bodies ([#3030](https://github.com/contentauth/c2pa-rs/pull/3030))
+* Verify RSA-PSS and SKI timestamp signers ([#3015](https://github.com/contentauth/c2pa-rs/pull/3015))
+* *(sdk)* Accept issuer-signed OCSP responses without embedded certificates ([#3019](https://github.com/contentauth/c2pa-rs/pull/3019))
+* *(sdk)* Honor the configured EKU list for claim signers ([#2854](https://github.com/contentauth/c2pa-rs/pull/2854))
+* Enforce CAWG interim certificate policy and cutoff ([#3024](https://github.com/contentauth/c2pa-rs/pull/3024))
+* Isolate OCSP evidence collection diagnostics ([#3023](https://github.com/contentauth/c2pa-rs/pull/3023))
+* Restore redacted V1/V2 ingredient compatibility ([#3021](https://github.com/contentauth/c2pa-rs/pull/3021))
+* Require claimSignature check for redacted Claim-v1 ingredients ([#3006](https://github.com/contentauth/c2pa-rs/pull/3006))
+* *(sdk)* Find `x5chain` by either label and reject malformed chains ([#2895](https://github.com/contentauth/c2pa-rs/pull/2895))
+* Reject non-hashed icon references during validation (CAI-13410) ([#2919](https://github.com/contentauth/c2pa-rs/pull/2919))
+* Explicitly enable raw crypto serde support ([#3001](https://github.com/contentauth/c2pa-rs/pull/3001))
+* Preserve numeric arrays and CBOR bytes in JSON reports ([#2998](https://github.com/contentauth/c2pa-rs/pull/2998))
+* Reject stale OCSP responses without a trusted timestamp (CAI-13263) ([#2921](https://github.com/contentauth/c2pa-rs/pull/2921))
+* Add built-in EKUs by default ([#2755](https://github.com/contentauth/c2pa-rs/pull/2755))
+* [**breaking**] Encode collection hash URIs as array and preserve backwards compatibility ([#2753](https://github.com/contentauth/c2pa-rs/pull/2753))
+* Add deprecation warning log for v1 claim signing ([#2937](https://github.com/contentauth/c2pa-rs/pull/2937))
+* Reject box-hash assets with data after the last box ([#2949](https://github.com/contentauth/c2pa-rs/pull/2949))
+* *(sdk)* Report X.509 identity signature statuses against the identity assertion ([#2841](https://github.com/contentauth/c2pa-rs/pull/2841))
+* Only require an absolute claim signature URI from Spec 2.3 ([#2971](https://github.com/contentauth/c2pa-rs/pull/2971))
+* *(sdk)* Do not report claimSignature.insideValidity with claimSignature.outsideValidity ([#2853](https://github.com/contentauth/c2pa-rs/pull/2853))
+* *(sdk)* Do not report claimSignature.validated after the credential is rejected ([#2852](https://github.com/contentauth/c2pa-rs/pull/2852))
+* *(sdk)* Report an expired CA certificate as claimSignature.outsideValidity ([#2819](https://github.com/contentauth/c2pa-rs/pull/2819))
+* *(sdk)* Do not report a revoked signing credential as trusted ([#2823](https://github.com/contentauth/c2pa-rs/pull/2823))
+* *(sdk)* Do not report a good OCSP response outside its window as revoked ([#2822](https://github.com/contentauth/c2pa-rs/pull/2822))
+* *(sdk)* Report signingCredential.ocsp.skipped for an unusable stapled response ([#2821](https://github.com/contentauth/c2pa-rs/pull/2821))
+* *(sdk)* Use the time-stamp genTime as the attested time ([#2816](https://github.com/contentauth/c2pa-rs/pull/2816))
+* *(sdk)* Verify time-stamp signed attributes as encoded ([#2815](https://github.com/contentauth/c2pa-rs/pull/2815))
+* *(sdk)* Ignore OCSP responses whose thisUpdate is in the future ([#2820](https://github.com/contentauth/c2pa-rs/pull/2820))
+* *(sdk)* Do not report an unchecked certificate as not revoked ([#2897](https://github.com/contentauth/c2pa-rs/pull/2897))
+* *(sdk)* Enforce certificate key usage rules ([#2972](https://github.com/contentauth/c2pa-rs/pull/2972))
+* *(sdk)* Keep claim-signer and TSA trust anchors separate ([#2817](https://github.com/contentauth/c2pa-rs/pull/2817))
+* Support legacy MOV files without ftyp boxes ([#2967](https://github.com/contentauth/c2pa-rs/pull/2967))
+* Require an absolute claim signature URI for v2 claims ([#2890](https://github.com/contentauth/c2pa-rs/pull/2890))
+* Exclude private credential store from time-stamp trust validation ([#2951](https://github.com/contentauth/c2pa-rs/pull/2951))
+* Harden against BMFF Merkle validation bypass from HashMap-ordered mdat pairing ([#2946](https://github.com/contentauth/c2pa-rs/pull/2946))
+* Bound remote manifest response reads (CAI-13473) ([#2920](https://github.com/contentauth/c2pa-rs/pull/2920))
+* *(sdk)* Send signer TSA headers with timestamp assertion requests ([#2762](https://github.com/contentauth/c2pa-rs/pull/2762))
+* *(sdk)* Serialize binary thumbnails with crJSON MIME fields ([#2917](https://github.com/contentauth/c2pa-rs/pull/2917))
+* Remove redundant dhat bench ([#2942](https://github.com/contentauth/c2pa-rs/pull/2942))
+* Encode soft binding block values as CBOR bstr when supplied as JSON ([#2689](https://github.com/contentauth/c2pa-rs/pull/2689)) ([#2757](https://github.com/contentauth/c2pa-rs/pull/2757))
+* Don't auto-add a second actions assertion for v1 claims (CAI-13962) ([#2782](https://github.com/contentauth/c2pa-rs/pull/2782))
+* Enforce compatible TLS dependency minimums ([#2930](https://github.com/contentauth/c2pa-rs/pull/2930))
+* Require eMudhra distrust updates in TLS dependencies ([#2928](https://github.com/contentauth/c2pa-rs/pull/2928))
+* Bmff_io type check not allowing valid mov ([#2894](https://github.com/contentauth/c2pa-rs/pull/2894))
+* Ignore RFC 3161 timestamps with SHA-1 messageImprint ([#2830](https://github.com/contentauth/c2pa-rs/pull/2830))
+* Validate ed25519 certs have no alg params ([#2785](https://github.com/contentauth/c2pa-rs/pull/2785))
+* Fix namespacing on SVG root element support ([#2801](https://github.com/contentauth/c2pa-rs/pull/2801))
+* Decrease MAX_HASH_BUF to 16MB ([#2734](https://github.com/contentauth/c2pa-rs/pull/2734))
+* Derive manifest box order from JUMBF type UUID, not label ([#2739](https://github.com/contentauth/c2pa-rs/pull/2739))
+* Reject thumbnails in update manifests (CAI-13254) ([#2743](https://github.com/contentauth/c2pa-rs/pull/2743))
+* Limit xref-decompression in lopdf to 64 MB (CAI-13300) ([#2744](https://github.com/contentauth/c2pa-rs/pull/2744))
+* Do not depend on target dir location in test ([#2754](https://github.com/contentauth/c2pa-rs/pull/2754))
+* Ensure generator actions are created_actions ([#2720](https://github.com/contentauth/c2pa-rs/pull/2720))
+* Rust 1.99 Clippy warning ([#2749](https://github.com/contentauth/c2pa-rs/pull/2749))
+* Use claim signature URI for OCSP status codes ([#2728](https://github.com/contentauth/c2pa-rs/pull/2728))
+* Only encode claim CBOR with specVersion if it's present in claim ([#2746](https://github.com/contentauth/c2pa-rs/pull/2746))
+* Reject BMFF Merkle proof boxes with non-sequential locations ([#2702](https://github.com/contentauth/c2pa-rs/pull/2702))
+* Ignore unreferenced claims when reconciling validation statuses ([#2686](https://github.com/contentauth/c2pa-rs/pull/2686))
+* Validate live OCSP responder certs at current time and complete claim verification on revocation ([#2688](https://github.com/contentauth/c2pa-rs/pull/2688))
+* Skip only the real C2PA jumb box in JPEG XL box hashing ([#2695](https://github.com/contentauth/c2pa-rs/pull/2695))
+* CAWG identity assertion mismatch reporting ([#2713](https://github.com/contentauth/c2pa-rs/pull/2713))
+* Reject invalid RSA public exponents in certificate profiles (CAI-13156) ([#2712](https://github.com/contentauth/c2pa-rs/pull/2712))
+* Bump id3 to 1.17.2 to cap decompressed ID3v2 frame size ([#2699](https://github.com/contentauth/c2pa-rs/pull/2699))
+* Check values to avoid underflow in identity flows ([#2697](https://github.com/contentauth/c2pa-rs/pull/2697))
+* Bound cumulative TIFF IFD entry byte counts to file size ([#2669](https://github.com/contentauth/c2pa-rs/pull/2669))
+* Reject oversized XMP instead of panicking on JPEG APP1 write ([#2687](https://github.com/contentauth/c2pa-rs/pull/2687))
+* Harden against integer underflow attacks in XMP trailer parsing ([#2670](https://github.com/contentauth/c2pa-rs/pull/2670))
+* Reject direct requests to link-local/cloud-metadata hosts by default ([#2683](https://github.com/contentauth/c2pa-rs/pull/2683))
+* Settings test fixtures are only accessible when running in `#[cfg(test)]` mode ([#2692](https://github.com/contentauth/c2pa-rs/pull/2692))
+* Report CBOR byte strings correctly in crJSON output ([#2672](https://github.com/contentauth/c2pa-rs/pull/2672))
+* Reject box-hash manifests with a truncated `boxes` list ([#2668](https://github.com/contentauth/c2pa-rs/pull/2668))
+* Cert-expiration check ignoring trusted timestamp for nested-ingredient claims ([#2679](https://github.com/contentauth/c2pa-rs/pull/2679))
+* Migrate legacy trust anchors in Settings::from_string() ([#2667](https://github.com/contentauth/c2pa-rs/pull/2667))
+* Reject data hash exclusions that don't match the manifest location ([#2653](https://github.com/contentauth/c2pa-rs/pull/2653))
+
+### Other
+
+* Cover a signing certificate with no Organization attribute ([#2662](https://github.com/contentauth/c2pa-rs/pull/2662))
+* Add bidirectional compatibility tests ([#2833](https://github.com/contentauth/c2pa-rs/pull/2833))
+* Expand X.509, RFC 3161, COSE and OCSP coverage ([#2903](https://github.com/contentauth/c2pa-rs/pull/2903))
+* Replace 4 GiB hash range test with a 32-bit-only check ([#2859](https://github.com/contentauth/c2pa-rs/pull/2859))
+
+### Updated dependencies
+
+* `zip` crate from 9.0.4 to 9.3.0 ([#3011](https://github.com/contentauth/c2pa-rs/pull/3011))
+* CodSpeed to latest ([#2940](https://github.com/contentauth/c2pa-rs/pull/2940))
+
 ### Deprecated
 
 * C2PA v1 claim signing is deprecated in 0.92.0 and will be removed in 0.93.0,

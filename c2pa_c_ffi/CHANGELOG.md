@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.92.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.11...c2pa-c-ffi-v0.92.0)
+_11 November 2026_
+
+### Added
+
+* Staple OCSP responses for the signing certificate chain ([#2954](https://github.com/contentauth/c2pa-rs/pull/2954))
+* [**breaking**] Remove APIs that were marked deprecated in 0.91 ([#2751](https://github.com/contentauth/c2pa-rs/pull/2751))
+* Expose a dedicated (C FFI) API to set a label on the Builder ([#2781](https://github.com/contentauth/c2pa-rs/pull/2781))
+
+### Fixed
+
+* Pin Emscripten to the last-green Rust nightly ([#2987](https://github.com/contentauth/c2pa-rs/pull/2987))
+* *(c2pa_c_ffi)* Validate callback signature length ([#2758](https://github.com/contentauth/c2pa-rs/pull/2758))
+* Bump id3 to 1.17.2 to cap decompressed ID3v2 frame size ([#2699](https://github.com/contentauth/c2pa-rs/pull/2699))
+* Use scrambled opaque IDs instead of real addresses for c_ffi handles ([#2559](https://github.com/contentauth/c2pa-rs/pull/2559))
+
+### Other
+
+* Fix miri errors in `c2pa-c-ffi` tests ([#3013](https://github.com/contentauth/c2pa-rs/pull/3013))
+
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
 _11 June 2026_
 
