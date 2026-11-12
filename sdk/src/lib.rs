@@ -265,6 +265,9 @@ pub(crate) enum SigningAlgSchema {
     Ps512,
     Ed25519,
 }
+#[cfg(feature = "asset_io")]
+#[doc(inline)]
+pub use asset_io::HandlerRegistry;
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use external_manifest::ManifestPatchCallback;

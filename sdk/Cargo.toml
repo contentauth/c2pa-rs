@@ -41,6 +41,9 @@ unstable_builder_filter = []
 # guarantees and may change or be removed in any release. See docs/experimental-features.md.
 unstable_plain_text = ["dep:unicode-normalization"]
 file_io = []
+# EXPERIMENT: JPEG, PNG, SVG, RIFF, TIFF/DNG, MP3, FLAC and GIF use asset-io;
+# PDF does too with the pdf feature.
+asset_io = ["dep:asset-io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
 openssl = [
@@ -94,10 +97,17 @@ name = "progress"
 [[example]]
 name = "redaction"
 
+# EXPERIMENT (local only, do not commit).
+[[example]]
+name = "asset_io_corpus"
+required-features = ["asset_io"]
+
 [lib]
 crate-type = ["lib"]
 
 [dependencies]
+# EXPERIMENT: asset-io integration.
+asset-io = { version = "0.4.0", optional = true, default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf", "tiff", "id3", "gif"] }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"

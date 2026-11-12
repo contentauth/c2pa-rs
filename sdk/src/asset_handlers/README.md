@@ -19,6 +19,26 @@ The system uses two `lazy_static` `HashMap`s that map file extension/MIME string
 
 At startup, each handler is instantiated, asked for its `supported_types()` (e.g., `["jpg", "jpeg", "image/jpeg"]`), and entries are created in the map for each type. When the SDK needs to process a file, it looks up the extension/MIME in the map and gets the appropriate handler.
 
+### Experimental asset-io adapter
+
+The `asset_io` feature routes JPEG, PNG, SVG, RIFF, TIFF and DNG formats through
+[`AssetIoAdapter`](./asset_io_adapter.rs); PDF uses it when `pdf` is also enabled.
+Other formats keep their built-in handlers. `TiffIO` still reads ARW and NEF, which
+asset-io does not declare; those formats remain read-only.
+
+The adapter uses asset-io's `ItemKind` and `Item` APIs to identify logical
+metadata, and item `extents()` to locate its bytes within segments. Segment
+`range()` includes container framing; item extents contain only stored payload.
+XMP and EXIF classification comes from items, not `SegmentKind::Metadata`,
+which does not distinguish metadata formats. Reads use `read_content()` to decode
+transfer encodings such as SVG base64. Same-size manifest replacement uses
+`patch_exact()` so signing preserves the layout used for hashing.
+
+The `asset_io_*_test` modules live alongside the handlers because they exercise
+crate-private handler and signing internals. They are unit tests enabled only
+with `asset_io`; public registry integration tests remain in
+[`sdk/tests/handler_registry.rs`](../../tests/handler_registry.rs).
+
 ### Lookup functions
 
 | Function | Returns | Purpose |

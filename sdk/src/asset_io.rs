@@ -11,12 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Traits for implementing a custom C2PA I/O handler for a file format.
+//! Internal traits for C2PA I/O handlers.
 //!
 //! The SDK ships with built-in handlers for common formats (JPEG, PNG, TIFF, MP4,
 //! WAV, GIF, ...). This module is what you implement to add support for a format
-//! the SDK doesn't natively handle, and to register it via
-//! [`Context::with_io_handler`](crate::Context::with_io_handler).
+//! the SDK doesn't natively handle internally. Public custom handler registration
+//! uses asset-io's `ContainerHandler`, not these legacy traits.
 //!
 //! There are three mandatory traits:
 //!
@@ -680,7 +680,7 @@ pub trait ComposedManifestRef {
     /// (e.g. a JPEG APP11 segment, or a PNG `caBX` chunk).
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
 }
-/// A registry of [`AssetIO`] handlers, dispatching by format string (a file extension or
+/// A registry of asset I/O handlers, dispatching by format string (a file extension or
 /// MIME type, e.g. `"jpg"` or `"image/jpeg"`).
 ///
 /// Handlers are matched by exact format string, case-insensitively and with surrounding
@@ -690,6 +690,29 @@ pub trait ComposedManifestRef {
 /// An optional `fallback` registry is consulted only when this registry has no match for a
 /// format. This lets a small registry (e.g. a caller's custom handlers) cheaply extend a
 /// larger one (e.g. the SDK's built-in handlers) without copying it.
+///
+/// With the `asset_io` feature, register custom asset-io `ContainerHandler`s with
+/// `add_handler`, or import an asset-io `HandlerRegistry` with `extend`.
+/// Legacy SDK handler traits remain internal.
+///
+/// ```
+/// # #[cfg(feature = "asset_io")]
+/// # {
+/// # use c2pa::{Context, HandlerRegistry};
+/// let mut context = Context::new();
+/// let registry: &HandlerRegistry = context.io();
+/// assert_eq!(registry.mime_for("jpg"), Some("image/jpeg"));
+/// context
+///     .io_mut()
+///     .extend(&asset_io::HandlerRegistry::builtin());
+/// # }
+/// ```
+///
+/// Legacy handlers cannot be implemented or registered through the public API:
+///
+/// ```compile_fail
+/// use c2pa::asset_io::AssetIO;
+/// ```
 pub struct HandlerRegistry {
     handlers: HashMap<String, Arc<dyn AssetIO>>,
     containers: HashMap<String, String>,
@@ -716,7 +739,7 @@ impl HandlerRegistry {
 
     /// Creates an empty registry that consults `fallback` for any format it has no handler
     /// for itself.
-    pub fn with_fallback(fallback: Arc<HandlerRegistry>) -> Self {
+    pub(crate) fn with_fallback(fallback: Arc<HandlerRegistry>) -> Self {
         Self {
             handlers: HashMap::new(),
             containers: HashMap::new(),
@@ -726,21 +749,51 @@ impl HandlerRegistry {
     }
 
     /// Registers `handler`, returning `self` for chaining.
-    #[allow(unused)] // Not public yet
-    pub fn with_handler(mut self, handler: impl AssetIO + 'static) -> Self {
+    #[cfg(feature = "asset_io")]
+    pub fn with_handler(
+        mut self,
+        handler: impl ::asset_io::container_api::ContainerHandler + 'static,
+    ) -> Self {
         self.add_handler(handler);
         self
     }
 
-    /// Registers `handler` for every format string in its [`AssetIO::supported_types`].
-    #[allow(unused)] // Not public yet
-    pub fn add_handler(&mut self, handler: impl AssetIO + 'static) {
-        self.add_boxed_handler(Box::new(handler));
+    /// Registers an asset-io container handler for every format it declares.
+    #[cfg(feature = "asset_io")]
+    pub fn add_handler(
+        &mut self,
+        handler: impl ::asset_io::container_api::ContainerHandler + 'static,
+    ) {
+        self.add_container_handler(Arc::new(handler));
     }
 
-    /// Like [`add_handler`](Self::add_handler), but takes an already-boxed handler. Useful
-    /// when the caller only has a `Box<dyn AssetIO>` (e.g. from another
-    /// [`AssetIO::get_handler`] call) rather than a concrete, sized type.
+    /// Registers every handler in an asset-io registry, in its registration order.
+    ///
+    /// Imported handlers override earlier registrations, including built-in fallbacks.
+    #[cfg(feature = "asset_io")]
+    pub fn extend(&mut self, registry: &::asset_io::HandlerRegistry) {
+        for handler in registry.handlers() {
+            self.add_container_handler(Arc::clone(handler));
+        }
+    }
+
+    #[cfg(feature = "asset_io")]
+    fn add_container_handler(
+        &mut self,
+        handler: Arc<dyn ::asset_io::container_api::ContainerHandler>,
+    ) {
+        self.add_boxed_handler(Box::new(
+            crate::asset_handlers::asset_io_adapter::AssetIoAdapter::from_handler(handler),
+        ));
+    }
+
+    #[cfg(test)]
+    fn with_legacy_handler(mut self, handler: impl AssetIO + 'static) -> Self {
+        self.add_boxed_handler(Box::new(handler));
+        self
+    }
+
+    /// Registers a legacy SDK handler internally.
     pub(crate) fn add_boxed_handler(&mut self, handler: Box<dyn AssetIO>) {
         let types = handler.supported_types();
         let Some(canonical) = types.first() else {
@@ -770,7 +823,7 @@ impl HandlerRegistry {
 
     /// Looks up the full [`AssetIO`] handler for `format`, checking `fallback` if this
     /// registry has no match.
-    pub fn handler(&self, format: &str) -> Option<&dyn AssetIO> {
+    pub(crate) fn handler(&self, format: &str) -> Option<&dyn AssetIO> {
         let key = normalize_format(format);
         match self.handlers.get(&key) {
             Some(h) => Some(h.as_ref()),
@@ -780,7 +833,7 @@ impl HandlerRegistry {
 
     /// Looks up the [`C2paReader`] for `format`, checking `fallback` if this registry has no
     /// match.
-    pub fn reader(&self, format: &str) -> Option<&dyn C2paReader> {
+    pub(crate) fn reader(&self, format: &str) -> Option<&dyn C2paReader> {
         self.handler(format).map(|h| h.get_reader())
     }
 
@@ -789,13 +842,13 @@ impl HandlerRegistry {
     ///
     /// Returns an owned `Box<dyn C2paWriter>` because [`AssetIO::get_writer`] allocates a new
     /// writer instance on each call.
-    pub fn writer(&self, format: &str) -> Option<Box<dyn C2paWriter>> {
+    pub(crate) fn writer(&self, format: &str) -> Option<Box<dyn C2paWriter>> {
         self.handler(format).and_then(|h| h.get_writer(format))
     }
 
     /// Looks up the full [`AssetIO`] handler for the file extension of `asset_path`, if any.
     #[cfg(feature = "file_io")]
-    pub fn handler_from_path(&self, asset_path: &Path) -> Option<&dyn AssetIO> {
+    pub(crate) fn handler_from_path(&self, asset_path: &Path) -> Option<&dyn AssetIO> {
         let ext = asset_path.extension()?.to_str()?;
         self.handler(ext)
     }
@@ -841,8 +894,8 @@ impl HandlerRegistry {
     /// Returns the canonical container-family id for `format`, checking `fallback` if this
     /// registry has no match.
     ///
-    /// The canonical id is the first entry in the registering handler's own
-    /// [`AssetIO::supported_types`] — e.g. `"dng"`, `"tif"`, and `"image/tiff"` all resolve to
+    /// The canonical id is the first format string declared by the handler —
+    /// e.g. `"dng"`, `"tif"`, and `"image/tiff"` all resolve to
     /// `"tif"`. Two format strings are the same container family iff their canonical ids
     /// match: `registry.container_for("dng") == registry.container_for("tif")`.
     pub fn container_for(&self, format: &str) -> Option<&str> {
@@ -871,7 +924,7 @@ impl HandlerRegistry {
     /// Returns the MIME type for `format` (an extension or MIME type), checking `fallback`
     /// if this registry has no match.
     ///
-    /// Derived from the registered handlers' [`AssetIO::mime_type_map`], so it's only known
+    /// Derived from the registered handlers' format metadata, so it's only known
     /// for a format string some registered handler actually supports.
     #[allow(dead_code)] // registry helper; warnings are expected on non-file_io builds
     pub fn mime_for(&self, format: &str) -> Option<&str> {
@@ -1286,8 +1339,8 @@ mod tests {
     #[test]
     fn test_last_registered_wins() {
         let reg = HandlerRegistry::new()
-            .with_handler(handler(&["x-custom/test"], b"A"))
-            .with_handler(handler(&["x-custom/test"], b"B"));
+            .with_legacy_handler(handler(&["x-custom/test"], b"A"))
+            .with_legacy_handler(handler(&["x-custom/test"], b"B"));
 
         let mut stream = Cursor::new(vec![]);
         let reader = reg.reader("x-custom/test").unwrap();
@@ -1296,10 +1349,11 @@ mod tests {
 
     #[test]
     fn test_fallback_is_only_consulted_when_own_handlers_miss() {
-        let base =
-            Arc::new(HandlerRegistry::new().with_handler(handler(&["image/jpeg"], b"builtin")));
-        let overlay =
-            HandlerRegistry::with_fallback(base).with_handler(handler(&["image/jpeg"], b"custom"));
+        let base = Arc::new(
+            HandlerRegistry::new().with_legacy_handler(handler(&["image/jpeg"], b"builtin")),
+        );
+        let overlay = HandlerRegistry::with_fallback(base)
+            .with_legacy_handler(handler(&["image/jpeg"], b"custom"));
 
         let mut stream = Cursor::new(vec![]);
         assert_eq!(
@@ -1314,10 +1368,11 @@ mod tests {
 
     #[test]
     fn test_fallback_covers_formats_not_registered_locally() {
-        let base =
-            Arc::new(HandlerRegistry::new().with_handler(handler(&["image/png"], b"builtin-png")));
+        let base = Arc::new(
+            HandlerRegistry::new().with_legacy_handler(handler(&["image/png"], b"builtin-png")),
+        );
         let overlay = HandlerRegistry::with_fallback(base)
-            .with_handler(handler(&["image/jpeg"], b"custom-jpeg"));
+            .with_legacy_handler(handler(&["image/jpeg"], b"custom-jpeg"));
 
         assert!(overlay.handler("image/png").is_some());
         assert!(overlay.handler("image/jpeg").is_some());
@@ -1327,8 +1382,8 @@ mod tests {
     #[test]
     fn test_container_for_groups_by_first_supported_type() {
         let reg = HandlerRegistry::new()
-            .with_handler(handler(&["tif", "dng", "image/tiff"], b"tiff"))
-            .with_handler(handler(&["avif", "mp4", "mov"], b"bmff"));
+            .with_legacy_handler(handler(&["tif", "dng", "image/tiff"], b"tiff"))
+            .with_legacy_handler(handler(&["avif", "mp4", "mov"], b"bmff"));
 
         assert_eq!(reg.container_for("dng"), reg.container_for("tif"));
         assert_eq!(reg.container_for("image/tiff"), reg.container_for("tif"));
@@ -1339,8 +1394,8 @@ mod tests {
     #[test]
     fn test_is_bmff_format() {
         let reg = HandlerRegistry::new()
-            .with_handler(handler(&["tif", "dng"], b"tiff"))
-            .with_handler(handler(&["avif", "mp4", "mov", "heic"], b"bmff"));
+            .with_legacy_handler(handler(&["tif", "dng"], b"tiff"))
+            .with_legacy_handler(handler(&["avif", "mp4", "mov", "heic"], b"bmff"));
 
         assert!(reg.is_bmff_format("mp4"));
         assert!(reg.is_bmff_format("heic"));
@@ -1351,8 +1406,8 @@ mod tests {
     #[test]
     fn test_is_zip_format() {
         let reg = HandlerRegistry::new()
-            .with_handler(handler(&["tif", "dng"], b"tiff"))
-            .with_handler(handler(&["zip", "epub", "docx"], b"zip"));
+            .with_legacy_handler(handler(&["tif", "dng"], b"tiff"))
+            .with_legacy_handler(handler(&["zip", "epub", "docx"], b"zip"));
 
         assert!(reg.is_zip_format("epub"));
         assert!(reg.is_zip_format("docx"));
@@ -1362,8 +1417,8 @@ mod tests {
 
     #[test]
     fn test_format_from_stream_detects_jpeg_from_bytes() {
-        let reg =
-            HandlerRegistry::new().with_handler(handler(&["jpg", "jpeg", "image/jpeg"], b"jpeg"));
+        let reg = HandlerRegistry::new()
+            .with_legacy_handler(handler(&["jpg", "jpeg", "image/jpeg"], b"jpeg"));
         let mut stream = Cursor::new(vec![0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
 
         // Hint disagrees with detected bytes: detected container wins.
@@ -1385,14 +1440,14 @@ mod tests {
 
     #[test]
     fn test_trims_and_lowercases_format_strings() {
-        let reg = HandlerRegistry::new().with_handler(handler(&["image/jpeg"], b"jpeg"));
+        let reg = HandlerRegistry::new().with_legacy_handler(handler(&["image/jpeg"], b"jpeg"));
         assert!(reg.handler("  IMAGE/JPEG  ").is_some());
     }
 
     #[test]
     fn test_mime_for_derives_default_from_supported_types() {
-        let reg =
-            HandlerRegistry::new().with_handler(handler(&["jpg", "jpeg", "image/jpeg"], b"jpeg"));
+        let reg = HandlerRegistry::new()
+            .with_legacy_handler(handler(&["jpg", "jpeg", "image/jpeg"], b"jpeg"));
         assert_eq!(reg.mime_for("jpg"), Some("image/jpeg"));
         assert_eq!(reg.mime_for("jpeg"), Some("image/jpeg"));
         assert_eq!(reg.mime_for("image/jpeg"), Some("image/jpeg"));
@@ -1404,7 +1459,7 @@ mod tests {
     /// override `mime_type_map()` to give each extension its own correct MIME type.
     #[test]
     fn test_mime_for_uses_explicit_mime_type_map_for_multi_format_handler() {
-        let reg = HandlerRegistry::new().with_handler(handler_with_mime_map(
+        let reg = HandlerRegistry::new().with_legacy_handler(handler_with_mime_map(
             &[
                 "avif",
                 "heif",
@@ -1441,7 +1496,7 @@ mod tests {
 
     #[test]
     fn test_format_from_path_uses_registered_handler() {
-        let reg = HandlerRegistry::new().with_handler(handler_with_mime_map(
+        let reg = HandlerRegistry::new().with_legacy_handler(handler_with_mime_map(
             &["heic", "image/heic"],
             b"bmff",
             &[("heic", "image/heic")],
