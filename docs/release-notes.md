@@ -16,13 +16,19 @@ receive the TLS updates; see [usage](usage.md).
 
 Tier 1A CI runs on pull requests targeting `v0.89` and pushes to that branch.
 The required semver check compares both library APIs against the pull request's
-base commit and enforces patch-release compatibility. Release publishing and
-the label-gated Tier 1B/2 workflows are unchanged.
+base commit and enforces patch-release compatibility. Tier 1B/2 workflows remain
+label-gated.
 
 To prepare a release PR, run the **Release-plz prepare PR** workflow with branch
 `v0.89`, or use `gh workflow run release-pr.yml --ref v0.89`. This manual-only
 workflow prepares version and changelog changes; it does not publish crates or
 release artifacts.
+
+After merging the release PR, run **Release-plz publish** with branch `v0.89`,
+or use `gh workflow run release.yml --ref v0.89`. This manual-only workflow
+publishes the crates and creates release tags using organization credentials.
+It also uploads c2patool binaries when that crate is released; the library
+release tag triggers the separate library-binary publishing workflow.
 
 ### Additional dependency-security and CI fixes
 

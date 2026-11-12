@@ -1,47 +1,21 @@
-name: Release-plz
+name: Release-plz publish
 
 permissions:
-  pull-requests: write
+  pull-requests: read
   contents: write
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  #   dry-run-release-plz:
-  #     name: Release-plz dry run
-  #     runs-on: ubuntu-latest
-  #     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release')
-  #
-  #     steps:
-  #       - name: Checkout repository
-  #         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-  #         with:
-  #           fetch-depth: 0
-  #           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-  #           ref: ${{ github.head_ref }}
-  #
-  #       - name: Install Rust toolchain
-  #         uses: dtolnay/rust-toolchain@stable
-  #
-  #       - name: Dry-run release-plz
-  #         uses: MarcoIeni/release-plz-action@v0.5.129
-  #         with:
-  #           command: release
-  #           dry_run: true
-  #           verbose: true
-  #         env:
-  #           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-  #           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
-
   release-plz:
-    name: Release-plz
+    name: Publish v0.89 release
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v0.89'
 
     outputs:
       c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
@@ -51,38 +25,22 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
-      - name: Run release-plz
+      - name: Run release-plz (release only)
         id: release-plz
         uses: MarcoIeni/release-plz-action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
         with:
+          command: release
           verbose: true
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
-
-      - name: Debug release-plz outputs
-        env:
-          PR: ${{ steps.release-plz.outputs.pr }}
-        run: |
-          echo "=== Release-plz outputs ==="
-          echo "RP output: $PR"
-          echo "========================="
-
-      - name: Clean up stale release-plz branches
-        run: |
-          git --no-pager branch --remote |\
-            grep 'origin/release-plz-' |\
-            sort -r |\
-            tail -n +2 |\
-            sed 's/origin\///' |\
-            xargs -I {} git push origin --delete {}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_ORG_TOKEN }}
 
       - name: Identify c2patool release
         id: sniff-c2patool-release-tag
@@ -95,6 +53,7 @@ jobs:
 
   publish-c2patool-binaries:
     name: Publish c2patool binaries
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v0.89' && needs.release-plz.outputs.c2patool-release-tag != ''
     runs-on: ${{ matrix.os }}
     needs: release-plz
 
