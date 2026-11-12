@@ -791,7 +791,7 @@ impl ActionTemplate {
 /// other information such as what software performed the action.
 ///
 /// See [Actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_actions)
-#[derive(Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Actions {
     /// A list of [`Action`]s.
@@ -963,7 +963,23 @@ impl AssertionBase for Actions {
     }
 
     fn to_assertion(&self) -> Result<Assertion> {
-        Self::to_cbor_assertion(self)
+        // This is always written as `c2pa.actions.v2`, where `softwareAgent` is a
+        // `generator-info-map`. The string form is only valid in a v1 `c2pa.actions`
+        // assertion, so write it as a generator-info-map with that name.
+        if !self
+            .actions
+            .iter()
+            .any(|a| matches!(a.software_agent, Some(SoftwareAgent::String(_))))
+        {
+            return Self::to_cbor_assertion(self);
+        }
+        let mut actions = self.clone();
+        for action in &mut actions.actions {
+            if let Some(SoftwareAgent::String(name)) = &action.software_agent {
+                action.software_agent = Some(ClaimGeneratorInfo::new(name.as_str()).into());
+            }
+        }
+        Self::to_cbor_assertion(&actions)
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {
@@ -1249,10 +1265,32 @@ pub mod tests {
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
-        assert_eq!(original.actions, result.actions);
+        // A string softwareAgent is written in the v2 generator-info-map form.
+        let mut expected = original.actions.clone();
+        expected[0].software_agent = Some(ClaimGeneratorInfo::new("TestApp").into());
+        expected[1].software_agent = Some(ClaimGeneratorInfo::new("TestApp 1.0").into());
+        assert_eq!(expected, result.actions);
+    }
+
+    #[test]
+    fn string_software_agent_is_written_as_generator_info_map() {
+        let original = Actions::new().add_action(
+            Action::new(c2pa_action::CREATED)
+                .set_source_type(DigitalSourceType::DigitalCapture)
+                .set_software_agent("Fabrikam Camera 2.0"),
+        );
+        let assertion = original.to_assertion().expect("build_assertion");
+        assert_eq!(assertion.label(), Actions::LABEL_VERSIONED);
+
+        let raw: serde_json::Value = c2pa_cbor::from_slice(assertion.data()).expect("decode");
         assert_eq!(
-            result.actions[0].software_agent().unwrap(),
-            &SoftwareAgent::String("TestApp".to_string())
+            raw["actions"][0]["softwareAgent"],
+            serde_json::json!({ "name": "Fabrikam Camera 2.0" })
+        );
+        // The caller's value is not changed.
+        assert_eq!(
+            original.actions[0].software_agent(),
+            Some(&SoftwareAgent::String("Fabrikam Camera 2.0".to_owned()))
         );
     }
 
