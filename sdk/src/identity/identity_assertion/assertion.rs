@@ -44,8 +44,11 @@ use crate::{
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
     settings::TrustListKind,
-    status_tracker::StatusTracker,
-    validation_status::{CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_VALIDATED},
+    status_tracker::{LogKind, StatusTracker},
+    validation_status::{
+        CAWG_X509_CREDENTIAL_TRUSTED, CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_MISMATCH,
+        CAWG_X509_SIGNATURE_VALIDATED,
+    },
     Manifest, Reader,
 };
 
@@ -310,6 +313,11 @@ impl IdentityAssertion {
         context: &Context,
     ) -> Result<serde_json::Value, ValidationError<String>> {
         let settings = context.settings();
+
+        // Remember where this assertion's log items start, so that we can tell
+        // whether validation reported a failure before issuing a success code.
+        let first_item = status_tracker.logged_items().len();
+
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -427,14 +435,19 @@ impl IdentityAssertion {
             };
             let result = info.to_summary();
 
-            log_current_item!(
+            // CAWG Identity 1.3 §7.2: `cawg.identity.trusted` or
+            // `cawg.identity.well-formed` means the identity assertion was
+            // validated. Don't issue either if a §7.1 check (padding, referenced
+            // assertions, hard binding) or the signature itself failed.
+            // `cawg.x509.credential.untrusted` alone doesn't prevent it:
+            // "well-formed" is defined as validated with no root of trust
+            // identified for the named actor.
+            report_identity_validated(
+                status_tracker,
+                first_item,
+                CAWG_X509_CREDENTIAL_TRUSTED,
                 "CAWG X.509 identity signature valid",
-                "validate_partial_claim"
-            )
-            .validation_status("cawg.identity.well-formed")
-            .success(status_tracker);
-            // TO DO (CAI-7980): Should instead issue `cawg.identity.trusted` if the
-            // signing cert is found on a configured trust list.
+            );
 
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
@@ -459,6 +472,16 @@ impl IdentityAssertion {
             // credential is valid and its issuer is trusted (i.e. no
             // `cawg.ica.untrusted_issuer` notice was generated). We must not issue
             // it again here, or an untrusted issuer would be reported as valid.
+            //
+            // It does stand for a root of trust for the named actor, so §7.2's
+            // `cawg.identity.trusted` follows from it; a credential from an
+            // untrusted issuer that is otherwise valid is `well-formed`.
+            report_identity_validated(
+                status_tracker,
+                first_item,
+                CAWG_ICA_CREDENTIAL_VALID,
+                "CAWG identity claims aggregation credential valid",
+            );
 
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
@@ -522,6 +545,45 @@ impl Debug for IdentityAssertion {
             .field("label", &self.label)
             .finish()
     }
+}
+
+const CAWG_ICA_CREDENTIAL_VALID: &str = "cawg.ica.credential_valid";
+
+/// Issue `cawg.identity.trusted` (if `trusted_code` was logged for this
+/// assertion) or `cawg.identity.well-formed` (CAWG Identity 1.3 §7.2), unless
+/// validation reported a failure.
+fn report_identity_validated(
+    status_tracker: &mut StatusTracker,
+    first_item: usize,
+    trusted_code: &str,
+    description: &'static str,
+) {
+    if has_validation_failure(status_tracker, first_item) {
+        return;
+    }
+    let trusted = status_tracker.logged_items()[first_item..]
+        .iter()
+        .any(|item| {
+            item.kind == LogKind::Success && item.validation_status.as_deref() == Some(trusted_code)
+        });
+    log_current_item!(description, "validate_partial_claim")
+        .validation_status(if trusted {
+            "cawg.identity.trusted"
+        } else {
+            "cawg.identity.well-formed"
+        })
+        .success(status_tracker);
+}
+
+/// True if any failure other than `cawg.x509.credential.untrusted` was logged
+/// at index `first_item` or later.
+fn has_validation_failure(status_tracker: &StatusTracker, first_item: usize) -> bool {
+    status_tracker.logged_items()[first_item..]
+        .iter()
+        .any(|item| {
+            item.kind == LogKind::Failure
+                && item.validation_status.as_deref() != Some(CAWG_X509_CREDENTIAL_UNTRUSTED)
+        })
 }
 
 #[cfg(test)]
