@@ -290,6 +290,16 @@ mod tests {
         "self#jumbf=c2pa/contentauth:urn:uuid:a58065fb-79ae-4eb3-87b9-a19830860059/c2pa.claim";
 
     #[test]
+    fn read_xmp_tag_preserves_text() {
+        for value in ["urn:test:&amp;literal", "urn:test:\u{e9}"] {
+            let xmp = format!(
+                r#"<xmpMM:DocumentID xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/">{value}</xmpMM:DocumentID>"#
+            );
+            assert_eq!(extract_document_id(&xmp).as_deref(), Some(value));
+        }
+    }
+
+    #[test]
     fn read_xmp() {
         let provenance = extract_provenance(XMP_DATA);
         assert_eq!(provenance, Some("self#jumbf=c2pa/contentauth:urn:uuid:a58065fb-79ae-4eb3-87b9-a19830860059/c2pa.claim".to_owned()));

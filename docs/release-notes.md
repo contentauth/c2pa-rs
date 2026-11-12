@@ -2,6 +2,62 @@
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
+## v0.89 maintenance backport scope
+
+This maintenance branch starts at `c2pa-v0.89.3` and applies the security and
+compatibility fixes released in `c2pa-v0.87.1`: eMudhra TLS distrust, coordinated
+Rust-native ECDSA dependency updates, ZIP archive compatibility, and the
+accompanying regression tests and documentation. It does not import newer SDK
+features or all security fixes from the intervening releases. It additionally
+updates dependencies covered by the v0.87.1 security backport and repairs
+compatibility with the current CI toolchain. The public API and Rust 1.88 minimum
+are unchanged. Native consumers must rebuild and redistribute their binaries to
+receive the TLS updates; see [usage](usage.md).
+
+Tier 1A CI runs on pull requests targeting `v0.89` and pushes to that branch.
+The required semver check compares both library APIs against the pull request's
+base commit and enforces patch-release compatibility. Release publishing and
+the label-gated Tier 1B/2 workflows are unchanged.
+
+### Additional dependency-security and CI fixes
+
+The maintenance lockfile now resolves the following older dependency issues,
+without advisory exemptions:
+
+| Dependency | Previous version | Resolved version | Known issue |
+| --- | --- | --- | --- |
+| `anyhow` | 1.0.103 | 1.0.104 | Match the v0.87.1 maintenance resolution; the [RUSTSEC-2026-0190](https://rustsec.org/advisories/RUSTSEC-2026-0190) fix was already present in v0.89.3 |
+| `crossbeam-epoch` | 0.9.20 | 0.9.21 | [RUSTSEC-2026-0204](https://rustsec.org/advisories/RUSTSEC-2026-0204): invalid pointer dereference in pointer formatting |
+| `h2` | 0.4.15 | 0.4.20 | [RUSTSEC-2026-0258](https://rustsec.org/advisories/RUSTSEC-2026-0258): unbounded empty DATA frames |
+| `lopdf` | 0.43.0 | 0.44.0 | [RUSTSEC-2026-0187](https://rustsec.org/advisories/RUSTSEC-2026-0187): stack overflow on deeply nested PDF objects |
+| `rustls` | 0.23.42 | 0.23.46 | Match v0.87.1's fixes for [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285), [RUSTSEC-2026-0346](https://rustsec.org/advisories/RUSTSEC-2026-0346), [RUSTSEC-2026-0348](https://rustsec.org/advisories/RUSTSEC-2026-0348), and [RUSTSEC-2026-0349](https://rustsec.org/advisories/RUSTSEC-2026-0349) |
+| `ttf-parser` | 0.25.1 | Removed through `lopdf` update | [RUSTSEC-2026-0192](https://rustsec.org/advisories/RUSTSEC-2026-0192): unmaintained |
+| `spin` | 0.9.8 | 0.9.9 | Yanked dependency version |
+| `chacha20` | 0.10.1 | 0.10.2 | Yanked dependency version |
+
+`quick-xml` 0.41.0 and its XMP decoding adaptation were already present in
+v0.89.3; this backport adds the v0.87.1 UTF-8 and escaped-entity regression test.
+The lockfile also matches v0.87.1's ZIP 9.5.1 and Tokio 1.54.1 resolutions.
+
+The PDF feature also requires `time` 0.3.55 so consumers with older lockfiles do
+not select a version lacking `lopdf`'s required date-formatting API. Native and
+atomics-enabled WebAssembly builds retain `lopdf`'s parallel processing;
+single-threaded WebAssembly and WASI disable its default features to avoid
+thread-spawn panics.
+
+`async-trait` 0.1.92 fixes generated `must_use` attributes rejected by the current
+Clippy. Other fixes remove redundant formatting borrows, simplify iteration and
+control flow, and correct the redundant `TextSelector` rustdoc link. Regression
+tests cover legacy archive resources, invalid paths and indices, invalid ECDSA
+private keys, invalid stapled OCSP responses in both sync and async paths, and
+XMP text compatibility.
+
+### Older known issues not addressed by this backport
+
+Earlier ID3 decoder and BMFF sample-reader hardening from the v0.90 line is also
+outside this backport. This branch is not security-equivalent to v0.90.23 and is
+not a substitute for upgrading to a supported release containing those fixes.
+
 ## Version 0.88.0
 
 ### Removal of deprecated APIs

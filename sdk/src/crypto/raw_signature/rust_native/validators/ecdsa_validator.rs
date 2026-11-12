@@ -11,22 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::str::FromStr;
-
-use bcder::Oid;
-use der::Decode;
-use ecdsa::{
-    signature::{hazmat::PrehashVerifier, Verifier as EcdsaVerifier},
-    Signature as EcdsaSignature, SignatureBytes, SignatureWithOid, ECDSA_SHA256_OID,
-};
-use p256::{ecdsa::VerifyingKey as P256VerifyingKey, NistP256, PublicKey as P256PublicKey};
-use p384::{ecdsa::VerifyingKey as P384VerifyingKey, NistP384, PublicKey as P384PublicKey};
-use p521::{ecdsa::VerifyingKey as P521VerifyingKey, NistP521, PublicKey as P521PublicKey};
+use ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature};
+use p256::ecdsa::VerifyingKey as P256VerifyingKey;
+use p384::ecdsa::VerifyingKey as P384VerifyingKey;
+use p521::ecdsa::VerifyingKey as P521VerifyingKey;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
 use crate::crypto::{
     ec_utils::{der_to_p1363, ec_curve_from_public_key_der, EcdsaCurve},
-    raw_signature::{oids::*, RawSignatureValidationError, RawSignatureValidator, SigningAlg},
+    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
 };
 
 /// An `EcdsaValidator` can validate raw signatures with one of the ECDSA
@@ -107,14 +100,7 @@ impl RawSignatureValidator for EcdsaValidator {
                 let signature = EcdsaSignature::from_slice(&adjusted_sig)
                     .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
 
-                // P521VerifyingKey does't have an implementation of `from_public_key` so we
-                // load it manually.
-                let pk = P521PublicKey::from_public_key_der(public_key)
-                    .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
-
-                let pk_bytes = pk.to_sec1_bytes();
-
-                let vk = P521VerifyingKey::from_sec1_bytes(&pk_bytes)
+                let vk = P521VerifyingKey::from_public_key_der(public_key)
                     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
                 vk.verify_prehash(&digest, &signature)
