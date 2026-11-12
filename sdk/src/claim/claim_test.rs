@@ -73,6 +73,47 @@ fn test_build_claim() {
 }
 
 #[test]
+fn data_hash_exclusions_accept_only_riff_payload_boundaries() {
+    use super::claim_verify::data_hash_exclusions_match_manifest;
+    use crate::utils::hash_utils::HashRange;
+
+    let range = HashRange::new(100, 108);
+    for format in ["audio/wav", "image/webp", "video/avi", "wav", "webp", "avi"] {
+        for exclusion in [
+            HashRange::new(100, 108),
+            HashRange::new(108, 100),
+            HashRange::new(108, 99),
+        ] {
+            assert!(data_hash_exclusions_match_manifest(
+                &[exclusion],
+                Some(&range),
+                true,
+                Some(format)
+            ));
+        }
+        for exclusion in [
+            HashRange::new(99, 109),
+            HashRange::new(108, 101),
+            HashRange::new(109, 99),
+            HashRange::new(108, 98),
+        ] {
+            assert!(!data_hash_exclusions_match_manifest(
+                &[exclusion],
+                Some(&range),
+                true,
+                Some(format)
+            ));
+        }
+    }
+    assert!(!data_hash_exclusions_match_manifest(
+        &[HashRange::new(108, 100)],
+        Some(&range),
+        true,
+        Some("image/jpeg")
+    ));
+}
+
+#[test]
 fn test_build_claim_generator_hints() {
     // Create a new claim.
     let mut claim = create_test_claim().expect("create test claim");
