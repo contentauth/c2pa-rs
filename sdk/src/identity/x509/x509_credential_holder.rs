@@ -54,7 +54,7 @@ impl X509CredentialHolder {
 }
 
 impl CredentialHolder for X509CredentialHolder {
-    fn sig_type(&self) -> &'static str {
+    fn sig_type(&self) -> &str {
         super::CAWG_X509_SIG_TYPE
     }
 

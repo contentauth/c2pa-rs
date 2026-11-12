@@ -2409,7 +2409,7 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
 /// A [`CredentialHolder`] backed by a C callback.
 struct CallbackCredentialHolder {
     context: *const (),
-    sig_type: &'static str,
+    sig_type: String,
     reserve_size: usize,
     callback: CredentialHolderCallback,
 }
@@ -2420,8 +2420,8 @@ unsafe impl Send for CallbackCredentialHolder {}
 unsafe impl Sync for CallbackCredentialHolder {}
 
 impl CredentialHolder for CallbackCredentialHolder {
-    fn sig_type(&self) -> &'static str {
-        self.sig_type
+    fn sig_type(&self) -> &str {
+        &self.sig_type
     }
 
     fn reserve_size(&self) -> usize {
@@ -2541,11 +2541,6 @@ pub unsafe extern "C" fn c2pa_identity_signer_create_with_credential_holder(
 
     let refs: Vec<&str> = referenced_assertions.iter().map(|s| s.as_str()).collect();
     let role_refs: Vec<&str> = roles.iter().map(|s| s.as_str()).collect();
-
-    // `CredentialHolder::sig_type` returns `&'static str`; the value is owned by
-    // the holder for the life of the signer, so leaking one small string per
-    // signer creation is the cost of matching that trait.
-    let sig_type: &'static str = Box::leak(sig_type.into_boxed_str());
 
     let holder = CallbackCredentialHolder {
         context: context as *const (),
