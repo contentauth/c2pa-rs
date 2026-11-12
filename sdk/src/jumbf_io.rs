@@ -19,6 +19,8 @@ use lazy_static::lazy_static;
 
 #[cfg(feature = "pdf")]
 use crate::asset_handlers::pdf_io::PdfIO;
+#[cfg(feature = "unstable_midi")]
+use crate::asset_handlers::midi_io::MidiIO;
 #[cfg(feature = "unstable_plain_text")]
 use crate::asset_handlers::plain_text_io::PlainTextIO;
 #[cfg(feature = "unstable_structured_text")]
@@ -51,6 +53,8 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        #[cfg(feature = "unstable_midi")]
+        Box::new(MidiIO::new("")),
         #[cfg(feature = "unstable_structured_text")]
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
@@ -456,6 +460,14 @@ pub mod tests {
         test_jumbf("wav", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("wav", &mut reader);
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_midi")]
+    fn test_streams_midi() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.mid").unwrap();
+        test_jumbf("mid", &mut reader);
+        // MIDI has no XMP-equivalent, so it does not support remote manifest URLs.
     }
 
     #[test]
