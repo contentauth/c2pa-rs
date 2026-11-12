@@ -37,15 +37,11 @@ use crate::{
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_assertion_uri},
     reader::Reader,
+    spec_versions::C2PA_VALIDATOR_VERSION,
     status_tracker::StatusTracker,
     validation_results::{IngredientDeltaValidationResult, StatusCodes},
     validation_status::ValidationStatus,
 };
-
-// ── Constants ───────────────────────────────────────────────────────────────
-
-/// Version of the crJSON specification implemented by this exporter.
-const CRJSON_SPEC_VERSION: &str = "2.3.0";
 
 // ── Output types ────────────────────────────────────────────────────────────
 
@@ -674,7 +670,7 @@ fn build_manifest_validation_results(
         success: codes.success().clone(),
         informational: codes.informational().clone(),
         failure: codes.failure().clone(),
-        spec_version: CRJSON_SPEC_VERSION,
+        spec_version: C2PA_VALIDATOR_VERSION,
         validation_time,
     }
 }
