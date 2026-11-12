@@ -41,6 +41,11 @@ The SDK reports progress as a sequence of named phases, each represented by the 
 **Signing a new asset:**
 `AddingIngredient` (0–N times) → `Thumbnail` → `Hashing` → `Signing` → `Writing` → `Embedding`
 
+The [experimental direct asset-io save path](asset-io.md) hashes bytes as they are written:
+`Writing` (start) → `Hashing` (streaming chunks) → `Writing` (complete) → `Signing` → `Embedding` (manifest patch).
+Optional post-sign verification may reread the output; the write-time hash does not.
+Only embedded mode reports `Embedding`.
+
 **Reading / verifying an existing asset:**
 `Reading` → `VerifyingManifest` → `VerifyingSignature` (×2 steps per claim) → `VerifyingIngredient` (×N) → `VerifyingAssetHash`
 

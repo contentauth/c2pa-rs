@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// JUMBF superbox type UUID of the C2PA Manifest Store ("c2pa"), spec 11.1.4.2.
-const C2PA_STORE_UUID: [u8; 16] = [
+pub(crate) const C2PA_STORE_UUID: [u8; 16] = [
     0x63, 0x32, 0x70, 0x61, 0x00, 0x11, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
 ];
 
@@ -345,12 +345,20 @@ impl ComposedManifestRef for AssetIoAdapter {
 
 /// Box map from the layout model alone. The only format knowledge here is the
 /// name table; the traversal is the same for every container.
-fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
+fn box_map_from_layout(
+    s: &Structure,
+    mut src: &mut dyn ReadSeek,
+    c2pa_store: Option<&aio::Item>,
+) -> Result<Vec<BoxMap>> {
     // Which segments belong to the C2PA Manifest Store (not just any JUMBF).
     let mut store: HashSet<aio::SegmentId> = HashSet::new();
-    for e in s.items_of(ItemKind::Jumbf) {
-        if s.jumbf_type(&mut src, e).map_err(err)? == Some(C2PA_STORE_UUID) {
-            store.extend(e.extents().map(|p| p.segment()));
+    if let Some(item) = c2pa_store {
+        store.extend(item.extents().map(|p| p.segment()));
+    } else {
+        for e in s.items_of(ItemKind::Jumbf) {
+            if s.jumbf_type(&mut src, e).map_err(err)? == Some(C2PA_STORE_UUID) {
+                store.extend(e.extents().map(|p| p.segment()));
+            }
         }
     }
 
@@ -426,39 +434,47 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
     Ok(out)
 }
 
+pub(crate) fn box_map_from_structure(
+    s: &Structure,
+    src: &mut dyn ReadSeek,
+    c2pa_store: Option<&aio::Item>,
+) -> Result<Vec<BoxMap>> {
+    Ok(if s.container_id() == aio::containers::gif::ID {
+        s.c2pa_boxes_with(c2pa_store)
+            .map_err(err)?
+            .into_iter()
+            .map(|b| {
+                let mut map =
+                    BoxMap::new(vec![b.name.into_owned()], b.range.offset(), b.range.len());
+                if map.names == [C2PA_BOXHASH] {
+                    map = map
+                        .with_allowed_exclusions(vec![AllowedExclusion::whole_box(b.range.len())]);
+                } else if !b.metadata.is_empty() {
+                    map = map.with_allowed_exclusions(
+                        b.metadata
+                            .iter()
+                            .map(|range| AllowedExclusion {
+                                start: range.offset() - b.range.offset(),
+                                length: range.len(),
+                                kind: ExclusionKind::AssetMetadata,
+                            })
+                            .collect(),
+                    );
+                }
+                map
+            })
+            .collect::<Vec<_>>()
+    } else {
+        return box_map_from_layout(s, src, c2pa_store);
+    })
+}
+
 impl AssetBoxHash for AssetIoAdapter {
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         let mut input = input_stream;
         let s = self.parse(&mut *input)?;
-        let mut out = if self.container() == Some(aio::containers::gif::ID) {
-            s.c2pa_boxes(&mut input)
-                .map_err(err)?
-                .into_iter()
-                .map(|b| {
-                    let mut map =
-                        BoxMap::new(vec![b.name.into_owned()], b.range.offset(), b.range.len());
-                    if map.names == [C2PA_BOXHASH] {
-                        map = map.with_allowed_exclusions(vec![AllowedExclusion::whole_box(
-                            b.range.len(),
-                        )]);
-                    } else if !b.metadata.is_empty() {
-                        map = map.with_allowed_exclusions(
-                            b.metadata
-                                .iter()
-                                .map(|range| AllowedExclusion {
-                                    start: range.offset() - b.range.offset(),
-                                    length: range.len(),
-                                    kind: ExclusionKind::AssetMetadata,
-                                })
-                                .collect(),
-                        );
-                    }
-                    map
-                })
-                .collect()
-        } else {
-            box_map_from_layout(&s, &mut *input)?
-        };
+        let store = s.c2pa_item(&mut input).map_err(err)?;
+        let mut out = box_map_from_structure(&s, &mut *input, store)?;
 
         // With no manifest, a zero-length excluded placeholder marks where it will
         // go, so the list of boxes matches the file once it is embedded.
