@@ -36,7 +36,7 @@ json_schema = ["dep:schemars"]
 openssl = [
     "dep:openssl",
 ]
-pdf = ["dep:lopdf"]
+pdf = ["dep:lopdf", "dep:time"]
 rust_native_crypto = [
     "dep:const-oid",
     "dep:ecdsa",
@@ -51,11 +51,11 @@ rust_native_crypto = [
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
-http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
-http_ureq = ["dep:ureq"]
+http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking", "dep:webpki", "dep:webpki-roots"]
+http_ureq = ["dep:ureq", "dep:webpki", "dep:webpki-roots"]
 http_wasi = ["dep:wasi"]
 http_wstd = ["dep:wstd"]
-http_reqwest = ["dep:reqwest"]
+http_reqwest = ["dep:reqwest", "dep:webpki", "dep:webpki-roots"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -95,7 +95,7 @@ crate-type = ["lib"]
 [dependencies]
 asn1-rs = "0.7.2"
 async-generic = "1.1"
-async-trait = "0.1.89"
+async-trait = "0.1.92"
 atree = "0.5.4"
 base64 = "0.22.1"
 bcder = "0.7.6"
@@ -112,7 +112,7 @@ der = { version = "0.7.10", features = ["alloc"] }
 extfmt = "0.2.0"
 getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
 glob = "0.3.3"
-ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
+ecdsa = { version = "0.17.0", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.2.0", features = [
     "alloc",
     "digest",
@@ -127,7 +127,7 @@ img-parts = "0.4.0"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.30"
-lopdf = { version = "0.43.0", optional = true }
+lopdf = { version = "0.44.0", optional = true, default-features = false }
 lazy_static = "1.5.0"
 memchr = "2.8.1"
 mp4 = "0.14.0"
@@ -135,9 +135,9 @@ nom = "7.1.3"
 non-empty-string = { version = "0.2.6", features = ["serde"] }
 nonempty-collections = { version = "1.3.0", features = ["serde"] }
 num-bigint-dig = { version = "0.8.6", optional = true }
-p256 = { version = "0.13.2", optional = true }
-p384 = { version = "0.13.1", optional = true }
-p521 = { version = "0.13.3", features = [
+p256 = { version = "0.14.0", optional = true }
+p384 = { version = "0.14.0", optional = true }
+p521 = { version = "0.14.0", features = [
     "pkcs8",
     "digest",
     "ecdsa",
@@ -170,13 +170,19 @@ spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
+# lopdf 0.44 uses FormatItem::StringLiteral, absent from older time releases.
+time = { version = "0.3.55", optional = true }
 toml = "1.1.2"
 url = "2.5.8"
 uuid = { version = "1.23.2", features = ["serde", "v4"] }
 web-time = "1.1"
 x509-parser = "0.18.1"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
-zip = { version = "8.6.0", default-features = false }
+zip = { version = "9.0.4", default-features = false }
+
+# lopdf's rayon needs real threads: native always has them, WASM only with atomics.
+[target.'cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))'.dependencies]
+lopdf = { version = "0.44.0", optional = true }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.28", default-features = false, features = [
@@ -187,6 +193,10 @@ reqwest = { version = "0.12.28", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Security floors for both HTTP clients: remove eMudhra roots and reject the
+# compromised intermediate keys, including their Sectigo cross-signs.
+webpki = { package = "rustls-webpki", version = "0.103.16", default-features = false, features = ["std"], optional = true }
+webpki-roots = { version = "1.0.11", default-features = false, optional = true }
 openssl = { version = "0.10.80", features = ["vendored"], optional = true }
 ureq = { version = "3.3.0", default-features = false, features = [
     "rustls"
@@ -203,11 +213,11 @@ wstd = "0.5.6"
 # This list matches the `rust_native_crypto` feature since they are not optional on WASM.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 const-oid = "0.9.6"
-ecdsa = { version = "0.16.9", features = ["digest", "sha2"] }
+ecdsa = { version = "0.17.0", features = ["digest", "sha2"] }
 num-bigint-dig = "0.8.6"
-p256 = "0.13.2"
-p384 = "0.13.1"
-p521 = { version = "0.13.3", features = [
+p256 = "0.14.0"
+p384 = "0.14.0"
+p521 = { version = "0.14.0", features = [
     "pkcs8",
     "digest",
     "ecdsa",
@@ -250,6 +260,8 @@ getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 uuid = { version = "1.23.2", features = ["serde", "v4", "js"] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# The ECDSA curves use getrandom 0.4; older generations remain in other dependencies.
+getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 chrono = { version = "0.4.44", default-features = false, features = [
     "clock",
     "serde",
@@ -284,6 +296,7 @@ jsonschema = { version = "0.45.1", default-features = false }
 wasm-bindgen-test = "0.3.72"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rustls-pki-types = "1.8"
 httpmock = "0.8.3"
 tokio = { version = "1.52.3", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "4.7.0" }
