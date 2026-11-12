@@ -376,6 +376,18 @@ impl Claim {
         let gathered_actions = claim.gathered_action_assertions();
         let claim_label = claim.label().to_owned();
 
+        // Whether `url` refers to an assertion of this claim that a later claim redacted. Per
+        // the spec's _Validate Assertions_ section, an ingredient reference from c2pa.opened,
+        // c2pa.placed, c2pa.transcoded or c2pa.repackaged may resolve to such a redacted
+        // ingredient assertion.
+        let is_redacted = |url: &str| {
+            let target = Claim::assertion_label_from_link(url);
+            svi.redactions.iter().any(|r| {
+                manifest_label_from_uri(r).is_some_and(|m| m == claim.label())
+                    && Claim::assertion_label_from_link(r) == target
+            })
+        };
+
         // for v1 claims check the single actions assertion
         if claim.version() < 2 && all_actions.len() > 1 {
             log_item!(
@@ -644,19 +656,30 @@ impl Claim {
                         if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
-                            if claim.ingredient_assertions().iter().any(|i| {
-                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                        return target_label == i.label()
-                                            && ingredient.relationship == Relationship::ParentOf;
+                            if is_redacted(&h.url())
+                                || claim.ingredient_assertions().iter().any(|i| {
+                                    if let Ok(ingredient) =
+                                        Ingredient::from_assertion(i.assertion())
+                                    {
+                                        if let Some(target_label) =
+                                            assertion_label_from_uri(&h.url())
+                                        {
+                                            return target_label == i.label()
+                                                && ingredient.relationship
+                                                    == Relationship::ParentOf;
+                                        }
                                     }
-                                }
-                                false
-                            }) {
+                                    false
+                                })
+                            {
                                 found_good = 1;
                             }
                         } else if let Some(ingredients) = &params.ingredients {
                             for h in ingredients {
+                                if is_redacted(&h.url()) {
+                                    found_good = 1;
+                                    continue;
+                                }
                                 // can we find a reference in the ingredient list
                                 // is it referenced from this manifest and only once
                                 found_good = claim
@@ -701,27 +724,16 @@ impl Claim {
                         || action.action() == c2pa_action::REMOVED
                     {
                         let mut found_good = 0usize;
+                        // c2pa.removed refers to another manifest's ingredients; only a placed
+                        // reference may resolve to a redacted ingredient of this one.
+                        let placed_redacted =
+                            |url: &str| action.action() == c2pa_action::PLACED && is_redacted(url);
 
                         if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
-                            if claim.ingredient_assertions().iter().any(|i| {
-                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                        return target_label == i.label()
-                                            && ingredient.relationship
-                                                == Relationship::ComponentOf;
-                                    }
-                                }
-                                false
-                            }) {
-                                found_good = 1;
-                            }
-                        } else if let Some(h_vec) = &params.ingredients {
-                            for h in h_vec {
-                                // can we find a reference in the ingredient list
-                                // is it referenced from this manifest
-                                if claim.ingredient_assertions().iter().any(|i| {
+                            if placed_redacted(&h.url())
+                                || claim.ingredient_assertions().iter().any(|i| {
                                     if let Ok(ingredient) =
                                         Ingredient::from_assertion(i.assertion())
                                     {
@@ -734,7 +746,30 @@ impl Claim {
                                         }
                                     }
                                     false
-                                }) {
+                                })
+                            {
+                                found_good = 1;
+                            }
+                        } else if let Some(h_vec) = &params.ingredients {
+                            for h in h_vec {
+                                // can we find a reference in the ingredient list
+                                // is it referenced from this manifest
+                                if placed_redacted(&h.url())
+                                    || claim.ingredient_assertions().iter().any(|i| {
+                                        if let Ok(ingredient) =
+                                            Ingredient::from_assertion(i.assertion())
+                                        {
+                                            if let Some(target_label) =
+                                                assertion_label_from_uri(&h.url())
+                                            {
+                                                return target_label == i.label()
+                                                    && ingredient.relationship
+                                                        == Relationship::ComponentOf;
+                                            }
+                                        }
+                                        false
+                                    })
+                                {
                                     found_good = 1;
                                 }
                             }
@@ -811,27 +846,8 @@ impl Claim {
                         if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
-                            if claim.ingredient_assertions().iter().any(|i| {
-                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                        return target_label == i.label()
-                                            && ingredient.relationship == Relationship::ParentOf;
-                                    }
-                                }
-                                false
-                            }) {
-                                parent_tested = Some(true);
-                            }
-
-                            match parent_tested {
-                                Some(v) => parent_tested = Some(v),
-                                None => parent_tested = Some(false),
-                            }
-                        } else if let Some(h_vec) = &params.ingredients {
-                            for h in h_vec {
-                                // can we find a reference in the ingredient list
-                                // is it referenced from this manifest
-                                if claim.ingredient_assertions().iter().any(|i| {
+                            if is_redacted(&h.url())
+                                || claim.ingredient_assertions().iter().any(|i| {
                                     if let Ok(ingredient) =
                                         Ingredient::from_assertion(i.assertion())
                                     {
@@ -844,7 +860,35 @@ impl Claim {
                                         }
                                     }
                                     false
-                                }) {
+                                })
+                            {
+                                parent_tested = Some(true);
+                            }
+
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
+                        } else if let Some(h_vec) = &params.ingredients {
+                            for h in h_vec {
+                                // can we find a reference in the ingredient list
+                                // is it referenced from this manifest
+                                if is_redacted(&h.url())
+                                    || claim.ingredient_assertions().iter().any(|i| {
+                                        if let Ok(ingredient) =
+                                            Ingredient::from_assertion(i.assertion())
+                                        {
+                                            if let Some(target_label) =
+                                                assertion_label_from_uri(&h.url())
+                                            {
+                                                return target_label == i.label()
+                                                    && ingredient.relationship
+                                                        == Relationship::ParentOf;
+                                            }
+                                        }
+                                        false
+                                    })
+                                {
                                     parent_tested = Some(true);
                                 }
                             }
