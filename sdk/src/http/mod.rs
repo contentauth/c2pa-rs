@@ -103,6 +103,7 @@
 use std::{
     io::{self, Cursor, Read},
     sync::Arc,
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -121,6 +122,17 @@ pub mod restricted;
 
 // Since we expose `http::Request` and `http::Response` in the public API, we also expose the `http` crate.
 pub use http;
+
+/// A total time limit for one request, set as a request extension.
+///
+/// The SDK sets it on requests that must not wait for the client's default timeout, such as
+/// time-stamp requests. Built-in `ureq` and native `reqwest` resolvers apply it, including
+/// receiving the response body. SDK-managed redirects share this budget across all hops.
+/// The browser-based `reqwest` resolver on WASM cannot apply a per-request timeout.
+/// Other/custom resolvers must implement the limit themselves, reading it with
+/// `request.extensions().get::<RequestTimeout>()`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RequestTimeout(pub Duration);
 
 /// A resolver for sync (blocking) HTTP requests.
 //
@@ -408,7 +420,8 @@ pub enum HttpResolverError {
     #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
     UriDisallowed { uri: String },
 
-    /// The `Content-Length` response header exceeded the limit set via
+    /// The response body exceeded an SDK-enforced size limit, or its
+    /// `Content-Length` exceeded the limit set via
     /// [`AsyncGenericResolver::with_max_response_body_size`].
     #[error("response body exceeded maximum allowed size")]
     ResponseTooLarge,
@@ -586,6 +599,91 @@ pub mod tests {
     use async_generic::async_generic;
 
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn slow_server(delay_body: bool) -> (String, std::thread::JoinHandle<()>) {
+        use std::{
+            io::{BufRead, BufReader, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let task = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            {
+                let mut reader = BufReader::new(&mut stream);
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+            }
+            if delay_body {
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")
+                    .unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(600));
+            if !delay_body {
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n");
+            }
+            let _ = stream.write_all(b"body");
+        });
+        (url, task)
+    }
+
+    #[cfg(any(feature = "http_ureq", feature = "http_reqwest_blocking"))]
+    #[test]
+    fn native_sync_request_timeout_bounds_headers_and_body() {
+        for delay_body in [false, true] {
+            let (url, server) = slow_server(delay_body);
+            let request = Request::get(url)
+                .extension(RequestTimeout(Duration::from_millis(100)))
+                .body(Vec::new())
+                .unwrap();
+            let started = std::time::Instant::now();
+            let result =
+                SyncGenericResolver::new()
+                    .http_resolve(request)
+                    .and_then(|mut response| {
+                        response
+                            .body_mut()
+                            .read_to_end(&mut Vec::new())
+                            .map_err(HttpResolverError::Io)
+                    });
+            let elapsed = started.elapsed();
+            server.join().unwrap();
+            assert!(result.is_err());
+            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
+            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+        }
+    }
+
+    #[cfg(feature = "http_reqwest")]
+    #[tokio::test]
+    async fn native_async_request_timeout_bounds_headers_and_body() {
+        for delay_body in [false, true] {
+            let (url, server) = slow_server(delay_body);
+            let request = Request::get(url)
+                .extension(RequestTimeout(Duration::from_millis(100)))
+                .body(Vec::new())
+                .unwrap();
+            let started = std::time::Instant::now();
+            let result = AsyncGenericResolver::new()
+                .http_resolve_async(request)
+                .await;
+            let elapsed = started.elapsed();
+            server.join().unwrap();
+            assert!(result.is_err());
+            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
+            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+        }
+    }
 
     fn mock_server<'a>(server: &'a httpmock::MockServer) -> httpmock::Mock<'a> {
         server.mock(|when, then| {

@@ -89,9 +89,8 @@ jobs:
           source ./emsdk_env.sh
           echo "PATH=$PATH" >> $GITHUB_ENV
           emcc --version
-          rustup install nightly
-          rustup component add rust-src --toolchain nightly
-          rustup target add --toolchain nightly wasm32-unknown-emscripten
+          # Keep in sync with EMSCRIPTEN_TOOLCHAIN in c2pa_c_ffi/Makefile.
+          rustup toolchain install nightly-2026-10-30 --profile minimal --component rust-src --target wasm32-unknown-emscripten
 
       - name: Cache emsdk
         if: matrix.target == 'wasm32-unknown-emscripten'
@@ -130,14 +129,18 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
-          path: target-${{ matrix.target }}/artifacts/
+          path: target-${{ matrix.target }}/artifacts/c2pa-v*-${{ matrix.target }}.zip
+          if-no-files-found: error
 
+      # Universal macOS builds also package both thin architectures. Upload only
+      # this job's target so parallel downloads never overwrite the same ZIP.
       - name: Upload build artifacts (Non-Android)
         if: "!contains(matrix.target, 'android')"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
-          path: target/artifacts/
+          path: target/artifacts/c2pa-v*-${{ matrix.target }}.zip
+          if-no-files-found: error
 
   release:
     needs: build
@@ -153,6 +156,13 @@ jobs:
 
       - name: List downloaded artifacts
         run: ls -lh dist
+
+      - name: Validate release archives
+        run: |
+          set -euo pipefail
+          for archive in dist/*.zip; do
+            unzip -t "$archive"
+          done
 
       - name: Resolve release tag
         id: extract_tag

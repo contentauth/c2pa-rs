@@ -107,6 +107,15 @@ pub(crate) struct ContentInfo {
 pub(crate) fn signed_data_from_time_stamp_response(
     ts_resp: &[u8],
 ) -> Result<Option<SignedData>, TimeStampError> {
+    Ok(signed_data_and_bytes_from_time_stamp_response(ts_resp)?.map(|(sd, _)| sd))
+}
+
+// Keep the exact SignedData encoding supplied to rasn so timestamp verification
+// can bind the signature input to the decoded attributes without reparsing the
+// outer TimeStampResp/ContentInfo envelope with a different parser.
+pub(crate) fn signed_data_and_bytes_from_time_stamp_response(
+    ts_resp: &[u8],
+) -> Result<Option<(SignedData, Vec<u8>)>, TimeStampError> {
     let time_stamp_token = if let Ok(ts) = Constructed::decode(ts_resp, bcder::Mode::Der, |cons| {
         TimeStampResp::take_from(cons)
     })
@@ -148,7 +157,7 @@ pub(crate) fn signed_data_from_time_stamp_response(
 
     // decode ContentInfo DER as SignedData
     match rasn::der::decode(&sd_bytes) {
-        Ok(signed_data) => Ok(Some(signed_data)),
+        Ok(signed_data) => Ok(Some((signed_data, sd_bytes))),
         Err(_) => Err(TimeStampError::DecodeError(
             "time stamp invalid".to_string(),
         )),

@@ -55,7 +55,7 @@ pub fn check_end_entity_certificate_profile(
         CertificateProfileError::InvalidCertificate
     })?;
 
-    // makes sure the certificate has any mandatory EKU values
+    // Role-specific policies require every mandatory EKU, not just an allowed one.
     if ctp.has_mandatory_ekus() {
         if let Ok(Some(BasicExtension { value: eku, .. })) = signcert.extended_key_usage() {
             if !ctp.verify_mandatory_ekus(eku) {
@@ -66,6 +66,8 @@ pub fn check_end_entity_certificate_profile(
                 )
                 .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, CertificateProfileError::InvalidEku);
+
+                return Err(CertificateProfileError::InvalidEku);
             }
         } else {
             log_item!(
@@ -75,6 +77,8 @@ pub fn check_end_entity_certificate_profile(
             )
             .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, CertificateProfileError::InvalidEku);
+
+            return Err(CertificateProfileError::InvalidEku);
         }
     }
 
@@ -494,6 +498,13 @@ pub fn check_certificate_profile(
         None => tbscert.is_ca(), // if is not ca it must be present
     };
 
+    // Time-stamping and OCSP signing certificates are valid for exactly one of
+    // those purposes (checked above).
+    let signs_time_stamps_or_ocsp = matches!(
+        tbscert.extended_key_usage(),
+        Ok(Some(BasicExtension { value: eku, .. })) if eku.time_stamping || eku.ocsp_signing
+    );
+
     // Populate needed extension info.
     for e in signcert.extensions() {
         match e.parsed_extension() {
@@ -504,24 +515,36 @@ pub fn check_certificate_profile(
                 ski_good = true;
             }
             ParsedExtension::KeyUsage(ku) => {
-                if ku.digital_signature() {
-                    if ku.key_cert_sign() && !tbscert.is_ca() {
-                        log_item!(
-                            "",
-                            "certificate missing digitalSignature EKU",
-                            "check_certificate_profile"
-                        )
-                        .validation_status(SIGNING_CREDENTIAL_INVALID)
-                        .failure_no_throw(
-                            validation_log,
-                            CertificateProfileError::InvalidCertificate,
-                        );
+                // "The keyCertSign bit shall only be asserted if the cA boolean is
+                // asserted in the Basic Constraints extension."
+                if ku.key_cert_sign() && !tbscert.is_ca() {
+                    log_item!(
+                        "",
+                        "certificate asserts keyCertSign key usage but is not a CA",
+                        "check_certificate_profile"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_INVALID)
+                    .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
 
-                        return Err(CertificateProfileError::InvalidCertificate);
-                    }
-                    key_usage_good = true;
+                    return Err(CertificateProfileError::InvalidCertificate);
                 }
-                if ku.key_cert_sign() || ku.non_repudiation() {
+
+                // "Certificates used to sign C2PA manifests shall assert the
+                // digitalSignature bit." Time-stamping and OCSP signing certificates
+                // may assert nonRepudiation instead (RFC 3161, section 2.3).
+                if !tbscert.is_ca() && !signs_time_stamps_or_ocsp && !ku.digital_signature() {
+                    log_item!(
+                        "",
+                        "certificate missing digitalSignature key usage",
+                        "check_certificate_profile"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_INVALID)
+                    .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+
+                if ku.digital_signature() || ku.key_cert_sign() || ku.non_repudiation() {
                     key_usage_good = true;
                 }
 
@@ -825,6 +848,116 @@ mod tests {
         }
     }
 
+    // C2PA Trust Model, Certificate Profiles: "Certificates used to sign C2PA
+    // manifests shall assert the digitalSignature bit. The keyCertSign bit shall
+    // only be asserted if the cA boolean is asserted."
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn end_entity_key_usage() {
+        let ctp = CertificateTrustPolicy::default();
+
+        for (cert_pem, expected_description) in [
+            (
+                include_bytes!("../../../tests/fixtures/crypto/cose/ku_keycertsign_not_ca.pub")
+                    .as_slice(),
+                "certificate asserts keyCertSign key usage but is not a CA",
+            ),
+            (
+                include_bytes!("../../../tests/fixtures/crypto/cose/ku_nonrepudiation_only.pub")
+                    .as_slice(),
+                "certificate missing digitalSignature key usage",
+            ),
+        ] {
+            let mut validation_log = StatusTracker::default();
+            assert!(check_end_entity_certificate_profile(
+                &x509_der_from_pem(cert_pem),
+                &ctp,
+                &mut validation_log,
+                None
+            )
+            .is_err());
+
+            let item = &validation_log.logged_items()[0];
+            assert_eq!(
+                item.validation_status,
+                Some(SIGNING_CREDENTIAL_INVALID.into())
+            );
+            assert_eq!(item.description, expected_description);
+        }
+
+        // A time-stamping certificate may assert nonRepudiation without
+        // digitalSignature (RFC 3161, section 2.3).
+        let mut validation_log = StatusTracker::default();
+        check_end_entity_certificate_profile(
+            &x509_der_from_pem(include_bytes!(
+                "../../../tests/fixtures/crypto/cose/ku_nonrepudiation_tsa.pub"
+            )),
+            &ctp,
+            &mut validation_log,
+            None,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn ocsp_signing_allows_nonrepudiation_without_digital_signature() {
+        let chain = generate_ephemeral_chain("ocsp-key-usage.local").unwrap();
+        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        // KeyUsage BIT STRING with only nonRepudiation asserted.
+        extension(&mut cert, &[2, 5, 29, 15], vec![0x03, 0x02, 0x06, 0x40]);
+        extension(
+            &mut cert,
+            &[2, 5, 29, 37],
+            rasn::der::encode(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9])]).unwrap(),
+        );
+
+        let ctp = CertificateTrustPolicy::default();
+        let mut validation_log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &ctp,
+                &mut validation_log,
+                None,
+            ),
+            Ok(())
+        );
+        assert!(validation_log.logged_items().is_empty());
+
+        // The same key usage must still be rejected for manifest signing.
+        extension(
+            &mut cert,
+            &[2, 5, 29, 37],
+            rasn::der::encode(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4])]).unwrap(),
+        );
+        let mut validation_log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &ctp,
+                &mut validation_log,
+                None,
+            ),
+            Err(super::CertificateProfileError::InvalidCertificate)
+        );
+        let item = &validation_log.logged_items()[0];
+        assert_eq!(
+            item.validation_status,
+            Some(SIGNING_CREDENTIAL_INVALID.into())
+        );
+        assert_eq!(
+            item.description,
+            "certificate missing digitalSignature key usage"
+        );
+    }
+
     fn x509_der_from_pem(cert_pem: &[u8]) -> Vec<u8> {
         let mut pems = Pem::iter_from_buffer(cert_pem);
         let pem = pems.next().unwrap().unwrap();
@@ -985,14 +1118,15 @@ mod tests {
         ctp.add_mandatory_ekus(b"1.3.6.1.5.5.7.3.8");
         let cert = profile_cert();
         let mut log = StatusTracker::default();
-        // Mandatory EKU failures are currently logged, not returned as an error.
-        check_end_entity_certificate_profile(
-            &rasn::der::encode(&cert).unwrap(),
-            &ctp,
-            &mut log,
-            None,
-        )
-        .unwrap();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &ctp,
+                &mut log,
+                None,
+            ),
+            Err(super::CertificateProfileError::InvalidEku)
+        );
         assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
         assert!(log
             .logged_items()
@@ -1011,19 +1145,73 @@ mod tests {
         let mut log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
+            Err(super::CertificateProfileError::InvalidEku)
+        );
+        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+        assert!(log
+            .logged_items()
+            .iter()
+            .any(|item| item.description == "certificate missing mandatory EKU"));
+
+        ctp.clear_ekus();
+        let mut log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
             Err(super::CertificateProfileError::InvalidCertificate)
         );
         assert!(log
             .logged_items()
             .iter()
             .any(|item| item.description == "expected end-entity certificate"));
-        assert!(log
-            .logged_items()
-            .iter()
-            .any(|item| item.description == "certificate missing mandatory EKU"));
 
         cert.tbs_certificate.issuer = cert.tbs_certificate.subject.clone();
         assert_profile_error(&cert, super::CertificateProfileError::SelfSignedCertificate);
+    }
+
+    #[test]
+    fn mandatory_ekus_reject_other_allowed_purposes() {
+        let claim_signing = oid(&[1, 3, 6, 1, 4, 1, 62558, 2, 1]);
+        let email = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4]);
+        let timestamp = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 8]);
+        let ocsp = oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9]);
+
+        for required in [&timestamp, &ocsp] {
+            for purposes in [
+                vec![claim_signing.clone()],
+                vec![email.clone()],
+                vec![email.clone(), claim_signing.clone()],
+                vec![timestamp.clone()],
+                vec![ocsp.clone()],
+            ] {
+                let mut cert = profile_cert();
+                extension(
+                    &mut cert,
+                    &[2, 5, 29, 37],
+                    rasn::der::encode(&purposes).unwrap(),
+                );
+                let mut ctp = CertificateTrustPolicy::default();
+                ctp.add_mandatory_ekus(required.to_string().as_bytes());
+                let mut log = StatusTracker::default();
+                let result = check_end_entity_certificate_profile(
+                    &rasn::der::encode(&cert).unwrap(),
+                    &ctp,
+                    &mut log,
+                    None,
+                );
+
+                if purposes.contains(required) {
+                    assert_eq!(result, Ok(()));
+                    assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
+                } else {
+                    assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
+                    assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+                    assert!(log
+                        .logged_items()
+                        .iter()
+                        .any(|item| { item.description == "certificate missing mandatory EKU" }));
+                }
+            }
+        }
     }
 
     #[test]

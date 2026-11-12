@@ -60,8 +60,6 @@ use crate::{
 };
 
 pub(super) const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
-#[cfg(feature = "fetch_remote_manifests")]
-pub(super) const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 /// Maximum depth of nested ingredient references allowed during validation.
 ///
@@ -128,6 +126,9 @@ impl Store {
 
         // use the incoming trust settings
         store.ctp.clear();
+        if settings.trust.use_default_ekus {
+            store.ctp.add_default_valid_ekus();
+        }
 
         // Add all of the trust anchors
         if let Some(anchors) = &settings.trust.anchors {
@@ -1442,7 +1443,6 @@ impl Store {
         context: &Context,
         target_len: Option<usize>,
     ) -> Result<Vec<u8>> {
-        let settings = context.settings();
         let signer = context.signer()?;
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
@@ -1493,10 +1493,10 @@ impl Store {
             // with the real assertions and cleared cached claim data, so the
             // claim must be re-fetched before signing.
             let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-            self.sign_claim(pc, signer, signer.reserve_size(), settings)?
+            self.sign_claim(pc, signer, signer.reserve_size(), context)?
         } else {
             // No dynamic assertions - sign directly using the claim fetched above.
-            self.sign_claim(pc, signer, signer.reserve_size(), settings)?
+            self.sign_claim(pc, signer, signer.reserve_size(), context)?
         };
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -1554,9 +1554,9 @@ impl Store {
 
         // sign contents
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?
+            self.sign_claim(pc, signer, signer.reserve_size(), context)?
         } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context)
                 .await?
         };
 

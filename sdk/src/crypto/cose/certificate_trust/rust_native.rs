@@ -31,11 +31,12 @@ fn raw_crypto_oid_to_bcder_oid(oid: &c2pa_raw_crypto::Oid) -> bcder::Oid {
 
 pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
+    anchor_type: Option<TrustAnchorType>,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
 ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
-    if ctp.anchor_sets().count() == 0 {
+    if ctp.anchor_sets_of_type(anchor_type).count() == 0 {
         return Err(CertificateTrustError::CertificateNotTrusted);
     }
 
@@ -81,15 +82,23 @@ pub(crate) fn check_certificate_trust(
     };
     let check_time = x509_parser::time::ASN1Time::from_timestamp(check_time)
         .map_err(|_| CertificateTrustError::CertificateNotTrusted)?;
-    for cert in &full_chain {
+    // The end-entity certificate's validity is reported by the certificate
+    // profile check. A CA certificate outside its validity is reported as such
+    // only if the chain otherwise reaches a trust anchor, as OpenSSL does;
+    // otherwise the chain is simply not trusted.
+    let mut ca_outside_validity = false;
+    for (depth, cert) in full_chain.iter().enumerate() {
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
         if !chain_cert.validity().is_valid_at(check_time) {
-            return Err(CertificateTrustError::CertificateNotTrusted);
+            if depth == 0 {
+                return Err(CertificateTrustError::CertificateNotTrusted);
+            }
+            ca_outside_validity = true;
         }
     }
 
-    for anchor_set in ctp.anchor_sets() {
+    for anchor_set in ctp.anchor_sets_of_type(anchor_type) {
         // Process each anchor set
 
         // Build anchors and check against trust anchors.
@@ -122,6 +131,11 @@ pub(crate) fn check_certificate_trust(
                     match result {
                         Ok(b) => {
                             if b {
+                                if ca_outside_validity {
+                                    return Err(
+                                        CertificateTrustError::CaCertificateOutsideValidity,
+                                    );
+                                }
                                 return Ok((
                                     anchor_set.trust_anchor_type,
                                     anchor_set.trust_anchor_uri.clone(),
@@ -651,13 +665,19 @@ mod tests {
             }
 
             assert_eq!(
-                check_certificate_trust(&policy, &[], &rasn::der::encode(&cert).unwrap(), None),
+                check_certificate_trust(
+                    &policy,
+                    None,
+                    &[],
+                    &rasn::der::encode(&cert).unwrap(),
+                    None
+                ),
                 Err(CertificateTrustError::InvalidEku)
             );
         }
 
         assert_eq!(
-            check_certificate_trust(&policy, &[], &[0], None),
+            check_certificate_trust(&policy, None, &[], &[0], None),
             Err(CertificateTrustError::InvalidCertificate)
         );
     }

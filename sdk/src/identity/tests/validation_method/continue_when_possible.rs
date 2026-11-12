@@ -14,18 +14,38 @@
 //! This version of the validation method tests cover the case where the
 //! [`StatusTracker`] is configured to continue when possible.
 
-use std::io::Cursor;
+use std::{borrow::Cow, io::Cursor};
 
 use c2pa_macros::c2pa_test_async;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType, Verifier},
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
     status_tracker::{LogKind, StatusTracker},
-    validation_status::{CAWG_X509_CREDENTIAL_TRUSTED, CAWG_X509_SIGNATURE_VALIDATED},
+    validation_status::{CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_VALIDATED},
     SigningAlg,
 };
+
+fn trusted_x509_verifier() -> X509SignatureVerifier<'static> {
+    // These older emailProtection fixtures have no accepted S/MIME policy.
+    // The configured CA establishes a chain, not CAWG credential trust.
+    let mut policy = CertificateTrustPolicy::default();
+    policy
+        .add_trust_anchors(
+            include_bytes!(
+                "../../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+            ),
+            "https://c2pa-rs/unknown_tl",
+            TrustAnchorType::CAWG,
+            None,
+        )
+        .unwrap();
+    X509SignatureVerifier {
+        cose_verifier: Verifier::VerifyTrustPolicyFor(Cow::Owned(policy), TrustAnchorType::CAWG),
+    }
+}
 
 /// An identity assertion MUST contain a valid CBOR data structure that contains
 /// the required fields as documented in the identity rule in [Section 5.2,
@@ -167,7 +187,7 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -195,7 +215,7 @@ async fn assertion_not_in_claim_v1() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -204,12 +224,12 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -297,7 +317,7 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -325,7 +345,7 @@ async fn duplicate_assertion_reference() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -334,11 +354,11 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -405,7 +425,7 @@ async fn no_hard_binding() {
     assert!(sp.referenced_assertions.is_empty());
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -433,7 +453,7 @@ async fn no_hard_binding() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -442,12 +462,12 @@ async fn no_hard_binding() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -714,7 +734,7 @@ async fn pad1_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -742,7 +762,7 @@ async fn pad1_invalid() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -751,12 +771,12 @@ async fn pad1_invalid() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -823,7 +843,7 @@ async fn pad2_invalid() {
 
     assert_eq!(sp.sig_type, "cawg.x509.cose".to_owned());
 
-    let x509_verifier = X509SignatureVerifier::default();
+    let x509_verifier = trusted_x509_verifier();
     let sig_info = ia
         .validate(
             reader.active_manifest().unwrap(),
@@ -851,7 +871,7 @@ async fn pad2_invalid() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -860,12 +880,12 @@ async fn pad2_invalid() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
