@@ -27,6 +27,8 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "dng" => "image/x-adobe-dng",
         "heic" => "image/heic",
         "heif" => "image/heif",
+        "heics" => "image/heic-sequence",
+        "heifs" => "image/heif-sequence",
         "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
         "mp4" => "video/mp4",
         "avi" => "video/avi",
@@ -114,6 +116,8 @@ pub fn format_to_extension(format: &str) -> Option<&'static str> {
         "dng" | "image/dng" => "dng",
         "heic" | "image/heic" => "heic",
         "heif" | "image/heif" => "heif",
+        "heics" | "image/heic-sequence" => "heics",
+        "heifs" | "image/heif-sequence" => "heifs",
         "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" | "video/mpeg" => "mp2",
         "mp4" | "video/mp4" => "mp4",
         "avif" | "image/avif" => "avif",
@@ -181,5 +185,13 @@ mod tests {
         assert_eq!(format_to_mime("\timage/png\n"), "image/png");
         assert_eq!(format_to_mime("  JPG  "), "image/jpeg");
         assert_eq!(format_to_mime("  image/svg+xml  "), "image/svg+xml");
+    }
+
+    #[test]
+    fn test_heif_sequence_mime_types() {
+        assert_eq!(format_to_mime("heics"), "image/heic-sequence");
+        assert_eq!(format_to_mime("heifs"), "image/heif-sequence");
+        assert_eq!(format_to_extension("image/heic-sequence"), Some("heics"));
+        assert_eq!(format_to_extension("image/heif-sequence"), Some("heifs"));
     }
 }
