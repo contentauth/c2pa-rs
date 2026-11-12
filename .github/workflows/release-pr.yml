@@ -1,0 +1,38 @@
+name: Release-plz prepare PR
+
+permissions:
+  pull-requests: write
+  contents: write
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Prepare v0.89 release PR
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v0.89'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Run release-plz (release-pr only)
+        uses: MarcoIeni/release-plz-action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
+        with:
+          command: release-pr
+          verbose: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}

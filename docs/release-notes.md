@@ -19,6 +19,11 @@ The required semver check compares both library APIs against the pull request's
 base commit and enforces patch-release compatibility. Release publishing and
 the label-gated Tier 1B/2 workflows are unchanged.
 
+To prepare a release PR, run the **Release-plz prepare PR** workflow with branch
+`v0.89`, or use `gh workflow run release-pr.yml --ref v0.89`. This manual-only
+workflow prepares version and changelog changes; it does not publish crates or
+release artifacts.
+
 ### Additional dependency-security and CI fixes
 
 The maintenance lockfile now resolves the following older dependency issues,
