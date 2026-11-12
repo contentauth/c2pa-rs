@@ -648,12 +648,21 @@ impl<'a> IcaSignatureVerifier<'a> {
         // we log the error condition related to the signature and proceed.
 
         match err {
-            ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(_)) => {
+            ValidationError::SignatureError(IcaValidationError::InvalidIssuerDid(_)) => {
                 log_current_item!(
                     "Invalid issuer DID",
                     "IcaSignatureVerifier::check_signature"
                 )
                 .validation_status("cawg.ica.invalid_issuer")
+                .failure(status_tracker, err)?;
+            }
+
+            ValidationError::SignatureError(IcaValidationError::UnsupportedIssuerDid(_)) => {
+                log_current_item!(
+                    "Unsupported issuer DID method",
+                    "IcaSignatureVerifier::check_signature"
+                )
+                .validation_status("cawg.ica.did_unsupported_method")
                 .failure(status_tracker, err)?;
             }
 

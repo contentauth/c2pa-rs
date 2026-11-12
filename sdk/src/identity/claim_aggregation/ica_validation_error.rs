@@ -55,7 +55,11 @@ pub enum IcaValidationError {
     #[error("JSON decoding error ({0})")]
     JsonDecodeError(String),
 
-    /// Unsupported issuer DID.
+    /// The issuer is not a valid DID.
+    #[error("invalid issuer DID ({0})")]
+    InvalidIssuerDid(String),
+
+    /// The issuer DID uses a DID method that is not supported.
     #[error("unsupported issuer DID ({0})")]
     UnsupportedIssuerDid(String),
 
@@ -110,7 +114,7 @@ impl From<serde_json::Error> for ValidationError<IcaValidationError> {
 
 impl From<InvalidDid> for ValidationError<IcaValidationError> {
     fn from(err: InvalidDid) -> Self {
-        Self::SignatureError(IcaValidationError::UnsupportedIssuerDid(err.to_string()))
+        Self::SignatureError(IcaValidationError::InvalidIssuerDid(err.to_string()))
     }
 }
 
