@@ -51,13 +51,14 @@ pub(crate) const MAX_ASSERTIONS: usize = 100_000;
 /// Default maximum remote manifest response size in bytes (10 MiB).
 pub(crate) const DEFAULT_MAX_MANIFEST_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
 
-pub(crate) const DEFAULT_REMOTE_MANIFEST_REQUEST_TIMEOUT_IN_MS: u64 = 10_000;
-
 /// Default number of attempts of a blocking time-stamp request.
 pub(crate) const DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS: u32 = 3;
 
 /// Default time limit of each time-stamp request attempt, in milliseconds.
 pub(crate) const DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS: u64 = 10_000;
+
+/// Default time limit of an SDK HTTP request that sets no limit of its own, in milliseconds.
+pub(crate) const DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS: u64 = 10_000;
 
 /// Default pause before the second time-stamp request attempt, in milliseconds.
 pub(crate) const DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS: u64 = 500;
@@ -571,6 +572,16 @@ pub struct Core {
     ///
     /// The default is 500.
     pub time_stamp_retry_delay_in_ms: u64,
+    /// Total time limit, in milliseconds, of an SDK HTTP request: remote manifest fetches,
+    /// OCSP fetches, CAWG `did:web` resolution and settings-based remote signing.
+    /// Time-stamp requests use the `time_stamp_*` settings instead.
+    ///
+    /// Native built-in HTTP resolvers enforce this limit. Custom resolvers, including C/C++
+    /// callbacks, receive it as [`crate::http::RequestTimeout`] (`timeout_ms` in C) and must
+    /// apply it themselves.
+    ///
+    /// The default is 10,000 (10 seconds). The value must be positive.
+    pub http_request_timeout_in_ms: u64,
 }
 
 impl Default for Core {
@@ -587,6 +598,7 @@ impl Default for Core {
             time_stamp_request_attempts: DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS,
             time_stamp_request_timeout_in_ms: DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS,
             time_stamp_retry_delay_in_ms: DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS,
+            http_request_timeout_in_ms: DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS,
         }
     }
 }
@@ -607,6 +619,11 @@ impl SettingsValidate for Core {
         if self.time_stamp_request_timeout_in_ms == 0 {
             return Err(Error::BadParam(
                 "time_stamp_request_timeout_in_ms must be positive".to_string(),
+            ));
+        }
+        if self.http_request_timeout_in_ms == 0 {
+            return Err(Error::BadParam(
+                "http_request_timeout_in_ms must be positive".to_string(),
             ));
         }
         Ok(())
@@ -712,13 +729,6 @@ pub struct Verify {
     /// [`Ingredient`]: crate::Ingredient
     /// [`Builder`]: crate::Builder
     pub remote_manifest_fetch: bool,
-    /// Total time limit for fetching a remote manifest, in milliseconds, including
-    /// response headers, body and SDK-managed redirects. The default is 10,000 ms
-    /// and the value must be positive.
-    ///
-    /// Native built-in HTTP resolvers enforce this limit. Custom resolvers must
-    /// honor [`crate::http::RequestTimeout`]; browser WASM cannot enforce it.
-    pub remote_manifest_request_timeout_in_ms: u64,
     /// Maximum remote manifest response size in bytes. Responses with a larger
     /// `Content-Length` or body return [`Error::RemoteManifestFetch`].
     ///
@@ -754,7 +764,6 @@ impl Default for Verify {
             ocsp_fetch: false,
             ocsp_fetch_should_override: false,
             remote_manifest_fetch: true,
-            remote_manifest_request_timeout_in_ms: DEFAULT_REMOTE_MANIFEST_REQUEST_TIMEOUT_IN_MS,
             max_manifest_response_size: DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
@@ -764,11 +773,6 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {
     fn validate(&self) -> Result<()> {
-        if self.remote_manifest_request_timeout_in_ms == 0 {
-            return Err(Error::BadParam(
-                "remote_manifest_request_timeout_in_ms must be positive".to_string(),
-            ));
-        }
         if self.max_manifest_response_size == 0
             || self.max_manifest_response_size > isize::MAX as u64
         {
@@ -1506,76 +1510,32 @@ pub mod tests {
     }
 
     #[test]
-    fn test_remote_manifest_request_timeout_configuration() {
+    fn test_http_request_timeout_configuration() {
         assert_eq!(
-            Settings::default()
-                .verify
-                .remote_manifest_request_timeout_in_ms,
-            DEFAULT_REMOTE_MANIFEST_REQUEST_TIMEOUT_IN_MS
+            Settings::default().core.http_request_timeout_in_ms,
+            DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS
         );
-        for settings in [
-            Settings::new()
-                .with_json(r#"{"verify":{"remote_manifest_fetch":true}}"#)
-                .unwrap(),
-            Settings::new()
-                .with_toml("[verify]\nremote_manifest_fetch = true")
-                .unwrap(),
-        ] {
-            assert_eq!(
-                settings.verify.remote_manifest_request_timeout_in_ms,
-                DEFAULT_REMOTE_MANIFEST_REQUEST_TIMEOUT_IN_MS
-            );
-        }
         for context in [
             crate::Context::new()
-                .with_settings(r#"{"verify":{"remote_manifest_request_timeout_in_ms":250}}"#)
+                .with_settings(r#"{"core":{"http_request_timeout_in_ms":250}}"#)
                 .unwrap(),
             crate::Context::new()
-                .with_settings("[verify]\nremote_manifest_request_timeout_in_ms = 250")
+                .with_settings("[core]\nhttp_request_timeout_in_ms = 250")
                 .unwrap(),
             crate::Context::new()
-                .with_settings_value("verify.remote_manifest_request_timeout_in_ms", 250u64)
+                .with_settings_value("core.http_request_timeout_in_ms", 250u64)
                 .unwrap(),
         ] {
-            assert_eq!(
-                context
-                    .settings()
-                    .verify
-                    .remote_manifest_request_timeout_in_ms,
-                250
-            );
-            let json = serde_json::to_string(context.settings()).unwrap();
-            assert_eq!(
-                Settings::new()
-                    .with_json(&json)
-                    .unwrap()
-                    .verify
-                    .remote_manifest_request_timeout_in_ms,
-                250
-            );
+            assert_eq!(context.settings().core.http_request_timeout_in_ms, 250);
         }
-    }
-
-    #[test]
-    fn test_remote_manifest_request_timeout_validation() {
         for value in [
             serde_json::json!(0),
             serde_json::json!(-1),
             serde_json::json!("never"),
         ] {
             assert!(Settings::new()
-                .with_value("verify.remote_manifest_request_timeout_in_ms", value)
+                .with_value("core.http_request_timeout_in_ms", value)
                 .is_err());
-        }
-        for value in [1, u64::MAX] {
-            assert_eq!(
-                Settings::new()
-                    .with_value("verify.remote_manifest_request_timeout_in_ms", value)
-                    .unwrap()
-                    .verify
-                    .remote_manifest_request_timeout_in_ms,
-                value
-            );
         }
     }
 

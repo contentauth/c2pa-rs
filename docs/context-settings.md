@@ -117,33 +117,40 @@ End-to-end protection requires the binding or HTTP adapter to enforce a limit
 while receiving the response, before buffering or copying it.
 Increasing it allows correspondingly larger Store allocations.
 
-### Configuring remote manifest timeouts
+### Configuring HTTP request timeouts
 
-`verify.remote_manifest_request_timeout_in_ms` sets the total time limit for a
-remote manifest fetch in **milliseconds**. The default is **10,000 ms** (10 seconds).
-The value must be positive; zero does not disable the timeout. It applies when the
-`fetch_remote_manifests` feature is enabled.
+`core.http_request_timeout_in_ms` sets the total time limit, in **milliseconds**, for
+SDK HTTP requests: remote manifest fetches, OCSP fetches, CAWG `did:web` resolution and
+settings-based remote signing. Time-stamp requests use their own settings (see below).
+The default is **10,000 ms** (10 seconds). The value must be positive; zero does not
+disable the timeout.
 
-For example, to limit each fetch to two seconds:
+For example, to limit each request to two seconds:
 
 ```rust
 use c2pa::{Context, Result};
 
 fn main() -> Result<()> {
-  let context = Context::new()
-    .with_settings_value("verify.remote_manifest_request_timeout_in_ms", 2_000u64)?;
-  Ok(())
+    let context = Context::new()
+        .with_settings_value("core.http_request_timeout_in_ms", 2_000u64)?;
+    Ok(())
 }
 ```
 
-Native built-in reqwest and ureq resolvers enforce the limit while receiving
-headers and the response body. SDK-managed redirects share the same budget.
-Timeouts return `Error::RemoteManifestFetch`. Custom resolvers must honor the
-`c2pa::http::RequestTimeout` request extension themselves. C and C++ HTTP resolver
-callbacks receive the remaining limit as `C2paHttpRequest.timeout_ms` (0 means no
-limit) and must apply it to their HTTP client; the SDK cannot interrupt a callback.
-The browser-based reqwest resolver on WASM cannot enforce this timeout. This is a per-fetch limit,
-not an overall deadline or cancellation mechanism for reading an asset.
+Native built-in reqwest and ureq resolvers enforce the limit while receiving headers
+and the response body. SDK-managed redirects share the same budget. A remote manifest
+timeout returns `Error::RemoteManifestFetch`.
+
+The limit is added by `Context::resolver()` and `Context::resolver_async()`, so custom
+resolvers must honor the `c2pa::http::RequestTimeout` request extension. C and C++ HTTP
+resolver callbacks receive the remaining limit as `C2paHttpRequest.timeout_ms` (0 means no
+limit) and must apply it to their HTTP client; the SDK cannot interrupt a callback. The
+browser-based reqwest resolver on WASM cannot enforce this timeout. Public
+`SignerSettings::c2pa_signer()` and `SignerSettings::cawg_signer()` calls without a
+`Context` use the default.
+
+This is a per-request limit, not an overall deadline or cancellation mechanism for
+reading an asset.
 
 ### Configuring time-stamp requests
 
@@ -353,7 +360,8 @@ Here's the `Settings` JSON with all default values:
     "max_decompressed_manifest_size_in_mb": 32,
     "time_stamp_request_attempts": 3,
     "time_stamp_request_timeout_in_ms": 10000,
-    "time_stamp_retry_delay_in_ms": 500
+    "time_stamp_retry_delay_in_ms": 500,
+    "http_request_timeout_in_ms": 10000
   },
   "signer": null,
   "trust":{ 
@@ -378,7 +386,6 @@ Here's the `Settings` JSON with all default values:
     "ocsp_fetch": false,
     "ocsp_fetch_should_override": false,
     "remote_manifest_fetch": true,
-    "remote_manifest_request_timeout_in_ms": 10000,
     "max_manifest_response_size": 10485760,
     "skip_ingredient_conflict_resolution": false,
     "strict_v1_validation": false

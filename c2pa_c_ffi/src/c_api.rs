@@ -2834,7 +2834,7 @@ mod tests {
             let builder = unsafe { c2pa_context_builder_new() };
             if let Some(setting) = setting {
                 let settings = unsafe { c2pa_settings_new() };
-                let path = CString::new("verify.remote_manifest_request_timeout_in_ms").unwrap();
+                let path = CString::new("core.http_request_timeout_in_ms").unwrap();
                 let value = CString::new(setting).unwrap();
                 assert_eq!(
                     unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) },

@@ -5887,9 +5887,7 @@ mod remote_manifest_response_tests {
     use super::*;
     use crate::{
         http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
-        settings::{
-            DEFAULT_MAX_MANIFEST_RESPONSE_SIZE, DEFAULT_REMOTE_MANIFEST_REQUEST_TIMEOUT_IN_MS,
-        },
+        settings::{DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS, DEFAULT_MAX_MANIFEST_RESPONSE_SIZE},
     };
 
     const TEST_RESPONSE_SIZE: u64 = 16;
@@ -5999,10 +5997,7 @@ mod remote_manifest_response_tests {
     ) -> (Result<Vec<u8>>, usize) {
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let resolver = Arc::new(Resolver {
-            expected_timeout_in_ms: context
-                .settings()
-                .verify
-                .remote_manifest_request_timeout_in_ms,
+            expected_timeout_in_ms: context.settings().core.http_request_timeout_in_ms,
             content_length,
             body_length,
             error_after,
@@ -6032,10 +6027,7 @@ mod remote_manifest_response_tests {
         for use_async in [false, true] {
             for timeout_in_ms in [1, 250, 10_000] {
                 let context = Context::new()
-                    .with_settings_value(
-                        "verify.remote_manifest_request_timeout_in_ms",
-                        timeout_in_ms,
-                    )
+                    .with_settings_value("core.http_request_timeout_in_ms", timeout_in_ms)
                     .unwrap();
                 let (result, bytes_read) =
                     fetch_with_context(context, None, 3, None, use_async).await;
@@ -6056,7 +6048,7 @@ mod remote_manifest_response_tests {
         for delay_body in [false, true] {
             let (url, server) = crate::http::tests::slow_server(delay_body);
             let context = Context::new()
-                .with_settings_value("verify.remote_manifest_request_timeout_in_ms", 100u64)
+                .with_settings_value("core.http_request_timeout_in_ms", 100u64)
                 .unwrap();
             let started = Instant::now();
             let result = Store::fetch_remote_manifest(&url, &context);
@@ -6079,7 +6071,7 @@ mod remote_manifest_response_tests {
         for delay_body in [false, true] {
             let (url, server) = crate::http::tests::slow_server(delay_body);
             let context = Context::new()
-                .with_settings_value("verify.remote_manifest_request_timeout_in_ms", 100u64)
+                .with_settings_value("core.http_request_timeout_in_ms", 100u64)
                 .unwrap();
             let started = Instant::now();
             let result = Store::fetch_remote_manifest_async(&url, &context).await;
@@ -6095,29 +6087,12 @@ mod remote_manifest_response_tests {
     }
 
     #[c2pa_test_async]
-    async fn test_remote_manifest_directly_mutated_zero_timeout_rejected() {
-        for use_async in [false, true] {
-            let mut context = Context::new();
-            context
-                .settings_mut()
-                .verify
-                .remote_manifest_request_timeout_in_ms = 0;
-            let (result, bytes_read) = fetch_with_context(context, None, 1, None, use_async).await;
-            assert!(
-                matches!(result, Err(Error::BadParam(ref msg)) if msg.contains("remote_manifest_request_timeout_in_ms")),
-                "expected invalid timeout error, got {result:?}"
-            );
-            assert_eq!(bytes_read, 0);
-        }
-    }
-
-    #[c2pa_test_async]
     async fn test_remote_manifest_overflow_probe_retries_interrupted() {
         for use_async in [false, true] {
             for body_length in [TEST_RESPONSE_SIZE, TEST_RESPONSE_SIZE + 1] {
                 let bytes_read = Arc::new(AtomicUsize::new(0));
                 let resolver = Arc::new(Resolver {
-                    expected_timeout_in_ms: DEFAULT_REMOTE_MANIFEST_REQUEST_TIMEOUT_IN_MS,
+                    expected_timeout_in_ms: DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS,
                     content_length: None,
                     body_length,
                     error_after: None,
