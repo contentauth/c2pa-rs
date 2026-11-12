@@ -65,6 +65,11 @@ type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
 /// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 ///
+/// Read and write callbacks borrow the buffer supplied by the Rust caller
+/// directly, without an intermediate copy. The buffer remains owned by the
+/// caller and is valid only for the duration of the callback; do not retain
+/// its pointer or release it.
+///
 /// Not `#[repr(C)]`, so cbindgen writes an opaque forward declaration: the C FFI
 /// now handles opaque ids, and we shouldn't dereference anything directly anymore.
 #[derive(Debug)]
@@ -439,6 +444,84 @@ impl TestC2paStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct BufferObservation {
+        ptr: *const u8,
+        len: usize,
+        bytes: Vec<u8>,
+    }
+
+    unsafe extern "C" fn observe_read(
+        context: *mut StreamContext,
+        data: *mut u8,
+        len: isize,
+    ) -> isize {
+        let observation = &mut *context.cast::<BufferObservation>();
+        observation.ptr = data;
+        observation.len = len as usize;
+        slice::from_raw_parts_mut(data, len as usize).fill(0x5a);
+        len
+    }
+
+    unsafe extern "C" fn observe_write(
+        context: *mut StreamContext,
+        data: *const u8,
+        len: isize,
+    ) -> isize {
+        let observation = &mut *context.cast::<BufferObservation>();
+        observation.ptr = data;
+        observation.len = len as usize;
+        observation.bytes = slice::from_raw_parts(data, len as usize).to_vec();
+        len
+    }
+
+    #[test]
+    fn test_cstream_read_buffer_identity() {
+        let mut observation = BufferObservation::default();
+        let mut stream = unsafe {
+            C2paStream::new(
+                (&mut observation as *mut BufferObservation).cast(),
+                observe_read,
+                TestC2paStream::seeker,
+                observe_write,
+                TestC2paStream::flusher,
+            )
+        };
+        let mut buffer = Vec::from([0; 32]);
+        for len in [0, 1, 17, 30] {
+            let destination = &mut buffer[1..1 + len];
+            let ptr = destination.as_ptr();
+            assert_eq!(stream.read(destination).unwrap(), len);
+            assert_eq!(observation.ptr, ptr);
+            assert_eq!(observation.len, len);
+            assert!(destination.iter().all(|byte| *byte == 0x5a));
+        }
+        assert_eq!(buffer[0], 0);
+        assert_eq!(buffer[31], 0);
+    }
+
+    #[test]
+    fn test_cstream_write_buffer_identity() {
+        let mut observation = BufferObservation::default();
+        let mut stream = unsafe {
+            C2paStream::new(
+                (&mut observation as *mut BufferObservation).cast(),
+                observe_read,
+                TestC2paStream::seeker,
+                observe_write,
+                TestC2paStream::flusher,
+            )
+        };
+        let buffer: Vec<u8> = (0..32).collect();
+        for len in [0, 1, 17, 30] {
+            let source = &buffer[1..1 + len];
+            assert_eq!(stream.write(source).unwrap(), len);
+            assert_eq!(observation.ptr, source.as_ptr());
+            assert_eq!(observation.len, len);
+            assert_eq!(observation.bytes, source);
+        }
+    }
 
     #[test]
     fn test_cstream_read() {
