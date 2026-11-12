@@ -36,7 +36,8 @@ commit_parsers = [
 dependencies_update = true
 features_always_increment_minor = false
 pr_labels = ["release"]
-release_always = false
+# Publishing is manual-only; maintenance commits may follow the release PR.
+release_always = true
 # TODO: https://github.com/contentauth/c2pa-rs/issues/2229
 # release_commits = "^(feat|fix|docs|perf|refactor|revert|test|update)[!]?[(:]"
 

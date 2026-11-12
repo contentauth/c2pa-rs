@@ -30,6 +30,10 @@ publishes the crates and creates release tags using organization credentials.
 It also uploads c2patool binaries when that crate is released; the library
 release tag triggers the separate library-binary publishing workflow.
 
+The manual publisher allows maintenance commits after the release-PR merge.
+After workflow or configuration fixes, start a new run with the command above;
+re-running an older run still uses its original commit.
+
 ### Additional dependency-security and CI fixes
 
 The maintenance lockfile now resolves the following older dependency issues,
