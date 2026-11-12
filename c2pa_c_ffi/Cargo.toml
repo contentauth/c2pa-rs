@@ -48,3 +48,7 @@ tokio = { version = "1.52.3", features = ["rt", "macros", "io-util", "time"] }
 
 [build-dependencies]
 cbindgen = "0.29"
+
+[[test]]
+name = "header_output"
+path = "build_support.rs"
