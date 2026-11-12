@@ -1073,6 +1073,60 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// Real-world ZIP-based documents store their entries deflated. Hashing them must not
+/// require decompression, which the SDK does not compile in.
+#[test]
+fn test_builder_sign_deflated_zip_formats() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for (format, data) in [
+        ("docx", &include_bytes!("fixtures/sample1.docx")[..]),
+        ("odt", &include_bytes!("fixtures/sample1.odt")[..]),
+    ] {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+
+        let mut dest = Cursor::new(Vec::new());
+        builder.save_to_stream(format, &mut Cursor::new(data), &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "{format}"
+        );
+    }
+    Ok(())
+}
+
+/// Deflated entries with data descriptors, as streaming ZIP writers produce. See
+/// `fixtures/data-descriptor-zip/README.md`.
+#[test]
+fn test_builder_sign_deflated_zip_with_data_descriptors() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let data = include_bytes!("fixtures/data-descriptor-zip/sample1-data-descriptor.zip");
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    let mut dest = Cursor::new(Vec::new());
+    builder.save_to_stream("zip", &mut Cursor::new(data), &mut dest)?;
+
+    dest.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_stream("zip", &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    // Changing a byte of the first entry's compressed data is detected. It starts after the
+    // 30-byte local header and the 9-byte name, and keeps its offset when signing.
+    let mut tampered = dest.into_inner();
+    tampered[30 + "first.txt".len() + 2] ^= 0x01;
+    let state = Reader::from_shared_context(&context)
+        .with_stream("zip", Cursor::new(&tampered))
+        .map(|r| r.validation_state());
+    assert!(!matches!(state, Ok(ValidationState::Trusted)));
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
