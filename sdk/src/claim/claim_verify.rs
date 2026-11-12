@@ -2276,9 +2276,29 @@ impl Claim {
 
     // Perform metadata validation check.
     // Check the structure only.  C2PA 2.4 no longer requires checking against allowed fields.
-    fn verify_metadata(claim: &Claim, _validation_log: &mut StatusTracker) -> Result<()> {
+    //
+    // `Metadata` models `c2pa.metadata`, whose `@context` maps prefixes to IRIs. Other
+    // metadata assertions (such as `cawg.metadata`) aren't subject to its rules and may use
+    // any JSON-LD, such as an `@context` array; one that isn't a JSON object at all is
+    // reported against that assertion rather than failing the whole claim.
+    fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
         for metadata_assertion in claim.metadata_assertions() {
-            Metadata::from_assertion(metadata_assertion.assertion())?;
+            let assertion = metadata_assertion.assertion();
+            if metadata_assertion.label() == labels::METADATA {
+                Metadata::from_assertion(assertion)?;
+            } else if !assertion.as_json_object().is_ok_and(|v| v.is_object()) {
+                let label = to_assertion_uri(claim.label(), &metadata_assertion.label());
+                log_item!(
+                    label,
+                    "metadata assertion is not a JSON object",
+                    "verify_metadata"
+                )
+                .validation_status(validation_status::ASSERTION_JSON_INVALID)
+                .failure_no_throw(
+                    validation_log,
+                    Error::ClaimDecoding(metadata_assertion.label()),
+                );
+            }
         }
         Ok(())
     }

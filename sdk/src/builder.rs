@@ -4763,6 +4763,104 @@ mod tests {
         assert_eq!(sb.blocks[0].value, payload);
     }
 
+    /// A `cawg.metadata` assertion that `Metadata` can't parse (JSON-LD `@context` as an
+    /// array, or no `@context`) is reported as stored, and doesn't stop the manifest
+    /// from loading. Each is reported with the content type it was stored with.
+    #[test]
+    fn test_unparseable_metadata_assertion_still_reads() {
+        let cases = [
+            (
+                serde_json::json!({
+                    "@context": ["https://schema.org/", { "dc": "http://purl.org/dc/elements/1.1/" }],
+                    "dc:title": "Hills",
+                }),
+                true,
+            ),
+            (serde_json::json!({ "dc:title": "Hills" }), true),
+            (
+                serde_json::json!({
+                    "@context": { "dc": "http://purl.org/dc/elements/1.1/" },
+                    "dc:title": "Hills",
+                }),
+                false,
+            ),
+        ];
+        for (metadata, as_json) in cases {
+            let mut builder = Builder::default();
+            builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+            if as_json {
+                builder
+                    .add_assertion_json("cawg.metadata", &metadata)
+                    .unwrap();
+            } else {
+                builder.add_assertion("cawg.metadata", &metadata).unwrap();
+            }
+            let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+            let mut dest = Cursor::new(Vec::new());
+            let signer = test_signer(SigningAlg::Ps256);
+            builder
+                .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+                .unwrap();
+
+            dest.set_position(0);
+            let reader = Reader::default()
+                .with_stream("image/jpeg", &mut dest)
+                .unwrap();
+            let assertion = reader
+                .active_manifest()
+                .unwrap()
+                .assertions()
+                .iter()
+                .find(|a| a.label() == "cawg.metadata")
+                .unwrap();
+            assert_eq!(assertion.value().unwrap(), &metadata);
+            let expected_kind = if as_json {
+                ManifestAssertionKind::Json
+            } else {
+                ManifestAssertionKind::Cbor
+            };
+            assert_eq!(assertion.kind(), &expected_kind);
+        }
+    }
+
+    /// A metadata assertion other than `c2pa.metadata` that isn't a JSON object is
+    /// reported as `assertion.json.invalid`; the manifest still loads.
+    #[test]
+    fn test_metadata_assertion_not_an_object() {
+        // Verifying after signing would reject the asset this test needs to write.
+        let context = Context::new()
+            .with_settings(r#"{"verify": {"verify_after_sign": false}}"#)
+            .unwrap();
+        let mut builder = Builder::from_context(context);
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        builder
+            .add_assertion_json("cawg.metadata", &serde_json::json!(["not", "a", "map"]))
+            .unwrap();
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        dest.set_position(0);
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut dest)
+            .unwrap();
+        let failures = reader
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap()
+            .failure();
+        assert!(
+            failures.iter().any(|s| s.code() == "assertion.json.invalid"
+                && s.url()
+                    .is_some_and(|u| u.ends_with("/c2pa.assertions/cawg.metadata"))),
+            "{failures:?}"
+        );
+    }
+
     #[test]
     fn test_builder_sign() {
         #[derive(Serialize, Deserialize)]
