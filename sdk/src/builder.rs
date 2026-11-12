@@ -7754,6 +7754,131 @@ mod tests {
         );
     }
 
+    // Per the spec's _Validate Assertions_ section, a c2pa.deleted `ingredients` reference must
+    // be a valid hashed URI to a componentOf ingredient assertion in another manifest.
+    #[test]
+    fn test_deleted_action_ingredient_references() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+        let context = test_context().into_shared();
+        let signer = test_signer(SigningAlg::Ps256);
+        let format = "image/jpeg";
+
+        let mut component_builder = Builder::from_shared_context(&context);
+        component_builder
+            .add_action(
+                Action::new(c2pa_action::CREATED)
+                    .set_source_type(DigitalSourceType::DigitalCapture),
+            )
+            .unwrap();
+        let mut component = Cursor::new(Vec::new());
+        component_builder
+            .sign(
+                signer.as_ref(),
+                format,
+                &mut Cursor::new(TEST_IMAGE_CLOUD),
+                &mut component,
+            )
+            .unwrap();
+
+        // The middle manifest places the component.
+        let mut middle_builder = Builder::from_shared_context(&context);
+        component.set_position(0);
+        middle_builder
+            .add_ingredient_from_stream(
+                json!({ "title": "component", "relationship": "componentOf", "label": "c" })
+                    .to_string(),
+                format,
+                &mut component,
+            )
+            .unwrap();
+        middle_builder
+            .add_action(
+                Action::new(c2pa_action::CREATED)
+                    .set_source_type(DigitalSourceType::DigitalCapture),
+            )
+            .unwrap();
+        middle_builder
+            .add_action(
+                json!({ "action": "c2pa.placed", "parameters": { "ingredientIds": ["c"] } }),
+            )
+            .unwrap();
+        let mut middle = Cursor::new(Vec::new());
+        middle_builder
+            .sign(
+                signer.as_ref(),
+                format,
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut middle,
+            )
+            .unwrap();
+
+        middle.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream(format, &mut middle)
+            .unwrap();
+        let middle_label = reader.active_label().unwrap().to_owned();
+        let ingredient_label = reader.active_manifest().unwrap().ingredients()[0]
+            .label()
+            .unwrap()
+            .to_owned();
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let url = format!("self#jumbf=c2pa.assertions/{ingredient_label}");
+        let claim = &detailed["manifests"][&middle_label]["claim"];
+        let hash = ["created_assertions", "gathered_assertions"]
+            .iter()
+            .flat_map(|k| claim[*k].as_array().into_iter().flatten())
+            .find(|a| a["url"] == url.as_str())
+            .and_then(|a| a["hash"].as_str())
+            // detailed JSON writes byte strings as b64'...'
+            .map(|h| {
+                STANDARD
+                    .decode(h.trim_start_matches("b64'").trim_end_matches('\''))
+                    .unwrap()
+            })
+            .unwrap();
+        let absolute = crate::jumbf::labels::to_assertion_uri(&middle_label, &ingredient_label);
+
+        // Opens the middle manifest and deletes the component through `reference`.
+        let mut delete = |reference: HashedUri| {
+            let mut builder = Builder::from_shared_context(&context);
+            builder.set_intent(BuilderIntent::Edit);
+            builder
+                .add_action(
+                    Action::new(c2pa_action::DELETED)
+                        .set_parameter("ingredients", vec![reference])
+                        .unwrap(),
+                )
+                .unwrap();
+            middle.set_position(0);
+            let mut output = Cursor::new(Vec::new());
+            builder.sign(signer.as_ref(), format, &mut middle.clone(), &mut output)
+        };
+        let mismatch = |result: Result<Vec<u8>>| match result {
+            Err(Error::InvalidManifest(results)) => results
+                .active_manifest()
+                .unwrap()
+                .failure()
+                .iter()
+                .any(|s| {
+                    s.code() == crate::validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH
+                }),
+            _ => false,
+        };
+
+        delete(HashedUri::new(absolute.clone(), None, &hash))
+            .expect("a valid reference to another manifest's componentOf ingredient");
+        assert!(mismatch(delete(HashedUri::new(
+            absolute,
+            None,
+            b"not the hash"
+        ))));
+        assert!(
+            mismatch(delete(HashedUri::new(url, None, &hash))),
+            "relative: this manifest"
+        );
+    }
+
     #[test]
     fn test_redaction_assertion_via_archive() {
         let _settings = Settings::new()
