@@ -26,8 +26,8 @@ use crate::asset_handlers::structured_text_io::StructuredTextIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
-        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
-        tiff_io::TiffIO, zip_io::ZipIO,
+        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO,
+        safetensors_io::SafeTensorsIO, svg_io::SvgIO, tiff_io::TiffIO, zip_io::ZipIO,
     },
     asset_io::{AssetIO, C2paReader, C2paWriter, HandlerRegistry, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
@@ -51,6 +51,7 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        Box::new(SafeTensorsIO::new("")),
         #[cfg(feature = "unstable_structured_text")]
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
