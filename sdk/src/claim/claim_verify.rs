@@ -757,8 +757,11 @@ impl Claim {
                     }
                 }
 
-                // 2.b.v c2pa.created must have a digitalSourceType
-                if action.action() == c2pa_action::CREATED && action.source_type().is_none() {
+                // 2.b.v c2pa.created must have a digitalSourceType, which may come from a
+                // template
+                if action.action() == c2pa_action::CREATED
+                    && actions.effective_source_type(action).is_none()
+                {
                     log_item!(
                         label.clone(),
                         "c2pa.created action must have a digitalSourceType",
