@@ -33,6 +33,14 @@ The following table summarizes the supported media (asset) file formats. This in
 | `wav`           | `audio/wav`                                                                     |
 | `webp`          | `image/webp`                                                                    |
 
+## Experimental feature: WARC
+
+The Rust library supports WARC files when the `unstable_warc` feature is enabled. A gzip-compressed WARC (`.warc.gz`) is read and written with the format `warc`. Decompressed data is limited to 1 GiB in total across all gzip members. WARC-zstd files are not supported.
+
+| Extensions | MIME type          |
+| ---------- | ------------------ |
+| `warc`     | `application/warc` |
+
 ## Experimental feature: Text formats
 
 The Rust library supports the following text formats when the `unstable_structured_text` feature is enabled.
