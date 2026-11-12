@@ -255,6 +255,12 @@ impl<'a> IcaSignatureVerifier<'a> {
         Self { context: context_ }
     }
 
+    /// The context under which validation is performed.
+    #[cfg(feature = "unstable_cawg_vcb")]
+    pub(crate) fn context(&self) -> &'a Context {
+        self.context
+    }
+
     // pub(crate) fn from_async_resolver(resolver: Arc<dyn AsyncHttpResolver>) -> Self {
     //     Self { resolver }
     // }
