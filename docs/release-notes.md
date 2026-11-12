@@ -14,6 +14,11 @@ compatibility with the current CI toolchain. The public API and Rust 1.88 minimu
 are unchanged. Native consumers must rebuild and redistribute their binaries to
 receive the TLS updates; see [usage](usage.md).
 
+Tier 1A CI runs on pull requests targeting `v0.89` and pushes to that branch.
+The required semver check compares both library APIs against the pull request's
+base commit and enforces patch-release compatibility. Release publishing and
+the label-gated Tier 1B/2 workflows are unchanged.
+
 ### Additional dependency-security and CI fixes
 
 The maintenance lockfile now resolves the following older dependency issues,
