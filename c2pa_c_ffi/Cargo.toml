@@ -40,11 +40,5 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 thiserror = "2.0.18"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "rt"] }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio = { version = "1.52.3", features = ["rt", "macros", "io-util", "time"] }
-
 [build-dependencies]
 cbindgen = "0.29"
