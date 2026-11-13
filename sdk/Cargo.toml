@@ -107,9 +107,7 @@ crate-type = ["lib"]
 
 [dependencies]
 # EXPERIMENT: asset-io integration.
-# TEMPORARY: tracks contentauth/asset-io#39 until it is merged and released;
-# then return to a crates.io version and drop the `allow-git` entry in deny.toml.
-asset-io = { git = "https://github.com/contentauth/asset-io", branch = "gpeacock/c2pa-deps", optional = true, default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf", "tiff", "id3", "gif"] }
+asset-io = { version = "0.5.0", optional = true, default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf", "tiff", "id3", "gif"] }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"

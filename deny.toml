@@ -50,5 +50,4 @@ license-files = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# TEMPORARY: asset-io from contentauth/asset-io#39; remove once it is released.
-allow-git = ["https://github.com/contentauth/asset-io"]
+allow-git = []
