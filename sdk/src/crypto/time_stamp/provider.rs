@@ -57,6 +57,7 @@ pub trait TimeStampProvider {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+
                 return Some(super::http_request::default_rfc3161_request(
                     &url, headers, &body, message, context,
                 ));
@@ -112,6 +113,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+
                 return Some(
                     super::http_request::default_rfc3161_request_async(
                         &url, headers, &body, message, context,
@@ -152,21 +154,26 @@ mod tests {
     fn default_request_has_sha256_imprint_nonce_and_certificate_request() {
         for data in [b"".as_slice(), b"payload"] {
             let encoded = default_rfc3161_message(data).unwrap();
+
             let request = Constructed::decode(
                 encoded.as_slice(),
                 bcder::Mode::Der,
                 TimeStampReq::take_from,
             )
             .unwrap();
+
             assert_eq!(request.version, bcder::Integer::from(1));
+
             assert_eq!(
                 request.message_imprint.hash_algorithm.algorithm.to_string(),
                 "2.16.840.1.101.3.4.2.1"
             );
+
             assert_eq!(
                 request.message_imprint.hashed_message.to_bytes().as_ref(),
                 Sha256::digest(data).as_slice()
             );
+
             assert!(request.nonce.is_some());
             assert_eq!(request.cert_req, Some(true));
             assert!(request.req_policy.is_none());
@@ -185,15 +192,18 @@ mod tests {
         assert!(TimeStampProvider::time_stamp_service_url(&DefaultProvider).is_none());
         assert!(TimeStampProvider::time_stamp_request_headers(&DefaultProvider).is_none());
         assert!(TimeStampProvider::time_stamp_request_body(&DefaultProvider, b"data").is_ok());
+
         assert!(TimeStampProvider::send_time_stamp_request(
             &DefaultProvider,
             b"data",
             &crate::Context::new()
         )
         .is_none());
+
         assert!(AsyncTimeStampProvider::time_stamp_service_url(&DefaultProvider).is_none());
         assert!(AsyncTimeStampProvider::time_stamp_request_headers(&DefaultProvider).is_none());
         assert!(AsyncTimeStampProvider::time_stamp_request_body(&DefaultProvider, b"data").is_ok());
+
         assert!(AsyncTimeStampProvider::send_time_stamp_request(
             &DefaultProvider,
             b"data",
@@ -233,6 +243,7 @@ mod tests {
             &crate::Context::new()
         )
         .is_none());
+
         assert!(AsyncTimeStampProvider::send_time_stamp_request(
             &InvalidBody,
             b"data",

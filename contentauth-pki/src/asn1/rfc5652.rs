@@ -116,13 +116,16 @@ mod tests {
                     bcder::OctetString::encode_slice(&vec![0xab; size]),
                 ),
             };
+
             let mut encoded = Vec::new();
             original.write_encoded(Mode::Der, &mut encoded).unwrap();
             assert_eq!(encoded.len(), original.encoded_len(Mode::Der));
+
             let decoded =
                 Constructed::decode(encoded.as_slice(), Mode::Der, ContentInfo::take_opt_from)
                     .unwrap()
                     .unwrap();
+
             assert_eq!(decoded, original);
             assert_eq!(decoded.content.as_slice(), original.content.as_slice());
         }
