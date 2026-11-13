@@ -103,6 +103,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
           toolchain: ${{ matrix.rust_version != 'stable' && matrix.rust_version || '' }}
+          # The vendored OpenSSL build doesn't ship its debug symbols
+          # (ossl_static.pdb), so the MSVC linker warns about them (LNK4099).
+          # Newer Rust toolchains surface linker output as warnings, which the
+          # default `deny` setting turns into errors. The missing symbols are
+          # harmless, so allow warnings on Windows instead of failing the build.
+          build-warnings: ${{ runner.os == 'Windows' && 'warn' || 'deny' }}
 
       - name: Run tests
         env:
@@ -192,6 +198,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
           toolchain: nightly-2026-07-12
+          # The vendored OpenSSL build doesn't ship its debug symbols
+          # (ossl_static.pdb), so the MSVC linker warns about them (LNK4099).
+          # Newer Rust toolchains surface linker output as warnings, which the
+          # default `deny` setting turns into errors. The missing symbols are
+          # harmless, so allow warnings on Windows instead of failing the build.
+          build-warnings: ${{ runner.os == 'Windows' && 'warn' || 'deny' }}
 
       - name: Run tests
         env:
