@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use c2pa_raw_crypto::{signer_from_private_key, RawSigner, RawSignerError, SigningAlg};
 use http::Request;
@@ -21,13 +21,13 @@ use crate::{
     create_signer,
     crypto::cert_chain_pem_to_der,
     dynamic_assertion::DynamicAssertion,
-    http::{SyncGenericResolver, SyncHttpResolver},
+    http::{RequestTimeout, SyncGenericResolver, SyncHttpResolver},
     identity::{
         builder::{CredentialHolder, IdentityAssertionBuilder, IdentityBuilderError},
         x509::X509CredentialHolder,
         SignerPayload,
     },
-    settings::SettingsValidate,
+    settings::{SettingsValidate, DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS},
     signer::OwnedSignerWrapper,
     BoxedSigner, Error, Result, Signer,
 };
@@ -78,7 +78,13 @@ pub enum SignerSettings {
 
 impl SignerSettings {
     /// Returns a c2pa signer using the provided signer settings.
+    ///
+    /// Remote signing requests use the default 10-second HTTP request limit.
     pub fn c2pa_signer(self) -> Result<BoxedSigner> {
+        self.c2pa_signer_with_timeout(Duration::from_millis(DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS))
+    }
+
+    pub(crate) fn c2pa_signer_with_timeout(self, timeout: Duration) -> Result<BoxedSigner> {
         match self {
             SignerSettings::Local {
                 alg,
@@ -106,13 +112,27 @@ impl SignerSettings {
                     reserve_size,
                     certs,
                     tsa_url,
+                    timeout,
                 }))
             }
         }
     }
 
     /// Returns a CAWG X.509 identity signer that wraps the provided c2pa signer.
+    ///
+    /// Remote signing requests use the default 10-second HTTP request limit.
     pub fn cawg_signer(self, c2pa_signer: BoxedSigner) -> Result<BoxedSigner> {
+        self.cawg_signer_with_timeout(
+            c2pa_signer,
+            Duration::from_millis(DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS),
+        )
+    }
+
+    pub(crate) fn cawg_signer_with_timeout(
+        self,
+        c2pa_signer: BoxedSigner,
+        timeout: Duration,
+    ) -> Result<BoxedSigner> {
         match self {
             SignerSettings::Local {
                 alg: cawg_alg,
@@ -153,6 +173,7 @@ impl SignerSettings {
                     cawg_sign_cert.as_bytes(),
                     cawg_referenced_assertions.unwrap_or_default(),
                     cawg_roles.unwrap_or_default(),
+                    timeout,
                 )?;
                 Ok(Box::new(signer))
             }
@@ -224,6 +245,7 @@ impl CawgX509IdentitySigner {
         sign_cert: &[u8],
         referenced_assertions: Vec<String>,
         roles: Vec<String>,
+        timeout: Duration,
     ) -> Result<Self> {
         let identity_cert_chain = cert_chain_pem_to_der(sign_cert)?;
 
@@ -239,6 +261,7 @@ impl CawgX509IdentitySigner {
                 url,
                 alg,
                 max_signature_size,
+                timeout,
             }),
             identity_cert_chain,
             referenced_assertions,
@@ -481,13 +504,16 @@ pub(crate) struct RemoteSigner {
     certs: Vec<Vec<u8>>,
     reserve_size: usize,
     tsa_url: Option<String>,
+    timeout: Duration,
 }
 
 impl Signer for RemoteSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         use std::io::Read;
 
-        let request = Request::post(&self.url).body(data.to_vec())?;
+        let request = Request::post(&self.url)
+            .extension(RequestTimeout(self.timeout))
+            .body(data.to_vec())?;
         let response = SyncGenericResolver::with_redirects()
             .unwrap_or_default()
             .http_resolve(request)
@@ -530,6 +556,7 @@ struct RemoteRawSigner {
     url: String,
     alg: SigningAlg,
     max_signature_size: usize,
+    timeout: Duration,
 }
 
 impl RawSigner for RemoteRawSigner {
@@ -537,6 +564,7 @@ impl RawSigner for RemoteRawSigner {
         use std::io::Read;
 
         let request = Request::post(&self.url)
+            .extension(RequestTimeout(self.timeout))
             .body(data.to_vec())
             .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
         let response = SyncGenericResolver::with_redirects()
@@ -706,6 +734,49 @@ pub mod tests {
 
         // dynamic_assertions still returns one builder even with empty refs/roles.
         assert_eq!(combined.dynamic_assertions().len(), 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_remote_signers_apply_request_timeout() {
+        use std::time::{Duration, Instant};
+
+        use c2pa_raw_crypto::RawSigner;
+
+        use super::RemoteRawSigner;
+
+        let alg = SigningAlg::Ps384;
+        let (sign_cert, _) = test_signer::cert_chain_and_private_key_for_alg(alg);
+        let timeout = Duration::from_millis(100);
+
+        let (url, server) = crate::http::tests::slow_server(false);
+        let settings = super::SignerSettings::Remote {
+            url,
+            alg,
+            sign_cert: String::from_utf8(sign_cert.to_vec()).unwrap(),
+            tsa_url: None,
+            referenced_assertions: None,
+            roles: None,
+        };
+        let signer = settings.c2pa_signer_with_timeout(timeout).unwrap();
+        let started = Instant::now();
+        assert!(signer.sign(&[1, 2, 3]).is_err());
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+        assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+
+        let (url, server) = crate::http::tests::slow_server(false);
+        let raw_signer = RemoteRawSigner {
+            url,
+            alg,
+            max_signature_size: 10_000,
+            timeout,
+        };
+        let started = Instant::now();
+        assert!(raw_signer.sign(&[1, 2, 3]).is_err());
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+        assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
     }
 
     #[cfg(not(target_arch = "wasm32"))]

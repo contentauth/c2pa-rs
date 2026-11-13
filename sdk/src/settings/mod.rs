@@ -57,6 +57,9 @@ pub(crate) const DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS: u32 = 3;
 /// Default time limit of each time-stamp request attempt, in milliseconds.
 pub(crate) const DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS: u64 = 10_000;
 
+/// Default time limit of an SDK HTTP request that sets no limit of its own, in milliseconds.
+pub(crate) const DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS: u64 = 10_000;
+
 /// Default pause before the second time-stamp request attempt, in milliseconds.
 pub(crate) const DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS: u64 = 500;
 
@@ -569,6 +572,16 @@ pub struct Core {
     ///
     /// The default is 500.
     pub time_stamp_retry_delay_in_ms: u64,
+    /// Total time limit, in milliseconds, of an SDK HTTP request: remote manifest fetches,
+    /// OCSP fetches, CAWG `did:web` resolution and settings-based remote signing.
+    /// Time-stamp requests use the `time_stamp_*` settings instead.
+    ///
+    /// Native built-in HTTP resolvers enforce this limit. Custom resolvers, including C/C++
+    /// callbacks, receive it as [`crate::http::RequestTimeout`] (`timeout_ms` in C) and must
+    /// apply it themselves.
+    ///
+    /// The default is 10,000 (10 seconds). The value must be positive.
+    pub http_request_timeout_in_ms: u64,
 }
 
 impl Default for Core {
@@ -585,6 +598,7 @@ impl Default for Core {
             time_stamp_request_attempts: DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS,
             time_stamp_request_timeout_in_ms: DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS,
             time_stamp_retry_delay_in_ms: DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS,
+            http_request_timeout_in_ms: DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS,
         }
     }
 }
@@ -605,6 +619,11 @@ impl SettingsValidate for Core {
         if self.time_stamp_request_timeout_in_ms == 0 {
             return Err(Error::BadParam(
                 "time_stamp_request_timeout_in_ms must be positive".to_string(),
+            ));
+        }
+        if self.http_request_timeout_in_ms == 0 {
+            return Err(Error::BadParam(
+                "http_request_timeout_in_ms must be positive".to_string(),
             ));
         }
         Ok(())
@@ -1488,6 +1507,36 @@ pub mod tests {
         let result =
             Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_http_request_timeout_configuration() {
+        assert_eq!(
+            Settings::default().core.http_request_timeout_in_ms,
+            DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS
+        );
+        for context in [
+            crate::Context::new()
+                .with_settings(r#"{"core":{"http_request_timeout_in_ms":250}}"#)
+                .unwrap(),
+            crate::Context::new()
+                .with_settings("[core]\nhttp_request_timeout_in_ms = 250")
+                .unwrap(),
+            crate::Context::new()
+                .with_settings_value("core.http_request_timeout_in_ms", 250u64)
+                .unwrap(),
+        ] {
+            assert_eq!(context.settings().core.http_request_timeout_in_ms, 250);
+        }
+        for value in [
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!("never"),
+        ] {
+            assert!(Settings::new()
+                .with_value("core.http_request_timeout_in_ms", value)
+                .is_err());
+        }
     }
 
     #[test]
