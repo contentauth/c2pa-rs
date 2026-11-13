@@ -444,6 +444,7 @@ mod tests {
 
     fn fulfill(workflow: &mut AcquisitionWorkflow, reply: AcquisitionReply) {
         assert_eq!(workflow.advance().unwrap(), Step::AwaitHost);
+
         workflow
             .fulfill(workflow.outstanding_requests()[0].id, reply)
             .unwrap();
@@ -460,10 +461,12 @@ mod tests {
         assert_eq!(request.uri(), "https://tsa.example/");
         assert_eq!(request.method(), "POST");
         assert_eq!(request.headers()["x-test"], "custom");
+
         assert_eq!(
             request.headers()[header::CONTENT_TYPE],
             "application/timestamp-query"
         );
+
         assert_eq!(request.body(), &request_body(b"message", 42).unwrap());
 
         // No signatures or certificates: acquisition must not imply verification.
@@ -472,6 +475,7 @@ mod tests {
             &mut workflow,
             AcquisitionReply::Http(Ok(http_response(bytes.clone()))),
         );
+
         assert_eq!(workflow.advance().unwrap(), Step::Complete);
         let acquired = workflow.finish().unwrap();
         assert_eq!(acquired.as_der(), bytes);
@@ -504,6 +508,7 @@ mod tests {
                 workflow,
                 AcquisitionReply::Http(Ok(http_response(bytes.clone()))),
             );
+
             assert_eq!(workflow.advance().unwrap(), Step::Complete);
         }
 
@@ -516,16 +521,20 @@ mod tests {
         for nonce in [0, 42, u64::MAX] {
             let body = request_body(b"message", nonce).unwrap();
             assert_eq!(body, request_body(b"message", nonce).unwrap());
+
             let parsed =
                 Constructed::decode(body.as_slice(), bcder::Mode::Der, TimeStampReq::take_from)
                     .unwrap();
+
             assert_eq!(parsed.version, BcderInteger::from(1));
             assert_eq!(parsed.nonce, Some(BcderInteger::from(nonce)));
             assert_eq!(parsed.cert_req, Some(true));
+
             assert_eq!(
                 parsed.message_imprint.hash_algorithm.algorithm.to_string(),
                 "2.16.840.1.101.3.4.2.1"
             );
+
             assert_eq!(
                 parsed.message_imprint.hashed_message.to_bytes().as_ref(),
                 Sha256::digest(b"message").as_slice()
@@ -537,13 +546,16 @@ mod tests {
     fn custom_policy_body_and_nonce_presence_are_preserved() {
         for requested in [None, Some(42)] {
             let body = request_body(b"custom", 123).unwrap();
+
             let mut parsed =
                 Constructed::decode(body.as_slice(), bcder::Mode::Der, TimeStampReq::take_from)
                     .unwrap();
+
             parsed.nonce = requested.map(BcderInteger::from);
             parsed.cert_req = Some(false);
             parsed.req_policy = Some("1.2.3.4".parse().unwrap());
             let mut body = Vec::new();
+
             parsed
                 .encode_ref()
                 .write_encoded(bcder::Mode::Der, &mut body)
@@ -583,6 +595,7 @@ mod tests {
                 &mut workflow,
                 AcquisitionReply::Http(Ok(http_response(bytes.clone()))),
             );
+
             assert_eq!(workflow.advance().unwrap(), Step::Complete);
             assert_eq!(workflow.finish().unwrap().as_der(), bytes);
         }
@@ -608,6 +621,7 @@ mod tests {
                 &mut workflow,
                 AcquisitionReply::Http(Ok(response.body(vec![0]).unwrap())),
             );
+
             assert!(
                 matches!(workflow.advance(), Err(AcquisitionError::HttpErrorResponse(s, c)) if s == status && c.as_deref() == content_type)
             );
@@ -619,6 +633,7 @@ mod tests {
                 &mut workflow,
                 AcquisitionReply::Http(Ok(http_response(bytes))),
             );
+
             assert!(matches!(
                 workflow.advance(),
                 Err(AcquisitionError::DecodeError(_))
@@ -630,10 +645,13 @@ mod tests {
             &mut failed,
             AcquisitionReply::Http(Err("cancelled by host".into())),
         );
+
         assert!(
             matches!(failed.advance(), Err(AcquisitionError::Transport(message)) if message == "cancelled by host")
         );
+
         assert!(failed.outstanding_requests().is_empty());
+
         assert!(matches!(
             failed.advance(),
             Err(AcquisitionError::Protocol(ProtocolError::WorkflowFailed(_)))
@@ -645,6 +663,7 @@ mod tests {
         let mut workflow = workflow();
         assert_eq!(workflow.advance().unwrap(), Step::AwaitHost);
         let request = &workflow.outstanding_requests()[0].kind;
+
         assert_eq!(
             contentauth_sans_io_core::Request::expected_reply(request),
             "HTTP response or transport failure"
@@ -664,6 +683,7 @@ mod tests {
             acquire_with_body("https://tsa.example/", vec![], &[0]),
             Err(AcquisitionError::InvalidRequest(_))
         ));
+
         assert!(matches!(
             acquire(
                 "https://tsa.example/",
@@ -685,9 +705,11 @@ mod tests {
             assert_eq!(bytes.len(), MAX_RESPONSE_BYTES + extra);
             let mut workflow = workflow();
             let mut response = http_response(bytes.clone());
+
             response
                 .headers_mut()
                 .insert(header::CONTENT_LENGTH, "0".parse().unwrap());
+
             fulfill(&mut workflow, AcquisitionReply::Http(Ok(response)));
 
             if extra == 0 {
@@ -710,20 +732,25 @@ mod tests {
                 ProtocolError::WorkflowNotComplete
             ))
         ));
+
         let mut workflow = workflow();
         assert_eq!(workflow.advance().unwrap(), Step::AwaitHost);
         let id = workflow.outstanding_requests()[0].id;
+
         workflow
             .fulfill(
                 id,
                 AcquisitionReply::Http(Ok(http_response(response_der(2, None, false, None)))),
             )
             .unwrap();
+
         assert!(matches!(
             workflow.fulfill(id, AcquisitionReply::Http(Err("duplicate".into()))),
             Err(AcquisitionError::Protocol(_))
         ));
+
         assert_eq!(workflow.advance().unwrap(), Step::Complete);
+
         assert!(matches!(
             workflow.fulfill(id, AcquisitionReply::Http(Err("late".into()))),
             Err(AcquisitionError::Protocol(ProtocolError::WorkflowComplete))

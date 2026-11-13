@@ -136,6 +136,7 @@ mod tests {
 
     fn with_content(content_type: &Oid, content: Option<&[u8]>) -> TimeStampResponse {
         let content_oid: bcder::Oid = content_type.to_string().parse().unwrap();
+
         let cms = Captured::from_values(
             Mode::Der,
             encode::sequence((
@@ -149,6 +150,7 @@ mod tests {
                 encode::set(None::<bcder::Captured>),
             )),
         );
+
         let mut response = response();
         response.0.time_stamp_token = Some(ContentInfo {
             content_type: "1.2.840.113549.1.7.2".parse().unwrap(),
@@ -179,6 +181,7 @@ mod tests {
             content_type: bcder::Oid(bytes::Bytes::from_static(&[0x2a, 3, 4])),
             content: Captured::from_values(Mode::Der, 0_u8.encode()),
         });
+
         assert!(matches!(
             response.signed_data(),
             Err(AcquisitionError::DecodeError(message)) if message == "Invalid OID for signed data"
@@ -186,10 +189,12 @@ mod tests {
 
         response.0.time_stamp_token.as_mut().unwrap().content_type =
             "1.2.840.113549.1.7.2".parse().unwrap();
+
         assert!(matches!(
             response.signed_data(),
             Err(AcquisitionError::DecodeError(message)) if message == "time stamp invalid"
         ));
+
         assert!(matches!(
             response.tst_info(),
             Err(AcquisitionError::DecodeError(_))
@@ -202,6 +207,7 @@ mod tests {
             Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO,
             Some(&[0]),
         );
+
         assert!(matches!(
             response.tst_info(),
             Err(AcquisitionError::DecodeError(_))
