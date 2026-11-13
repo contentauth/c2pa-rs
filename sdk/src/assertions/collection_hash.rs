@@ -201,6 +201,12 @@ impl CollectionHash {
             )));
         }
 
+        if self.uris.is_empty() {
+            return Err(Error::C2PAValidation(
+                ASSERTION_COLLECTIONHASH_MALFORMED.to_string(),
+            ));
+        }
+
         for uri_map in &self.uris {
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
@@ -308,6 +314,12 @@ impl CollectionHash {
         R: Read + Seek + ?Sized,
     {
         let alg = alg.unwrap_or(self.alg.as_str());
+
+        if self.uris.is_empty() {
+            return Err(Error::C2PAValidation(
+                ASSERTION_COLLECTIONHASH_MALFORMED.to_string(),
+            ));
+        }
 
         let zip_central_directory_hash = self
             .zip_central_directory_hash
