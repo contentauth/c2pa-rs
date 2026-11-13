@@ -32,6 +32,7 @@
 //! ) -> Result<(), Box<dyn std::error::Error>> {
 //!     let allowed = HashSet::new();
 //!     let required = HashSet::from(["1.3.6.1.5.5.7.3.8".to_string()]);
+//!
 //!     let policy = profile::ProfilePolicy {
 //!         allowed_ekus: &allowed,
 //!         mandatory_ekus: &required,
@@ -39,16 +40,20 @@
 //!         allow_specialty_purposes: true,
 //!         end_entity: true,
 //!     };
+//!
 //!     let profile_valid = profile::check_profile(certificate, &policy, validation_time)?;
+//!
 //!     let associated = chain::validate_chain_to_anchors(
 //!         ordered_chain,
 //!         profile_valid.certificate_der(),
 //!         tsa_anchors,
 //!         validation_time,
 //!     )?;
+//!
 //!     // The host must still establish timestamp cryptography/message binding,
 //!     // revocation and its own trust/acceptance policy.
 //!     let _ = associated;
+//!
 //!     Ok(())
 //! }
 //! ```

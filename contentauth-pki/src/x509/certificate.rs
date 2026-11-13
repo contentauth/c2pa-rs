@@ -36,6 +36,7 @@ fn raw_crypto_oid_to_bcder_oid(oid: &c2pa_raw_crypto::Oid) -> bcder::Oid {
 #[cfg(any(feature = "rust_native_crypto", test))]
 pub(super) fn check_chain_order_and_ca_authorization(certs: &[Vec<u8>]) -> Result<(), ChainError> {
     let chain_length = certs.len();
+
     if chain_length < 2 {
         return Ok(());
     }
@@ -45,6 +46,7 @@ pub(super) fn check_chain_order_and_ca_authorization(certs: &[Vec<u8>]) -> Resul
             .map_err(|_e| ChainError::NoAnchorAssociation)?;
 
         let issuer_der = &certs[i];
+
         let (_, issuer_cert) =
             X509Certificate::from_der(issuer_der).map_err(|_e| ChainError::NoAnchorAssociation)?;
 
@@ -78,9 +80,11 @@ fn check_ca_authorization(
         .basic_constraints()
         .map_err(|_e| ChainError::NoAnchorAssociation)?
         .ok_or(ChainError::NoAnchorAssociation)?;
+
     if !basic_constraints.value.ca {
         return Err(ChainError::NoAnchorAssociation);
     }
+
     if let Some(path_len) = basic_constraints.value.path_len_constraint {
         if certs_below > path_len {
             return Err(ChainError::NoAnchorAssociation);
@@ -157,6 +161,7 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
 
     let Ok((_i, (ha_alg, mgf_ai))) = seq.parse(|i| {
         let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
+
         if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
             return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
         }
@@ -165,6 +170,7 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
             .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
 
         let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
+
         if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
             return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
         }
@@ -202,6 +208,7 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
 
     // We only recognize a few specific algorithm types.
     let ha_alg_bytes = ha_alg.algorithm.as_bytes();
+
     if ha_alg_bytes == SHA256_OID.as_bytes() {
         Some("ps256".to_string())
     } else if ha_alg_bytes == SHA384_OID.as_bytes() {
@@ -267,6 +274,7 @@ mod tests {
     use rasn_pkix::Certificate;
 
     use super::*;
+
     fn cert_chain_pem_to_der(pem: &[u8]) -> Result<Vec<Vec<u8>>, pem::PemError> {
         Ok(pem::parse_many(pem)?
             .into_iter()
@@ -280,6 +288,7 @@ mod tests {
 
     fn certificate() -> Certificate {
         let pem = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
+
         rasn::der::decode(&cert_chain_pem_to_der(pem).unwrap()[0]).unwrap()
     }
 
@@ -291,6 +300,7 @@ mod tests {
 
         let der = rasn::der::encode(&algorithm).unwrap();
         let (_, algorithm) = AlgorithmIdentifier::from_der(&der).unwrap();
+
         signing_alg_from_rsapss_alg(&algorithm)
     }
 
@@ -337,10 +347,14 @@ mod tests {
         ] {
             let mut cert = certificate();
             cert.signature_algorithm.algorithm = oid(&id);
+
             let der = rasn::der::encode(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
+
             assert_eq!(cert_signing_alg(&parsed).as_deref(), Some(name));
+
             let (sig, hash) = signing_alg_to_sig_and_hash_oid(name).unwrap();
+
             assert_eq!(sig.as_ref(), sig_oid.as_bytes());
             assert_eq!(hash.as_ref(), hash_oid.as_bytes());
         }
@@ -351,15 +365,19 @@ mod tests {
             ("ps512", &SHA512_OID),
         ] {
             let (sig, hash) = signing_alg_to_sig_and_hash_oid(name).unwrap();
+
             assert_eq!(sig.as_ref(), RSA_PSS_OID.as_bytes());
             assert_eq!(hash.as_ref(), hash_oid.as_bytes());
         }
 
         assert!(signing_alg_to_sig_and_hash_oid("unknown").is_none());
+
         let mut cert = certificate();
         cert.signature_algorithm.algorithm = oid(&[1, 2, 3, 4]);
+
         let der = rasn::der::encode(&cert).unwrap();
         let (_, parsed) = X509Certificate::from_der(&der).unwrap();
+
         assert!(cert_signing_alg(&parsed).is_none());
     }
 
@@ -382,6 +400,7 @@ mod tests {
         let sha384 = vec![2, 16, 840, 1, 101, 3, 4, 2, 2];
         let sha512 = vec![2, 16, 840, 1, 101, 3, 4, 2, 3];
         let sha1 = vec![1, 3, 14, 3, 2, 26];
+
         for (hash, mask_hash, expected) in [
             (&sha256, &sha256, Some("ps256")),
             (&sha384, &sha384, Some("ps384")),
@@ -397,8 +416,11 @@ mod tests {
                 },
             })
             .unwrap();
+
             assert_eq!(pss_algorithm(Some(params.clone())).as_deref(), expected);
+
             let mut cert = certificate();
+
             cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
                 algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
                 parameters: Some(types::Any::new(params)),
@@ -406,10 +428,12 @@ mod tests {
 
             let der = rasn::der::encode(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
+
             assert_eq!(cert_signing_alg(&parsed).as_deref(), expected);
         }
 
         assert!(pss_algorithm(None).is_none());
+
         for value in [
             vec![5, 0],
             vec![0x30, 0],
@@ -438,12 +462,15 @@ mod tests {
         }
 
         let hash = rasn::der::encode(&alg(&sha256)).unwrap();
+
         for tag in [0xa0, 0x81, 0xa1] {
             let mut body = vec![0xa0, hash.len() as u8];
             body.extend_from_slice(&hash);
             body.extend_from_slice(&[tag, 0]);
+
             let mut params = vec![0x30, body.len() as u8];
             params.extend_from_slice(&body);
+
             assert!(pss_algorithm(Some(params)).is_none());
         }
     }
@@ -453,29 +480,37 @@ mod tests {
         let pem = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
         let chain = cert_chain_pem_to_der(pem).unwrap();
         let cert = &chain[1];
+
         let (_, leaf) = X509Certificate::from_der(&chain[0]).unwrap();
+
         let signature = leaf.signature_value.as_ref();
         let data = leaf.tbs_certificate.as_ref();
+
         assert_eq!(
             verify_data(cert, Some("ed25519".into()), signature, data),
             Ok(true)
         );
+
         assert_eq!(
             verify_data(cert, Some("ed25519".into()), signature, b"changed"),
             Ok(false)
         );
+
         assert_eq!(
             verify_data(b"invalid", Some("ed25519".into()), signature, data),
             Err(ChainError::InvalidCertificate)
         );
+
         assert_eq!(
             verify_data(cert, None, signature, data),
             Err(ChainError::InvalidCertificate)
         );
+
         assert_eq!(
             verify_data(cert, Some("unknown".into()), signature, data),
             Err(ChainError::InvalidCertificate)
         );
+
         assert_ne!(
             verify_data(cert, Some("ed25519".into()), &[], b"data"),
             Ok(true)
@@ -483,6 +518,7 @@ mod tests {
 
         let mut chain = cert_chain_pem_to_der(pem).unwrap();
         *chain[0].last_mut().unwrap() ^= 1;
+
         assert_eq!(
             check_chain_order_and_ca_authorization(&chain),
             Err(ChainError::NoAnchorAssociation)
@@ -496,9 +532,11 @@ mod tests {
         let root: Certificate = rasn::der::decode(&root_der).unwrap();
         let key_usage = oid(&[2, 5, 29, 15]);
         let constraints = oid(&[2, 5, 29, 19]);
+
         for (omit_usage, valid) in [(true, true), (false, false)] {
             let mut cert = root.clone();
             let extensions = cert.tbs_certificate.extensions.as_mut().unwrap();
+
             if omit_usage {
                 extensions.retain(|ext| ext.extn_id != key_usage);
             } else {
@@ -511,6 +549,7 @@ mod tests {
 
             let der = rasn::der::encode(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
+
             assert_eq!(
                 check_ca_authorization(&parsed.tbs_certificate, 0).is_ok(),
                 valid
@@ -518,13 +557,16 @@ mod tests {
         }
 
         let mut cert = root;
+
         cert.tbs_certificate
             .extensions
             .as_mut()
             .unwrap()
             .retain(|ext| ext.extn_id != constraints);
+
         let der = rasn::der::encode(&cert).unwrap();
         let (_, parsed) = X509Certificate::from_der(&der).unwrap();
+
         assert_eq!(
             check_ca_authorization(&parsed.tbs_certificate, 0),
             Err(ChainError::NoAnchorAssociation)
