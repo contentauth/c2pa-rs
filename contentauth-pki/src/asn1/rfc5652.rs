@@ -14,13 +14,13 @@ use bcder::{
     Captured, ConstOid, Mode, Oid, Tag,
 };
 
-#[cfg(any(test, feature = "sdk-compat"))]
+#[cfg(test)]
 mod signed_data;
 
 #[cfg(test)]
 pub(crate) use signed_data::Time;
-#[cfg(feature = "sdk-compat")]
-pub use signed_data::{SignedData, SignerInfo};
+#[cfg(test)]
+pub(crate) use signed_data::{SignedData, SignerInfo};
 
 /// Object identifier of the CMS signed-data content type.
 ///

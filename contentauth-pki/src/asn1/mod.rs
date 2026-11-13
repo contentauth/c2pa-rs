@@ -106,7 +106,7 @@ impl AlgorithmIdentifier {
     }
 
     /// Decode an optional algorithm identifier, retaining only its OID.
-    #[cfg(any(test, feature = "sdk-compat"))]
+    #[cfg(test)]
     pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
@@ -501,7 +501,7 @@ impl TryFrom<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
 }
 
 pub(crate) mod rfc3161;
-#[cfg(any(test, feature = "sdk-compat"))]
+#[cfg(test)]
 mod rfc3281;
 mod rfc4210;
 pub(crate) mod rfc5652;
