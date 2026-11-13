@@ -127,6 +127,7 @@ pub fn verify_time_stamp(
             )
             .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
             .informational(&mut current_validation_log);
+
             last_err = TimeStampError::ExpiredCertificate;
             continue;
         }
