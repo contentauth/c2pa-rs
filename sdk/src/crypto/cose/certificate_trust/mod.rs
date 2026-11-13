@@ -69,6 +69,7 @@ impl From<ChainError> for CertificateTrustError {
 }
 
 #[cfg(all(test, feature = "rust_native_crypto"))]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use c2pa_raw_crypto::SigningAlg;
     use rasn::types;
@@ -79,12 +80,10 @@ mod tests {
         crypto::cert_chain_pem_to_der, utils::test_signer::cert_chain_and_private_key_for_alg,
     };
 
-    #[allow(clippy::unwrap_used)]
     fn oid(value: &[u32]) -> types::ObjectIdentifier {
         types::ObjectIdentifier::new(value.to_vec()).unwrap()
     }
 
-    #[allow(clippy::unwrap_used)]
     fn certificate() -> Certificate {
         let (pem, _) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
@@ -92,7 +91,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::unwrap_used)]
     fn leaf_eku_failures_are_distinct_from_untrusted_chain() {
         let mut policy = CertificateTrustPolicy::new();
         policy
