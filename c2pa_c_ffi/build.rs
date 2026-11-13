@@ -19,6 +19,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod build_support;
+
 fn main() {
     // Get the version from the environment variable set by Cargo.
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is not set");
@@ -32,10 +34,8 @@ fn main() {
     // (e.g. emscripten with -Z build-std).
     let header_dir = match env::var("C2PA_HEADER_DIR") {
         Ok(dir) => PathBuf::from(dir),
-        Err(_) => Path::new(&out_dir)
-            .ancestors()
-            .nth(3)
-            .expect("Invalid OUT_DIR structure")
+        Err(_) => build_support::header_dir_from_out_dir(Path::new(&out_dir))
+            .expect("OUT_DIR does not contain a Cargo build directory")
             .to_path_buf(),
     };
     fs::create_dir_all(&header_dir).expect("could not create header output directory");
