@@ -15,7 +15,7 @@
 //!
 //! Signature workflows driven by your application. The crate describes the
 //! external operations it needs; your host performs them using its own HTTP
-//! client, runtime, credentials and network policy.
+//! client, runtime, credentials, and network policy.
 //!
 //! # Available workflows
 //!
@@ -29,7 +29,7 @@
 //! Workflows use `contentauth-sans-io-core`: advance until an operation needs
 //! host input, fulfill that operation with its result, then advance again.
 //! On completion, consume the workflow to obtain its output. Your host controls
-//! I/O, entropy, time inputs, timeout, retries and cancellation; this crate does
+//! I/O, entropy, time inputs, timeout, retries, and cancellation; this crate does
 //! not start network requests or require an executor.
 //!
 //! # What acquisition establishes
@@ -37,11 +37,11 @@
 //! Timestamp acquisition checks the HTTP envelope, response structure and
 //! reflected nonce, and returns the original, **unverified** response bytes.
 //! It does not establish a correct message imprint, signature validity,
-//! certificate-profile validity or TSA trust. Those checks remain in the host
+//! certificate-profile validity, or TSA trust. Those checks remain in the host
 //! SDK before the timestamp can be used as evidence.
 //!
 //! This crate is an unpublished experiment. Only timestamp acquisition is
-//! currently provided; X.509, OCSP, COSE and timestamp verification workflows
+//! currently provided; X.509, OCSP, COSE, and timestamp verification workflows
 //! are not yet available here.
 //! COSE is supporting machinery, not a general-purpose COSE environment.
 
