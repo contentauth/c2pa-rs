@@ -30,11 +30,11 @@
 //!     io::{self, Read},
 //! };
 //!
-//! use contentauth_sans_io_core::{Step, Workflow};
-//! use contentauth_signature_infrastructure::timestamp::acquisition::{
+//! use contentauth_pki::timestamp::acquisition::{
 //!     acquire, AcquisitionReply, AcquisitionRequest, UnverifiedTimeStampResponse,
 //!     MAX_RESPONSE_BYTES,
 //! };
+//! use contentauth_sans_io_core::{Step, Workflow};
 //! use http::{header::CONTENT_TYPE, Request, Response};
 //!
 //! fn acquire_timestamp(

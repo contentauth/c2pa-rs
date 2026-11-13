@@ -1,9 +1,12 @@
-# Signature infrastructure extraction experiment
+# PKI extraction experiment
 
-`contentauth-signature-infrastructure` is an **unpublished, provisional**
+`contentauth-pki` is an **unpublished, provisional**
 workspace crate. This first layer implements host-driven RFC 3161 timestamp
 acquisition. X.509 validation, timestamp verification, OCSP and COSE remain in
 the C2PA SDK; their extraction is not claimed by this layer.
+
+The scope is public key infrastructure (PKI) workflows for content authenticity.
+COSE is supporting machinery, not a general-purpose COSE environment.
 
 The crate uses `std` but has no HTTP client, executor, ambient clock, random
 number generator, SDK dependency or implicit I/O. It uses

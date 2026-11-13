@@ -3,7 +3,7 @@ resolver = "3"
 
 members = [
     "c2pa_c_ffi",
-    "contentauth-signature-infrastructure",
+    "contentauth-pki",
     "export_schema",
     "macros",
     "make_test_images",

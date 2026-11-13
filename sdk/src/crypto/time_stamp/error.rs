@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use contentauth_signature_infrastructure::timestamp::acquisition::AcquisitionError;
+use contentauth_pki::timestamp::acquisition::AcquisitionError;
 use thiserror::Error;
 
 use crate::http::HttpResolverError;

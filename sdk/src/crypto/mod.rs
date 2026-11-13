@@ -13,7 +13,7 @@
 
 #![deny(missing_docs)]
 
-pub(crate) use contentauth_signature_infrastructure::sdk_compat as asn1;
+pub(crate) use contentauth_pki::sdk_compat as asn1;
 pub(crate) mod base64;
 pub mod cose;
 pub(crate) mod hash;
