@@ -24,8 +24,8 @@ use crate::{
     cose_validator::verify_cose,
     crypto::{
         cose::{
-            check_claim_signing_eku, check_end_entity_certificate_profile, sign, sign_async,
-            AsyncCoseSigner, CertificateTrustPolicy, CoseSigner, TimeStampStorage,
+            sign, sign_async, AsyncCoseSigner, CertificateRole, CertificateTrustPolicy, CoseSigner,
+            TimeStampStorage,
         },
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
@@ -154,8 +154,6 @@ pub(crate) fn cose_sign(
 fn signing_cert_valid(signing_cert: &[u8], settings: &Settings) -> Result<()> {
     // make sure signer certs are valid
     let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-    check_claim_signing_eku(signing_cert, &mut cose_log)?;
-
     let mut passthrough_cap = CertificateTrustPolicy::default();
     if !settings.trust.use_default_ekus {
         passthrough_cap.clear_ekus();
@@ -171,7 +169,7 @@ fn signing_cert_valid(signing_cert: &[u8], settings: &Settings) -> Result<()> {
         passthrough_cap.add_valid_ekus(&trust_config);
     }
 
-    Ok(check_end_entity_certificate_profile(
+    Ok(CertificateRole::ClaimSigner.check_profile(
         signing_cert,
         &passthrough_cap,
         &mut cose_log,

@@ -541,6 +541,15 @@ S/MIME policy/cutoff and associated-timestamp rules are unchanged. Claim-role
 exclusions are not imposed globally on CAWG identity certificates or on the
 shared certificate-profile API.
 
+These call sites use an explicit certificate role independently of trust-anchor
+association. The long-term CAWG identity-purpose and post-interim migration policy
+is tracked separately in [#3077](https://github.com/contentauth/c2pa-rs/issues/3077);
+this change does not tighten CAWG acceptance of configured or specialty purposes.
+
+At claim validation, a reported claim-signer EKU rejection produces
+`signingCredential.invalid` without a synthetic `claimSignature.mismatch`;
+genuine cryptographic signature failures still report the mismatch status.
+
 When `verify.verify_timestamp_trust` is enabled, a TSA certificate that fails its
 profile checks (including a missing or incorrect timeStamping EKU) causes the
 timestamp to be rejected with informational `timeStamp.untrusted` diagnostics.

@@ -427,6 +427,29 @@ pub mod tests {
                         assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
 
                         for use_async in [false, true] {
+                            let mut identity_log = StatusTracker::default();
+                            let identity_info = if use_async {
+                                identity
+                                    .verify_cawg_signature_async(
+                                        &signature,
+                                        b"claim",
+                                        None,
+                                        &mut identity_log,
+                                    )
+                                    .await
+                            } else {
+                                identity.verify_cawg_signature(
+                                    &signature,
+                                    b"claim",
+                                    None,
+                                    &mut identity_log,
+                                )
+                            }
+                            .unwrap();
+                            assert!(identity_info.validated);
+                            assert!(!identity_log.has_status(SIGNING_CREDENTIAL_INVALID));
+                            assert!(identity_log.has_status(SIGNING_CREDENTIAL_TRUSTED));
+
                             let mut log = StatusTracker::default();
                             let result = if use_async {
                                 verifier

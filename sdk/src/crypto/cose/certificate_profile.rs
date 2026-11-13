@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::borrow::Cow;
+
 use asn1_rs::{Any, Class, FromDer, Header, Tag};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -31,8 +33,63 @@ use crate::{
     validation_results::validation_codes::*,
 };
 
-/// Reject specialty signing purposes at a claim-signing boundary.
-pub(crate) fn check_claim_signing_eku(
+/// The use of a certificate, independent of its trust-anchor association.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CertificateRole {
+    ClaimSigner,
+    CawgIdentity,
+    TimestampSigner,
+    DelegatedOcspResponder,
+}
+
+impl CertificateRole {
+    pub(crate) fn check_profile(
+        self,
+        certificate_der: &[u8],
+        policy: &CertificateTrustPolicy,
+        validation_log: &mut StatusTracker,
+        timestamp: Option<&TstInfo>,
+    ) -> Result<(), CertificateProfileError> {
+        let mut policy = Cow::Borrowed(policy);
+
+        match self {
+            Self::ClaimSigner => check_claim_signing_eku(certificate_der, validation_log)?,
+            // Preserve CAWG's existing profile and configured purposes. Its
+            // long-term identity-purpose policy is tracked in #3077.
+            Self::CawgIdentity => {}
+            Self::TimestampSigner | Self::DelegatedOcspResponder => {
+                let policy = policy.to_mut();
+                policy.clear_ekus();
+
+                policy.add_mandatory_ekus(match self {
+                    Self::TimestampSigner => b"1.3.6.1.5.5.7.3.8",
+                    _ => b"1.3.6.1.5.5.7.3.9",
+                });
+            }
+        }
+
+        check_end_entity_certificate_profile(certificate_der, &policy, validation_log, timestamp)
+    }
+
+    pub(crate) fn check_purpose(
+        self,
+        certificate_der: &[u8],
+        validation_log: &mut StatusTracker,
+    ) -> Result<(), CertificateProfileError> {
+        match self {
+            Self::ClaimSigner => check_claim_signing_eku(certificate_der, validation_log),
+            Self::CawgIdentity => Ok(()),
+            Self::TimestampSigner | Self::DelegatedOcspResponder => self.check_profile(
+                certificate_der,
+                &CertificateTrustPolicy::new(),
+                validation_log,
+                None,
+            ),
+        }
+    }
+}
+
+fn check_claim_signing_eku(
     certificate_der: &[u8],
     validation_log: &mut StatusTracker,
 ) -> Result<(), CertificateProfileError> {
@@ -1294,9 +1351,8 @@ mod tests {
                     }
 
                     let mut log = StatusTracker::default();
-                    let result = super::check_claim_signing_eku(&der, &mut log).and_then(|()| {
-                        check_end_entity_certificate_profile(&der, &policy, &mut log, None)
-                    });
+                    let result = super::CertificateRole::ClaimSigner
+                        .check_profile(&der, &policy, &mut log, None);
                     let specialty = purposes.contains(&timestamp) || purposes.contains(&ocsp);
                     let allowed = !specialty
                         && !purposes.is_empty()
@@ -1316,15 +1372,35 @@ mod tests {
                         assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
                     }
 
-                    for required in [&timestamp, &ocsp] {
-                        let mut policy = policy.clone();
-                        policy.add_mandatory_ekus(required.to_string().as_bytes());
+                    let mut identity_log = StatusTracker::default();
+                    let identity_result = super::CertificateRole::CawgIdentity.check_profile(
+                        &der,
+                        &policy,
+                        &mut identity_log,
+                        None,
+                    );
+                    let mut generic_log = StatusTracker::default();
+                    let generic_result =
+                        check_end_entity_certificate_profile(&der, &policy, &mut generic_log, None);
+                    assert_eq!(identity_result, generic_result);
+                    assert_eq!(
+                        identity_log.has_status(SIGNING_CREDENTIAL_INVALID),
+                        generic_log.has_status(SIGNING_CREDENTIAL_INVALID)
+                    );
+
+                    for (role, required) in [
+                        (super::CertificateRole::TimestampSigner, &timestamp),
+                        (super::CertificateRole::DelegatedOcspResponder, &ocsp),
+                    ] {
                         let mut log = StatusTracker::default();
-                        let result =
-                            check_end_entity_certificate_profile(&der, &policy, &mut log, None);
+                        let result = role.check_profile(&der, &policy, &mut log, None);
                         let allowed = purposes.len() == 1 && purposes[0] == *required;
                         assert_eq!(result.is_ok(), allowed);
                         assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);
+
+                        if purposes.len() == 1 && purposes[0] == email {
+                            assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
+                        }
                     }
                 }
             }
