@@ -26,10 +26,10 @@
 //! - **[Timestamp verification](timestamp::verification):** parse a response or
 //!   bare CMS token, authenticate signer facts, then verify its message imprint.
 //!   These are deterministic functions, not suspended workflows. Certificate
-//!   policy selection, trust and acceptance remain host decisions.
+//!   policy selection, trust, and acceptance remain host decisions.
 //! - **[X.509 mechanics](x509):** certificate signatures, explicit profile
 //!   constraints and chain evaluation against host-selected anchors and time.
-//!   Signature verification, profile validity and anchor association are distinct
+//!   Signature verification, profile validity, and anchor association are distinct
 //!   outcomes; none alone grants application trust.
 //!
 //! # Driving a workflow
@@ -48,9 +48,9 @@
 //! certificate-profile validity, or TSA trust. Use `timestamp::verification` for
 //! cryptographic checks, then apply host profile/trust policy before acceptance.
 //!
-//! This crate is an unpublished experiment. Timestamp acquisition and cryptographic
-//! verification and X.509 mechanics are provided. Application role/policy
-//! selection, trust reporting, OCSP and COSE orchestration remain host-side.
+//! This crate is an unpublished experiment. Timestamp acquisition, cryptographic
+//! verification, and X.509 mechanics are provided. Application role/policy
+//! selection, trust reporting, OCSP, and COSE orchestration remain host-side.
 //! COSE is supporting machinery, not a general-purpose COSE environment.
 
 #![deny(missing_docs)]

@@ -17,7 +17,7 @@
 //! association establishes a path to the supplied anchors, not permission to
 //! trust that anchor for a particular application role. The host selects roles,
 //! composes EKU settings per anchor, handles private credentials, and reports
-//! application-specific acceptance. No clock, network or settings are consulted.
+//! application-specific acceptance. No clock, network, or settings are consulted.
 //!
 //! ```rust
 //! use std::collections::HashSet;

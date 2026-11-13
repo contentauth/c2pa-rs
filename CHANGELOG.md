@@ -17,7 +17,7 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
   scheduled for mid-March 2027. Their reusable mechanics have moved to
   `contentauth-pki`; use `ProfilePolicy::check_certificate` or
   `timestamp::verification::signer_certificate_from_token` instead. SDK policy,
-  validation time, reporting and error mapping remain host responsibilities.
+  validation time, reporting, and error mapping remain host responsibilities.
   See the [migration guidance](contentauth-pki/README.md#x509-boundary).
 
 * C2PA v1 claim signing is deprecated in 0.92.0 and will be removed in 0.93.0,
