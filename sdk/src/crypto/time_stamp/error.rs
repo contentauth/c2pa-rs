@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use contentauth_pki::timestamp::acquisition::AcquisitionError;
 use thiserror::Error;
 
 use crate::http::HttpResolverError;
@@ -74,4 +75,87 @@ pub enum TimeStampError {
     /// An error occurred while resolving the http request.
     #[error(transparent)]
     HttpResolverError(#[from] HttpResolverError),
+
+    /// The timestamp response exceeded the 1,000,000-byte acquisition limit.
+    #[error("timestamp response exceeds 1000000 bytes")]
+    ResponseTooLarge,
+}
+
+impl From<AcquisitionError> for TimeStampError {
+    fn from(error: AcquisitionError) -> Self {
+        match error {
+            AcquisitionError::Protocol(error) => Self::InternalError(error.to_string()),
+            AcquisitionError::InvalidRequest(error) => Self::InternalError(error),
+
+            AcquisitionError::HttpRequestError(error) => {
+                Self::HttpResolverError(HttpResolverError::Http(error))
+            }
+
+            AcquisitionError::DecodeError(error) => Self::DecodeError(error),
+
+            AcquisitionError::HttpErrorResponse(status, content_type) => {
+                Self::HttpErrorResponse(status, content_type)
+            }
+
+            AcquisitionError::Transport(error) => Self::HttpConnectionError(error),
+            AcquisitionError::NonceMismatch => Self::NonceMismatch,
+            AcquisitionError::ResponseTooLarge => Self::ResponseTooLarge,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acquisition_failures_retain_sdk_error_categories_and_details() {
+        use contentauth_sans_io_core::ProtocolError;
+
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::Protocol(ProtocolError::WorkflowNotComplete)),
+            TimeStampError::InternalError(message)
+                if message == ProtocolError::WorkflowNotComplete.to_string()
+        ));
+
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::InvalidRequest("invalid DER".into())),
+            TimeStampError::InternalError(message) if message == "invalid DER"
+        ));
+
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::DecodeError("invalid CMS".into())),
+            TimeStampError::DecodeError(message) if message == "invalid CMS"
+        ));
+
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::HttpErrorResponse(503, Some("text/plain".into()))),
+            TimeStampError::HttpErrorResponse(503, Some(content_type)) if content_type == "text/plain"
+        ));
+
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::Transport("host cancelled".into())),
+            TimeStampError::HttpConnectionError(message) if message == "host cancelled"
+        ));
+
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::NonceMismatch),
+            TimeStampError::NonceMismatch
+        ));
+
+        assert!(matches!(
+            TimeStampError::from(AcquisitionError::ResponseTooLarge),
+            TimeStampError::ResponseTooLarge
+        ));
+
+        assert!(matches!(
+            http::Request::post("bad\nuri")
+                .body(Vec::<u8>::new())
+                .map_err(AcquisitionError::HttpRequestError)
+                .map_err(TimeStampError::from),
+            Err(TimeStampError::HttpResolverError(HttpResolverError::Http(
+                _
+            )))
+        ));
+    }
 }

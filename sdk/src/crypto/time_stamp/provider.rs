@@ -12,22 +12,9 @@
 // each license.
 
 use async_trait::async_trait;
-use bcder::{encode::Values, OctetString};
-use c2pa_raw_crypto::oids::SHA256_OID;
 use rand::RngExt;
-use sha2::{Digest, Sha256};
 
-use crate::{
-    context::Context,
-    crypto::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError},
-    maybe_send_sync::MaybeSync,
-};
-
-/// Convert a [`c2pa_raw_crypto::Oid`] into a `bcder::Oid` by reusing the OID's
-/// DER content octets directly.
-fn raw_crypto_oid_to_bcder_oid(oid: &c2pa_raw_crypto::Oid) -> bcder::Oid {
-    bcder::Oid(bytes::Bytes::copy_from_slice(oid.as_bytes()))
-}
+use crate::{context::Context, crypto::time_stamp::TimeStampError, maybe_send_sync::MaybeSync};
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
 /// service and generate a corresponding time stamp for a specific piece of
@@ -61,7 +48,7 @@ pub trait TimeStampProvider {
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
-    /// Uses the caller's resolver, network policy and time-stamp request settings from `context`.
+    /// Uses the caller's resolver, network policy, and time-stamp request settings from `context`.
     fn send_time_stamp_request(
         &self,
         message: &[u8],
@@ -70,6 +57,7 @@ pub trait TimeStampProvider {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+
                 return Some(super::http_request::default_rfc3161_request(
                     &url, headers, &body, message, context,
                 ));
@@ -116,7 +104,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     /// provided by [`Self::time_stamp_service_url()`], if any.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
-    /// Uses the caller's resolver, network policy and timeout settings from `context`.
+    /// Uses the caller's resolver, network policy, and timeout settings from `context`.
     async fn send_time_stamp_request(
         &self,
         message: &[u8],
@@ -125,6 +113,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+
                 return Some(
                     super::http_request::default_rfc3161_request_async(
                         &url, headers, &body, message, context,
@@ -142,37 +131,11 @@ pub trait AsyncTimeStampProvider: MaybeSync {
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
-    // Hash the data with SHA-256
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let digest = hasher.finalize();
-
     let mut random = [0u8; 8];
     rand::rng().fill(&mut random);
 
-    // SHA-256 OID: 2.16.840.1.101.3.4.2.1
-    let sha256_oid = raw_crypto_oid_to_bcder_oid(&SHA256_OID);
-
-    let request = TimeStampReq {
-        version: bcder::Integer::from(1_u8),
-        message_imprint: crate::crypto::asn1::rfc3161::MessageImprint {
-            hash_algorithm: crate::crypto::asn1::AlgorithmIdentifier {
-                algorithm: sha256_oid,
-            },
-            hashed_message: OctetString::new(bytes::Bytes::copy_from_slice(&digest)),
-        },
-        req_policy: None,
-        nonce: Some(bcder::Integer::from(u64::from_le_bytes(random))),
-        cert_req: Some(true),
-        extensions: None,
-    };
-
-    let mut body = Vec::<u8>::new();
-    request
-        .encode_ref()
-        .write_encoded(bcder::Mode::Der, &mut body)?;
-
-    Ok(body)
+    contentauth_pki::timestamp::acquisition::request_body(data, u64::from_le_bytes(random))
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -180,30 +143,37 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use bcder::decode::Constructed;
+    use sha2::{Digest, Sha256};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
+    use crate::crypto::asn1::rfc3161::TimeStampReq;
 
     #[test]
     fn default_request_has_sha256_imprint_nonce_and_certificate_request() {
         for data in [b"".as_slice(), b"payload"] {
             let encoded = default_rfc3161_message(data).unwrap();
+
             let request = Constructed::decode(
                 encoded.as_slice(),
                 bcder::Mode::Der,
                 TimeStampReq::take_from,
             )
             .unwrap();
+
             assert_eq!(request.version, bcder::Integer::from(1));
+
             assert_eq!(
                 request.message_imprint.hash_algorithm.algorithm.to_string(),
                 "2.16.840.1.101.3.4.2.1"
             );
+
             assert_eq!(
                 request.message_imprint.hashed_message.to_bytes().as_ref(),
                 Sha256::digest(data).as_slice()
             );
+
             assert!(request.nonce.is_some());
             assert_eq!(request.cert_req, Some(true));
             assert!(request.req_policy.is_none());
@@ -222,15 +192,18 @@ mod tests {
         assert!(TimeStampProvider::time_stamp_service_url(&DefaultProvider).is_none());
         assert!(TimeStampProvider::time_stamp_request_headers(&DefaultProvider).is_none());
         assert!(TimeStampProvider::time_stamp_request_body(&DefaultProvider, b"data").is_ok());
+
         assert!(TimeStampProvider::send_time_stamp_request(
             &DefaultProvider,
             b"data",
             &crate::Context::new()
         )
         .is_none());
+
         assert!(AsyncTimeStampProvider::time_stamp_service_url(&DefaultProvider).is_none());
         assert!(AsyncTimeStampProvider::time_stamp_request_headers(&DefaultProvider).is_none());
         assert!(AsyncTimeStampProvider::time_stamp_request_body(&DefaultProvider, b"data").is_ok());
+
         assert!(AsyncTimeStampProvider::send_time_stamp_request(
             &DefaultProvider,
             b"data",
@@ -270,6 +243,7 @@ mod tests {
             &crate::Context::new()
         )
         .is_none());
+
         assert!(AsyncTimeStampProvider::send_time_stamp_request(
             &InvalidBody,
             b"data",
