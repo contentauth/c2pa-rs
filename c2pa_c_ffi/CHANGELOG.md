@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.92.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.92.0...c2pa-c-ffi-v0.92.1)
+_13 November 2026_
+
+### Fixed
+
+* Preserve C header output with Cargo 1.100 (backport #3079) ([#3081](https://github.com/contentauth/c2pa-rs/pull/3081))
+
 ## [0.92.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.11...c2pa-c-ffi-v0.92.0)
 _11 November 2026_
 
