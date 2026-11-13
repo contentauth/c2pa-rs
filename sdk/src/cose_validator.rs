@@ -329,10 +329,13 @@ pub mod tests {
             let mut certificates =
                 cert_chain_pem_to_der(include_bytes!("../tests/fixtures/certs/ed25519.pub"))
                     .unwrap();
+
             // Only EKU profile/role checks are under test; the public key is unchanged.
             let mut certificate: rasn_pkix::Certificate =
                 rasn::der::decode(&certificates[0]).unwrap();
+
             let eku_oid = rasn::types::ObjectIdentifier::new(vec![2, 5, 29, 37]).unwrap();
+
             certificate
                 .tbs_certificate
                 .extensions
@@ -347,13 +350,17 @@ pub mod tests {
             .unwrap()])
             .unwrap()
             .into();
+
             certificates[0] = rasn::der::encode(&certificate).unwrap();
+
             let raw_signer = c2pa_raw_crypto::signer_from_private_key(
                 include_bytes!("../tests/fixtures/certs/ed25519.pem"),
                 SigningAlg::Ed25519,
             )
             .unwrap();
+
             let signer = RawSignerCoseSigner::new(raw_signer.as_ref(), &certificates);
+
             let signature = sign(
                 &signer,
                 b"claim",
@@ -367,6 +374,7 @@ pub mod tests {
                 for configured in [None, Some(""), Some("1.3.6.1.5.5.7.3.8\n1.3.6.1.5.5.7.3.9")] {
                     for verify_trust in [false, true] {
                         let mut policy = CertificateTrustPolicy::new();
+
                         if use_defaults {
                             policy.add_default_valid_ekus();
                         }
@@ -379,16 +387,20 @@ pub mod tests {
                             "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
                             crate::crypto::base64::encode(&certificates[0])
                         );
+
                         policy
                             .add_end_entity_credentials(certificate_pem.as_bytes())
                             .unwrap();
+
                         let mut settings = Settings::default();
                         settings.verify.verify_trust = verify_trust;
                         settings.trust.use_default_ekus = use_defaults;
                         settings.trust.trust_config = configured.map(str::to_owned);
+
                         let context = crate::Context::new()
                             .with_settings(settings.clone())
                             .unwrap();
+
                         let sdk_signer = crate::signer::RawSignerWrapper::new(
                             c2pa_raw_crypto::signer_from_private_key(
                                 include_bytes!("../tests/fixtures/certs/ed25519.pem"),
@@ -398,6 +410,7 @@ pub mod tests {
                             certificates.clone(),
                             None,
                         );
+
                         let error = crate::cose_sign::cose_sign(
                             &sdk_signer,
                             b"claim",
@@ -406,6 +419,7 @@ pub mod tests {
                             &context,
                         )
                         .unwrap_err();
+
                         assert!(matches!(
                             error,
                             Error::CertificateProfileError(CertificateProfileError::InvalidEku)
@@ -414,20 +428,26 @@ pub mod tests {
                         let sign1 =
                             parse_cose_sign1(&signature, b"claim", &mut StatusTracker::default())
                                 .unwrap();
+
                         let verifier = Verifier::VerifyTrustPolicy(Cow::Borrowed(&policy));
+
                         // CAWG still uses the shared identity profile, not the claim-role gate.
                         let identity = Verifier::VerifyTrustPolicyFor(
                             Cow::Borrowed(&policy),
                             crate::crypto::cose::TrustAnchorType::CAWG,
                         );
+
                         let mut log = StatusTracker::default();
+
                         assert!(identity
                             .verify_profile(&sign1, None, None, &mut log)
                             .is_ok());
+
                         assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
 
                         for use_async in [false, true] {
                             let mut identity_log = StatusTracker::default();
+
                             let identity_info = if use_async {
                                 identity
                                     .verify_cawg_signature_async(
@@ -446,11 +466,13 @@ pub mod tests {
                                 )
                             }
                             .unwrap();
+
                             assert!(identity_info.validated);
                             assert!(!identity_log.has_status(SIGNING_CREDENTIAL_INVALID));
                             assert!(identity_log.has_status(SIGNING_CREDENTIAL_TRUSTED));
 
                             let mut log = StatusTracker::default();
+
                             let result = if use_async {
                                 verifier
                                     .verify_claim_signature_async(
@@ -462,16 +484,19 @@ pub mod tests {
                                     &signature, b"claim", b"", None, &mut log,
                                 )
                             };
+
                             assert!(matches!(
                                 result,
                                 Err(crate::crypto::cose::CoseError::CertificateProfileError(
                                     CertificateProfileError::InvalidEku
                                 ))
                             ));
+
                             assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
                             assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
 
                             let mut log = StatusTracker::default();
+
                             let result = if use_async {
                                 verify_cose_async(
                                     &signature, b"claim", b"", true, &policy, None, &mut log,
@@ -484,12 +509,14 @@ pub mod tests {
                                     &settings,
                                 )
                             };
+
                             assert!(matches!(
                                 result,
                                 Err(Error::CertificateProfileError(
                                     CertificateProfileError::InvalidEku
                                 ))
                             ));
+
                             assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
                             assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
                         }

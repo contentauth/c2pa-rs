@@ -600,6 +600,7 @@ pub fn verify_time_stamp(
             let ordered_cert_ders = order_certificates_leaf_to_root(&cert_ders, cert_pos)?;
 
             let mut profile_log = StatusTracker::default();
+
             let profile_result = CertificateRole::TimestampSigner.check_profile(
                 &ordered_cert_ders[0],
                 &CertificateTrustPolicy::new(),

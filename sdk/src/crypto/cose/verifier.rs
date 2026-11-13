@@ -957,12 +957,15 @@ mod tests {
             "../../../tests/fixtures/crypto/cose/disallowed_eku.pub"
         ))
         .unwrap();
+
         let raw_signer = signer_from_private_key(
             include_bytes!("../../../tests/fixtures/crypto/cose/disallowed_eku.priv"),
             SigningAlg::Es256,
         )
         .unwrap();
+
         let signer = RawSignerCoseSigner::new(raw_signer.as_ref(), &certs);
+
         let signature = sign(
             &signer,
             b"claim",
@@ -971,11 +974,13 @@ mod tests {
             &crate::Context::new(),
         )
         .unwrap();
+
         let sign1 = parse_cose_sign1(&signature, b"claim", &mut StatusTracker::default()).unwrap();
 
         for use_defaults in [false, true] {
             for config in [None, Some(""), Some("1.3.6.1.5.5.7.3.36")] {
                 let mut policy = CertificateTrustPolicy::new();
+
                 if use_defaults {
                     policy.add_default_valid_ekus();
                 }
@@ -989,6 +994,7 @@ mod tests {
                         Some("1.3.6.1.5.5.7.3.36".into()),
                     )
                     .unwrap();
+
                 policy
                     .add_trust_anchors(
                         include_bytes!("../../../tests/fixtures/crypto/cose/key_usage_root.pub"),
@@ -997,16 +1003,21 @@ mod tests {
                         config.map(str::to_owned),
                     )
                     .unwrap();
+
                 let verifier = Verifier::VerifyTrustPolicy(Cow::Borrowed(&policy));
                 let allowed = use_defaults || config == Some("1.3.6.1.5.5.7.3.36");
+
                 for use_async in [false, true] {
                     let mut log = StatusTracker::default();
+
                     let trust = if use_async {
                         verifier.verify_trust_async(&sign1, None, &mut log).await
                     } else {
                         verifier.verify_trust(&sign1, None, &mut log)
                     };
+
                     assert_eq!(trust.is_ok(), allowed);
+
                     if allowed {
                         assert_eq!(
                             trust.unwrap(),
@@ -1020,10 +1031,12 @@ mod tests {
                             ))
                         ));
                     }
+
                     assert_eq!(log.has_status(SIGNING_CREDENTIAL_TRUSTED), allowed);
                     assert_eq!(log.has_status(SIGNING_CREDENTIAL_UNTRUSTED), !allowed);
 
                     let mut log = StatusTracker::default();
+
                     let result = if use_async {
                         verifier
                             .verify_signature_async(&signature, b"claim", b"", None, &mut log)
@@ -1031,6 +1044,7 @@ mod tests {
                     } else {
                         verifier.verify_signature(&signature, b"claim", b"", None, &mut log)
                     };
+
                     assert!(result.unwrap().validated);
                     assert_eq!(log.has_status(SIGNING_CREDENTIAL_TRUSTED), allowed);
                     assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);

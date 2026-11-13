@@ -59,6 +59,7 @@ impl CertificateRole {
             Self::CawgIdentity => {}
             Self::TimestampSigner | Self::DelegatedOcspResponder => {
                 let policy = policy.to_mut();
+
                 policy.clear_ekus();
 
                 policy.add_mandatory_ekus(match self {
@@ -1274,6 +1275,7 @@ mod tests {
                 vec![ocsp.clone()],
             ] {
                 let mut cert = profile_cert();
+
                 extension(
                     &mut cert,
                     &[2, 5, 29, 37],
@@ -1333,7 +1335,9 @@ mod tests {
                 &[2, 5, 29, 37],
                 rasn::der::encode(&purposes).unwrap(),
             );
+
             let der = rasn::der::encode(&cert).unwrap();
+
             for use_defaults in [false, true] {
                 for configured in [
                     None,
@@ -1342,6 +1346,7 @@ mod tests {
                     Some("1.3.6.1.5.5.7.3.8\n1.3.6.1.5.5.7.3.9"),
                 ] {
                     let mut policy = CertificateTrustPolicy::new();
+
                     if use_defaults {
                         policy.add_default_valid_ekus();
                     }
@@ -1351,9 +1356,12 @@ mod tests {
                     }
 
                     let mut log = StatusTracker::default();
+
                     let result = super::CertificateRole::ClaimSigner
                         .check_profile(&der, &policy, &mut log, None);
+
                     let specialty = purposes.contains(&timestamp) || purposes.contains(&ocsp);
+
                     let allowed = !specialty
                         && !purposes.is_empty()
                         && purposes[0] != oid(&[2, 5, 29, 37, 0])
@@ -1362,27 +1370,35 @@ mod tests {
                                 && purposes.contains(&email))
                             || (configured == Some("1.3.6.1.5.5.7.3.36")
                                 && purposes.contains(&document)));
+
                     assert_eq!(
                         result.is_ok(),
                         allowed,
                         "{purposes:?}, {use_defaults}, {configured:?}"
                     );
+
                     assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);
+
                     if specialty {
                         assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
                     }
 
                     let mut identity_log = StatusTracker::default();
+
                     let identity_result = super::CertificateRole::CawgIdentity.check_profile(
                         &der,
                         &policy,
                         &mut identity_log,
                         None,
                     );
+
                     let mut generic_log = StatusTracker::default();
+
                     let generic_result =
                         check_end_entity_certificate_profile(&der, &policy, &mut generic_log, None);
+
                     assert_eq!(identity_result, generic_result);
+
                     assert_eq!(
                         identity_log.has_status(SIGNING_CREDENTIAL_INVALID),
                         generic_log.has_status(SIGNING_CREDENTIAL_INVALID)
@@ -1395,6 +1411,7 @@ mod tests {
                         let mut log = StatusTracker::default();
                         let result = role.check_profile(&der, &policy, &mut log, None);
                         let allowed = purposes.len() == 1 && purposes[0] == *required;
+
                         assert_eq!(result.is_ok(), allowed);
                         assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);
 

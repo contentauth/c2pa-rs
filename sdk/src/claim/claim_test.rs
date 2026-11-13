@@ -1814,6 +1814,7 @@ fn test_profile_rejection_is_not_signature_mismatch() {
     ] {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+
         log_item!(label, "signing credential rejected", "test")
             .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(&mut validation_log, Error::CoseSignature);
@@ -1829,6 +1830,7 @@ fn test_profile_rejection_is_not_signature_mismatch() {
 
         assert!(validation_log.has_status(validation_status::SIGNING_CREDENTIAL_INVALID));
         assert!(!validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+
         assert_eq!(
             validation_log.has_status(validation_status::CLAIM_SIGNATURE_MISMATCH),
             expected_mismatch,
@@ -1837,6 +1839,7 @@ fn test_profile_rejection_is_not_signature_mismatch() {
 
     let mut validation_log =
         StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+
     Claim::verify_internal(
         &claim,
         &StoreValidationInfo::default(),
@@ -1845,6 +1848,7 @@ fn test_profile_rejection_is_not_signature_mismatch() {
         &Context::new(),
     )
     .expect("verification should report an unaccompanied signature failure");
+
     assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_MISMATCH));
 }
 
