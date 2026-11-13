@@ -26,7 +26,7 @@
 //! - **[Timestamp verification](timestamp::verification):** parse a response or
 //!   bare CMS token, authenticate signer facts, then verify its message imprint.
 //!   These are deterministic functions, not suspended workflows. Certificate
-//!   profile, trust and acceptance remain host decisions.
+//!   profile, trust, and acceptance remain host decisions.
 //!
 //! # Driving a workflow
 //!
@@ -38,7 +38,7 @@
 //!
 //! # What acquisition establishes
 //!
-//! Timestamp acquisition checks the HTTP envelope, response structure and
+//! Timestamp acquisition checks the HTTP envelope, response structure, and
 //! reflected nonce, and returns the original, **unverified** response bytes.
 //! It does not establish a correct message imprint, signature validity,
 //! certificate-profile validity, or TSA trust. Use `timestamp::verification` for

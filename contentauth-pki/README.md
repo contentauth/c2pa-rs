@@ -87,7 +87,7 @@ fn verify_first_signer(token: &[u8], message: &[u8])
 
     let signed = parsed.verify_signatures().next().ok_or("no timestamp signer")??;
 
-    // Host temporal policy: use the attested time, certificate bounds and
+    // Host temporal policy: use the attested time, certificate bounds, and
     // accuracy, not the current clock or a CMS signingTime attribute.
     let time = signed.generation_time().timestamp();
     let (start, end) = signed.signer_validity();
@@ -118,9 +118,9 @@ and SPKI restrictions remain strict PS256/384/512, with legacy PKCS#1 v1.5
 compatibility. CMS SHA-1 digests remain distinct from SHA-256/384/512-only message
 imprints. No supported algorithm profile is expanded by this layer.
 
-`VerificationError` carries a typed failure kind, stage and diagnostic, without
+`VerificationError` carries a typed failure kind, stage, and diagnostic, without
 SDK status codes. The SDK preserves signer iteration, temporal-before-imprint
-failure precedence, C2PA/CAWG reporting and timestamp-only diagnostic isolation.
+failure precedence, C2PA/CAWG reporting, and timestamp-only diagnostic isolation.
 It still chooses profile/EKU policy, orders candidate chains, uses only TSA trust
 anchors (not private/claim anchors), and decides legacy acceptance. Successful
 cryptography alone never enables trusted CAWG signing-time association.
