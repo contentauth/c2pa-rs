@@ -409,7 +409,8 @@ impl TryFrom<C2paHttpResponse> for c2pa::http::http::Response<Box<dyn std::io::R
 /// Callback type for custom HTTP request resolution.
 ///
 /// Called synchronously by Rust when an HTTP request is needed
-/// (remote manifest fetch, OCSP, timestamp, etc.).
+/// (remote manifest fetch, OCSP, timestamp, etc.). The SDK cannot interrupt
+/// the callback, so it must enforce its own HTTP timeout.
 ///
 /// Returns 0 on success, non-zero on error. On error, call
 /// `c2pa_error_set_last()` before returning.
