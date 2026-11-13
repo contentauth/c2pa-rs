@@ -235,35 +235,13 @@ impl CertificateTrustPolicy {
             return Ok((TrustAnchorType::EndEntity, String::new()));
         }
 
-        #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
-        #[cfg(feature = "rust_native_crypto")]
-        {
-            return super::certificate_trust::rust_native::check_certificate_trust(
-                self,
-                anchor_type,
-                chain_der,
-                end_entity_cert_der,
-                signing_time_epoch,
-            );
-        }
-
-        #[cfg(all(
-            feature = "openssl",
-            not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
-        ))]
-        {
-            return super::certificate_trust::openssl::check_certificate_trust(
-                self,
-                anchor_type,
-                chain_der,
-                end_entity_cert_der,
-                signing_time_epoch,
-            );
-        }
-
-        Err(CertificateTrustError::InternalError(
-            "no implementation for certificate evaluation available".to_string(),
-        ))
+        super::certificate_trust::check_certificate_trust(
+            self,
+            anchor_type,
+            chain_der,
+            end_entity_cert_der,
+            signing_time_epoch,
+        )
     }
 
     /// Add trust anchors (root X.509 certificates) that shall be accepted when
@@ -435,9 +413,12 @@ impl CertificateTrustPolicy {
         }
     }
 
-    // All configured mandatory EKUs must be present in an end-entity certificate.
-    pub(crate) fn has_mandatory_ekus(&self) -> bool {
-        !self.mandatory_ekus.is_empty()
+    pub(crate) fn allowed_ekus(&self) -> &HashSet<String> {
+        &self.additional_ekus
+    }
+
+    pub(crate) fn mandatory_ekus(&self) -> &HashSet<String> {
+        &self.mandatory_ekus
     }
 
     /// Add mandatory extended key usage (EKU) values that shall be required when
@@ -562,6 +543,7 @@ impl CertificateTrustPolicy {
     }
 
     // Returns true if all mandatory EKUs are present, false if any are missing.
+    #[cfg(test)]
     pub(crate) fn verify_mandatory_ekus(&self, eku: &ExtendedKeyUsage) -> bool {
         for mandatory_oid in self.mandatory_ekus.iter() {
             let Ok(mandatory_oid) = Oid::from_str(mandatory_oid) else {
@@ -834,7 +816,7 @@ mod tests {
             .get_anchor_set(TrustAnchorType::EndEntity, "urn:test:anchors")
             .is_none());
         policy.add_mandatory_ekus(&[0xff]);
-        assert!(!policy.has_mandatory_ekus());
+        assert!(policy.mandatory_ekus().is_empty());
         policy.add_mandatory_ekus(b"# comment\nnot an OID\n\n1.3.6.1.5.5.7.3.4\n");
         assert!(policy.verify_mandatory_ekus(&email_eku()));
         assert!(!policy.verify_mandatory_ekus(&time_stamping_eku()));
