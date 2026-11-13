@@ -25,7 +25,6 @@ chrono = { version = "0.4.44", default-features = false, features = ["std"] }
 contentauth-sans-io-core = "0.2.0"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
 http = "1.4.1"
-nom = "7.1.3"
 openssl = { version = "0.10.80", optional = true }
 rasn = "0.28.13"
 rasn-cms = "0.28.13"

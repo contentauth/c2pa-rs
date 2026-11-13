@@ -15,7 +15,7 @@
 
 use std::collections::HashSet;
 
-use asn1_rs::{Any, Class, FromDer, Header, Tag};
+use asn1_rs::{Any, FromDer};
 use thiserror::Error;
 use x509_parser::{
     certificate::{BasicExtension, X509Certificate},
@@ -23,8 +23,10 @@ use x509_parser::{
     extensions::{ExtendedKeyUsage, ParsedExtension},
     num_bigint::BigInt,
     oid_registry::Oid,
-    x509::{AlgorithmIdentifier, X509Version},
+    x509::X509Version,
 };
+
+use super::certificate::rsa_pss_algorithms;
 
 /// Concrete constraints chosen by the host for a certificate's role.
 ///
@@ -269,35 +271,8 @@ fn check_certificate_profile(
     // Verify RSA_PSS parameters.
     if *cert_alg == RSASSA_PSS_OID {
         if let Some(parameters) = &signcert.signature_algorithm.parameters {
-            let seq = parameters
-                .as_sequence()
-                .map_err(|_err| CertificateProfileError::InvalidCertificate)?;
-
-            let (_i, (ha_alg, mgf_ai)) = seq
-                .parse(|i| {
-                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
-
-                    if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
-                        return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
-                    }
-
-                    let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
-                        .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
-
-                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
-
-                    if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
-                        return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
-                    }
-
-                    let (i, mgf_ai) = AlgorithmIdentifier::from_der(i)
-                        .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
-
-                    // Ignore anything that follows these two parameters.
-
-                    Ok((i, (ha_alg, mgf_ai)))
-                })
-                .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+            let (ha_alg, mgf_ai) = rsa_pss_algorithms(parameters)
+                .ok_or(CertificateProfileError::InvalidCertificate)?;
 
             let mgf_ai_parameters = mgf_ai
                 .parameters
