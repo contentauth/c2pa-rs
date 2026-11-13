@@ -30,7 +30,7 @@ use super::certificate::rsa_pss_algorithms;
 
 /// Concrete constraints chosen by the host for a certificate's role.
 ///
-/// No built-in EKUs, application roles or configuration defaults are selected
+/// No built-in EKUs, application roles, or configuration defaults are selected
 /// here. Hosts may preserve an explicitly selected legacy empty-list fallback.
 pub struct ProfilePolicy<'a> {
     /// Effective accepted purposes, after host configuration composition.
@@ -112,7 +112,7 @@ impl ProfilePolicy<'_> {
 }
 
 /// A certificate satisfying the supplied profile constraints at the supplied time.
-/// This does not verify its signature, chain, anchor trust or revocation.
+/// This does not verify its signature, chain, anchor trust, or revocation.
 #[derive(Debug)]
 pub struct ProfileValidCertificate<'a> {
     der: &'a [u8],

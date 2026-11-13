@@ -109,7 +109,7 @@ fn check_claim_signing_eku(
     result
 }
 
-/// Check the end-entity profile with SDK-selected policy, time and reporting.
+/// Check the end-entity profile with SDK-selected policy, time, and reporting.
 ///
 /// Use [`ProfilePolicy::check_certificate`] with an explicit
 /// [`ProfilePolicy`] whose `end_entity` field is `true`. Select role/EKU policy
@@ -132,7 +132,7 @@ pub fn check_end_entity_certificate_profile(
     )
 }
 
-/// Check the certificate profile with SDK-selected policy, time and reporting.
+/// Check the certificate profile with SDK-selected policy, time, and reporting.
 ///
 /// Use [`ProfilePolicy::check_certificate`] with an explicit
 /// [`ProfilePolicy`] whose `end_entity` field is `false`. Select role/EKU policy
