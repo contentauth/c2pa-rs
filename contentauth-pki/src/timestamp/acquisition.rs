@@ -13,13 +13,13 @@
 
 //! Host-driven RFC 3161 timestamp acquisition.
 //!
-//! Checks the HTTP envelope, DER structure and reflected nonce only. The host
+//! Checks the HTTP envelope, DER structure, and reflected nonce only. The host
 //! supplies entropy, bounds response reads, performs HTTP, and drives the workflow.
 //!
 //! # Host example
 //!
 //! This blocking driver accepts an HTTP adapter supplied by your application.
-//! Connect `send` to your HTTP client, configuring credentials, network policy
+//! Connect `send` to your HTTP client, configuring credentials, network policy,
 //! and timeout there. Supply a fresh nonce from your application's entropy
 //! source; the workflow neither generates randomness nor performs I/O itself.
 //! An async host follows the same loop, awaiting its HTTP client instead.
@@ -100,7 +100,7 @@ use crate::{asn1, asn1::rfc3161::TimeStampReq};
 /// byte to detect overflow, without trusting `Content-Length`.
 pub const MAX_RESPONSE_BYTES: usize = 1_000_000;
 
-/// Acquisition failures, never signature, profile or trust verdicts.
+/// Acquisition failures, never signature, profile, or trust verdicts.
 #[derive(Debug, Error)]
 pub enum AcquisitionError {
     /// Invalid workflow interaction.
@@ -140,7 +140,7 @@ pub enum AcquisitionError {
 #[derive(Clone, Debug)]
 pub enum AcquisitionRequest {
     /// Perform this POST, retaining host control of credentials, network policy,
-    /// timeout, retries and cancellation.
+    /// timeout, retries, and cancellation.
     HttpPost(HttpRequest<Vec<u8>>),
 }
 
@@ -169,7 +169,7 @@ impl Request for AcquisitionRequest {
 /// Original response bytes, acquired but **not cryptographically verified**.
 ///
 /// Successful acquisition does not establish a correct message imprint,
-/// signature, certificate validity, certificate profile or TSA trust.
+/// signature, certificate validity, certificate profile, or TSA trust.
 #[derive(Debug)]
 pub struct UnverifiedTimeStampResponse(Vec<u8>);
 

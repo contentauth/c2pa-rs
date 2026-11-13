@@ -14,7 +14,7 @@
 //! Provisional codec bridge for the SDK's existing timestamp verifier.
 //!
 //! Enabled only by `sdk-compat`. These decoded values carry no verification,
-//! profile-validity or trust guarantees. This bridge is not a stable public API.
+//! profile-validity, or trust guarantees. This bridge is not a stable public API.
 
 pub use crate::{
     asn1::{AlgorithmIdentifier, GeneralizedTime},

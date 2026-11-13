@@ -48,7 +48,7 @@ pub trait TimeStampProvider {
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
-    /// Uses the caller's resolver, network policy and time-stamp request settings from `context`.
+    /// Uses the caller's resolver, network policy, and time-stamp request settings from `context`.
     fn send_time_stamp_request(
         &self,
         message: &[u8],
@@ -104,7 +104,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     /// provided by [`Self::time_stamp_service_url()`], if any.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
-    /// Uses the caller's resolver, network policy and timeout settings from `context`.
+    /// Uses the caller's resolver, network policy, and timeout settings from `context`.
     async fn send_time_stamp_request(
         &self,
         message: &[u8],

@@ -513,7 +513,7 @@ mod tests {
         }
     }
 
-    /// Sends a request through `resolver` with the given attempts, a 2 s timeout and no pause.
+    /// Sends a request through `resolver` with the given attempts, a 2 s timeout, and no pause.
     fn request_with_retries(
         resolver: &SequenceResolver,
         attempts: u32,
