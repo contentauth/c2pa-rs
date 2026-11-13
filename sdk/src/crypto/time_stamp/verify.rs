@@ -286,7 +286,8 @@ pub fn verify_time_stamp(
 /// Use [`contentauth_pki::timestamp::verification::signer_certificate_from_token`]
 /// for the same unverified lookup, mapping its error to host reporting as needed.
 #[deprecated(
-    note = "Use contentauth_pki::timestamp::verification::signer_certificate_from_token; the returned certificate is unverified and not trusted."
+    since = "0.93.0",
+    note = "Use `contentauth_pki::timestamp::verification::signer_certificate_from_token()` instead; the returned certificate is unverified and not trusted. Will be removed in 0.94.0 (scheduled for mid-March 2027)."
 )]
 pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, TimeStampError> {
     tsa_signer_cert_der_from_token_with_sdk_errors(ts)
