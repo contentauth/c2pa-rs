@@ -115,6 +115,12 @@ crate-private and shared with timestamp verification. No public ASN.1 type or
 codec API, general settings migration, OCSP fetch or revocation-budget policy is
 introduced.
 
+The crate has no direct `nom` dependency. The shared certificate RSA-PSS parser
+uses fallible ASN.1 decoding without constructing `nom` errors; existing
+certificate parameter acceptance is preserved, including ignored trailing
+parameters. ASN.1/X.509 dependencies still bring `nom` transitively; migrating
+those dependencies is a separate effort.
+
 ## Verifying a timestamp
 
 The public API stays under `timestamp::verification`. `ParsedTimestamp::parse`

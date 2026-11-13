@@ -150,40 +150,33 @@ pub(super) fn cert_signing_alg(cert: &X509Certificate) -> Option<String> {
     }
 }
 
+pub(super) fn rsa_pss_algorithms<'a>(
+    parameters: &Any<'a>,
+) -> Option<(AlgorithmIdentifier<'a>, AlgorithmIdentifier<'a>)> {
+    parameters.as_sequence().ok()?;
+
+    let (input, header) = Header::from_der(parameters.data).ok()?;
+
+    if header.class() != Class::ContextSpecific || header.tag() != Tag(0) {
+        return None;
+    }
+
+    let (input, hash) = AlgorithmIdentifier::from_der(input).ok()?;
+    let (input, header) = Header::from_der(input).ok()?;
+
+    if header.class() != Class::ContextSpecific || header.tag() != Tag(1) {
+        return None;
+    }
+
+    let (_, mask) = AlgorithmIdentifier::from_der(input).ok()?;
+
+    // Preserve the certificate parser's compatibility: trailing parameters
+    // are ignored here, unlike the strict CMS timestamp signature parser.
+    Some((hash, mask))
+}
+
 fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
-    let Some(parameters) = &alg.parameters else {
-        return None;
-    };
-
-    let Ok(seq) = parameters.as_sequence() else {
-        return None;
-    };
-
-    let Ok((_i, (ha_alg, mgf_ai))) = seq.parse(|i| {
-        let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
-
-        if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
-            return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
-        }
-
-        let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
-            .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
-
-        let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
-
-        if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
-            return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
-        }
-
-        let (i, mgf_ai) = AlgorithmIdentifier::from_der(i)
-            .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
-
-        // Ignore anything that follows these two parameters.
-
-        Ok((i, (ha_alg, mgf_ai)))
-    }) else {
-        return None;
-    };
+    let (ha_alg, mgf_ai) = rsa_pss_algorithms(alg.parameters.as_ref()?)?;
 
     let mgf_ai_parameters = mgf_ai.parameters?;
 
@@ -389,6 +382,8 @@ mod tests {
             hash: rasn_pkix::AlgorithmIdentifier,
             #[rasn(tag(explicit(1)))]
             mask: rasn_pkix::AlgorithmIdentifier,
+            #[rasn(tag(explicit(2)))]
+            salt_length: Option<types::Integer>,
         }
 
         let alg = |id: &[u32]| rasn_pkix::AlgorithmIdentifier {
@@ -408,16 +403,27 @@ mod tests {
             (&sha256, &sha384, None),
             (&sha1, &sha1, None),
         ] {
-            let params = rasn::der::encode(&Parameters {
+            let mut parameters = Parameters {
                 hash: alg(hash),
                 mask: rasn_pkix::AlgorithmIdentifier {
                     algorithm: oid(&[1, 2, 840, 113549, 1, 1, 8]),
                     parameters: Some(types::Any::new(rasn::der::encode(&alg(mask_hash)).unwrap())),
                 },
-            })
-            .unwrap();
+                salt_length: None,
+            };
+
+            let params = rasn::der::encode(&parameters).unwrap();
 
             assert_eq!(pss_algorithm(Some(params.clone())).as_deref(), expected);
+
+            for salt_length in [0, 1, 32, 64] {
+                parameters.salt_length = Some(salt_length.into());
+
+                assert_eq!(
+                    pss_algorithm(Some(rasn::der::encode(&parameters).unwrap())).as_deref(),
+                    expected,
+                );
+            }
 
             let mut cert = certificate();
 
@@ -456,6 +462,7 @@ mod tests {
                     algorithm: oid(&[1, 2, 840, 113549, 1, 1, 8]),
                     parameters: mask_params.map(types::Any::new),
                 },
+                salt_length: None,
             };
 
             assert!(pss_algorithm(Some(rasn::der::encode(&params).unwrap())).is_none());
