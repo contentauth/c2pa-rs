@@ -4,7 +4,7 @@
 workspace crate. The acquisition foundation implements host-driven RFC 3161
 timestamp acquisition. Subsequent layers add deterministic timestamp
 cryptographic verification and X.509 certificate/profile/chain mechanics.
-Application roles, profile policy selection, trust, OCSP and COSE orchestration
+Application roles, profile policy selection, trust, OCSP, and COSE orchestration
 remain in the C2PA SDK.
 
 The scope is public key infrastructure (PKI) workflows for content authenticity.
@@ -70,7 +70,7 @@ remains host-side; it is not a new success or fallback in this crate.
 
 These are distinct claims, not interchangeable booleans. The crate accepts
 explicit facts and policy inputs chosen by the host, rather than inferring
-SDK policy, configuring resolvers, consulting settings or emitting C2PA status
+SDK policy, configuring resolvers, consulting settings, or emitting C2PA status
 codes.
 
 ## X.509 boundary
@@ -84,11 +84,11 @@ optional original diagnostic; SDK error/status mapping remains host-side.
 The hidden SDK `check_certificate_profile` and
 `check_end_entity_certificate_profile` compatibility APIs are deprecated in
 favor of this method. Select `end_entity = false` or `true`, respectively, and
-keep role selection, time and reporting host-side. The hidden SDK
+keep role selection, time, and reporting host-side. The hidden SDK
 `tsa_signer_cert_der_from_token` lookup is also deprecated in favor of
 `timestamp::verification::signer_certificate_from_token`, which returns an
 unverified certificate and crate-specific errors. SDK-specific timestamp
-verification, trust and acquisition orchestration are not deprecated: those
+verification, trust, and acquisition orchestration are not deprecated: those
 still apply host policy beyond the extracted primitives.
 
 These three compatibility APIs are deprecated since 0.93.0 and will be removed
@@ -108,24 +108,24 @@ signers explicitly reject timeStamping/OCSPSigning through
 `check_disallowed_ekus`; TSA/delegated OCSP roles clear configured purposes and
 require their respective mandatory EKU. CAWG identity profiles deliberately do
 not inherit claim exclusions. CAWG documentSigning, interim S/MIME policies,
-cutoff and trusted associated timestamps remain unchanged; #3077 is separate.
+cutoff, and trusted associated timestamps remain unchanged; #3077 is separate.
 The generic SDK profile APIs retain their existing compatibility contract.
 Issuer-signed OCSP still uses its separate issuing-CA authorization path.
 
-Defaults, absent/empty/explicit lists and anchor-local additions are interpreted
+Defaults, absent/empty/explicit lists, and anchor-local additions are interpreted
 by the SDK, not migrated into this crate. A nonempty configured list still
 selects supported alternate claim purposes rather than universally requiring
 claimSigning; an explicitly selected empty-list emailProtection fallback is
 preserved. Mixed-specialty/anyExtendedKeyUsage restrictions, CA constraints,
-algorithm checks and existing failure precedence are retained. Existing
+algorithm checks, and existing failure precedence are retained. Existing
 OpenSSL/Rust-native path-building differences are not silently harmonized:
 OpenSSL uses strict/partial-chain path building; Rust-native checks the supplied
 linear chain and searches its existing anchor relationships. An association is
 never a full certificate-profile or revocation verdict.
 
-Certificate parsers, signature-algorithm helpers and strict SKI decoding remain
+Certificate parsers, signature-algorithm helpers, and strict SKI decoding remain
 crate-private and shared with timestamp verification. No public ASN.1 type or
-codec API, general settings migration, OCSP fetch or revocation-budget policy is
+codec API, general settings migration, OCSP fetch, or revocation-budget policy is
 introduced.
 
 The crate has no direct `nom` dependency. The shared certificate RSA-PSS parser
@@ -237,7 +237,7 @@ The crate's name, API, and compatibility feature are experimental.
    status reporting, and bounded reads. #3026 verification-resource budgets remain
    unresolved; this layer neither invents budgets nor claims they are solved.
 2. Move COSE verification/signing orchestration atop those primitives while the
-   SDK retains C2PA/CAWG mapping, settings, resolver wiring and SDK policy.
+   SDK retains C2PA/CAWG mapping, settings, resolver wiring, and SDK policy.
 
 Each layer depends on the shared codec/fact boundary below it and should carry
 its own focused host-independent and SDK parity regressions. C API suspension/

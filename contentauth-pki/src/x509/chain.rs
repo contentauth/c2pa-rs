@@ -28,7 +28,7 @@ mod openssl;
 /// A cryptographically verified sequence of certificate signatures.
 ///
 /// This does not establish CA authorization, validity periods, certificate
-/// profiles, revocation, anchor association or trust. The last certificate's
+/// profiles, revocation, anchor association, or trust. The last certificate's
 /// own signature is not checked, because its issuer is not in the sequence.
 #[derive(Debug)]
 pub struct SignatureVerifiedChain<'a> {
@@ -72,7 +72,7 @@ pub fn verify_chain_signatures(
 
 /// A valid path associated with the host-supplied anchor set at a supplied time.
 ///
-/// No certificate profile, role, revocation or private credential check is
+/// No certificate profile, role, revocation, or private credential check is
 /// implied. The host must decide whether this anchor set is trusted for the
 /// application role; this result is not an application acceptance verdict.
 #[derive(Debug)]
@@ -103,7 +103,7 @@ impl AnchorAssociation<'_> {
 ///
 /// The host supplies a leaf-first chain, DER anchors, and Unix time. The
 /// selected backend preserves its existing path-building and partial-chain
-/// behavior. No default anchors, clock, EKU configuration or I/O is used.
+/// behavior. No default anchors, clock, EKU configuration, or I/O is used.
 pub fn validate_chain_to_anchors<'a>(
     chain: &[Vec<u8>],
     certificate: &'a [u8],
@@ -148,7 +148,7 @@ pub enum ChainError {
     #[error("a CA certificate in the chain is outside its validity period")]
     CaCertificateOutsideValidity,
 
-    /// Certificate parsing, algorithm selection or signature inputs were invalid.
+    /// Certificate parsing, algorithm selection, or signature inputs were invalid.
     #[error("the certificate or certificate chain is invalid")]
     InvalidCertificate,
 
