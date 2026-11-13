@@ -11,6 +11,15 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ### Deprecated
 
+* The hidden SDK `check_certificate_profile`,
+  `check_end_entity_certificate_profile`, and `tsa_signer_cert_der_from_token`
+  compatibility APIs are deprecated in 0.93.0 and will be removed in 0.94.0,
+  scheduled for mid-March 2027. Their reusable mechanics have moved to
+  `contentauth-pki`; use `ProfilePolicy::check_certificate` or
+  `timestamp::verification::signer_certificate_from_token` instead. SDK policy,
+  validation time, reporting and error mapping remain host responsibilities.
+  See the [migration guidance](contentauth-pki/README.md#x509-boundary).
+
 * C2PA v1 claim signing is deprecated in 0.92.0 and will be removed in 0.93.0,
   scheduled for mid-January 2027. Omit `claim_version` or set it to `2` to sign
   C2PA v2 claims. Reading and validating existing v1 claims is unaffected. See

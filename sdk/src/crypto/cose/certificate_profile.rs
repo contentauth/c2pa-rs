@@ -115,7 +115,8 @@ fn check_claim_signing_eku(
 /// [`ProfilePolicy`] whose `end_entity` field is `true`. Select role/EKU policy
 /// and validation time in the host, and map profile failures to host reporting.
 #[deprecated(
-    note = "Use contentauth_pki::x509::profile::ProfilePolicy::check_certificate (end_entity = true) with host-selected validation time/reporting."
+    since = "0.93.0",
+    note = "Use `contentauth_pki::x509::profile::ProfilePolicy::check_certificate()` instead (end_entity = true), with host-selected validation time/reporting. Will be removed in 0.94.0 (scheduled for mid-March 2027)."
 )]
 pub fn check_end_entity_certificate_profile(
     certificate_der: &[u8],
@@ -137,7 +138,8 @@ pub fn check_end_entity_certificate_profile(
 /// [`ProfilePolicy`] whose `end_entity` field is `false`. Select role/EKU policy
 /// and validation time in the host, and map profile failures to host reporting.
 #[deprecated(
-    note = "Use contentauth_pki::x509::profile::ProfilePolicy::check_certificate (end_entity = false) with host-selected validation time/reporting."
+    since = "0.93.0",
+    note = "Use `contentauth_pki::x509::profile::ProfilePolicy::check_certificate()` instead (end_entity = false), with host-selected validation time/reporting. Will be removed in 0.94.0 (scheduled for mid-March 2027)."
 )]
 pub fn check_certificate_profile(
     certificate_der: &[u8],
