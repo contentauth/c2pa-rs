@@ -1250,6 +1250,7 @@ mod tests {
     #[test]
     fn signed_attribute_input_enforces_the_three_octet_length_limit() {
         let algorithm = [0x30, 0x0b, 6, 9, 0x60, 0x86, 0x48, 1, 0x65, 3, 4, 2, 1];
+
         let der = tlv(
             0x30,
             &[
@@ -1261,16 +1262,19 @@ mod tests {
             ]
             .concat(),
         );
+
         let mut signer = Constructed::decode(der.as_slice(), Mode::Der, SignerInfo::take_opt_from)
             .unwrap()
             .unwrap();
 
         for size in [0x7f, 0x80, 0xff, 0x100, 0xffff, 0x10000, 0xffffff] {
             signer.signed_attributes_data = Some(vec![0xab; size]);
+
             let encoded = signer
                 .signed_attributes_digested_content()
                 .unwrap()
                 .unwrap();
+
             assert_eq!(encoded, tlv(0x31, &vec![0xab; size]));
         }
 
