@@ -729,9 +729,11 @@ mod tests {
         coset::cbor::into_writer(&signature_cbor, &mut bytes).unwrap();
         let data = super::super::sigtst::cose_countersign_data(&bytes, &sign1.protected);
         let token = build_token_at(&data, time);
-        let cert = crate::crypto::time_stamp::tsa_signer_cert_der_from_token(&token)
-            .unwrap()
-            .unwrap();
+        let cert =
+            crate::crypto::time_stamp::tsa_signer_cert_der_from_token_with_sdk_errors(&token)
+                .unwrap()
+                .unwrap();
+
         sign1.unprotected.rest.push((
             Label::Text("sigTst2".into()),
             Value::Map(vec![(
@@ -1040,9 +1042,10 @@ mod tests {
                 b"20270331235959Z",
             );
 
-            let cert = crate::crypto::time_stamp::tsa_signer_cert_der_from_token(&token)
-                .unwrap()
-                .unwrap();
+            let cert =
+                crate::crypto::time_stamp::tsa_signer_cert_der_from_token_with_sdk_errors(&token)
+                    .unwrap()
+                    .unwrap();
 
             let mut assertion = TimeStamp::new();
             assertion.add_timestamp(claim.label(), &token);
