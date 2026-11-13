@@ -26,7 +26,11 @@
 //! - **[Timestamp verification](timestamp::verification):** parse a response or
 //!   bare CMS token, authenticate signer facts, then verify its message imprint.
 //!   These are deterministic functions, not suspended workflows. Certificate
-//!   profile, trust, and acceptance remain host decisions.
+//!   policy selection, trust and acceptance remain host decisions.
+//! - **[X.509 mechanics](x509):** certificate signatures, explicit profile
+//!   constraints and chain evaluation against host-selected anchors and time.
+//!   Signature verification, profile validity and anchor association are distinct
+//!   outcomes; none alone grants application trust.
 //!
 //! # Driving a workflow
 //!
@@ -45,9 +49,8 @@
 //! cryptographic checks, then apply host profile/trust policy before acceptance.
 //!
 //! This crate is an unpublished experiment. Timestamp acquisition and cryptographic
-//! verification are provided; only the internal CMS/X.509 support needed for those
-//! operations is included. X.509 chain/profile policy, OCSP, and COSE orchestration
-//! are not provided.
+//! verification and X.509 mechanics are provided. Application role/policy
+//! selection, trust reporting, OCSP and COSE orchestration remain host-side.
 //! COSE is supporting machinery, not a general-purpose COSE environment.
 
 #![deny(missing_docs)]
@@ -56,6 +59,7 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod timestamp;
+pub mod x509;
 
 mod asn1;
 

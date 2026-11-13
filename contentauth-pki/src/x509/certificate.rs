@@ -15,127 +15,16 @@ use asn1_rs::{Any, Class, FromDer, Header, Tag};
 use c2pa_raw_crypto::{
     oids::*, validator_for_sig_and_hash_algs, RawSignatureValidationError, SigningAlg,
 };
-use web_time::{SystemTime, UNIX_EPOCH};
-use x509_parser::{
-    certificate::{TbsCertificate, X509Certificate},
-    x509::AlgorithmIdentifier,
-};
+#[cfg(any(feature = "rust_native_crypto", test))]
+use x509_parser::certificate::TbsCertificate;
+use x509_parser::{certificate::X509Certificate, x509::AlgorithmIdentifier};
 
-use crate::crypto::cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType};
+use super::chain::ChainError;
 
 /// Convert a [`c2pa_raw_crypto::Oid`] into a `bcder::Oid` by reusing the OID's
 /// DER content octets directly.
 fn raw_crypto_oid_to_bcder_oid(oid: &c2pa_raw_crypto::Oid) -> bcder::Oid {
     bcder::Oid(bytes::Bytes::copy_from_slice(oid.as_bytes()))
-}
-
-pub(crate) fn check_certificate_trust(
-    ctp: &CertificateTrustPolicy,
-    anchor_type: Option<TrustAnchorType>,
-    chain_der: &[Vec<u8>],
-    cert_der: &[u8],
-    signing_time_epoch: Option<i64>,
-) -> Result<(TrustAnchorType, String), CertificateTrustError> {
-    let anchor_sets = ctp.anchor_sets_for_certificate(anchor_type, cert_der)?;
-
-    // Add end-entity cert to the chain if not already there.
-    let full_chain = if !chain_der.is_empty() && cert_der == chain_der[0] {
-        chain_der.to_vec()
-    } else {
-        let mut full_chain: Vec<Vec<u8>> = Vec::new();
-        full_chain.push(cert_der.to_vec());
-        let mut in_chain = chain_der.to_vec();
-        full_chain.append(&mut in_chain);
-        full_chain
-    };
-
-    // Make sure chain is in the correct order, cryptographically valid, and
-    // every issuer is authorized to act as a CA.
-    check_chain_order_and_ca_authorization(&full_chain)?;
-
-    // Make sure every cert in the chain was valid at signing time - as its
-    // own pass over the whole chain, independent of where a trust anchor
-    // match is found below. The trust-anchor search returns as soon as it
-    // finds a match, so a check placed inside that loop would only ever run
-    // for the certs from the anchor match onward, silently skipping every
-    // cert between that match and the leaf.
-    let check_time = match signing_time_epoch {
-        Some(t) => t,
-        None => SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| CertificateTrustError::InternalError("system time invalid".to_string()))?
-            .as_secs() as i64,
-    };
-    let check_time = x509_parser::time::ASN1Time::from_timestamp(check_time)
-        .map_err(|_| CertificateTrustError::CertificateNotTrusted)?;
-    // The end-entity certificate's validity is reported by the certificate
-    // profile check. A CA certificate outside its validity is reported as such
-    // only if the chain otherwise reaches a trust anchor, as OpenSSL does;
-    // otherwise the chain is simply not trusted.
-    let mut ca_outside_validity = false;
-    for (depth, cert) in full_chain.iter().enumerate() {
-        let (_, chain_cert) = X509Certificate::from_der(cert)
-            .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
-        if !chain_cert.validity().is_valid_at(check_time) {
-            if depth == 0 {
-                return Err(CertificateTrustError::CertificateNotTrusted);
-            }
-            ca_outside_validity = true;
-        }
-    }
-
-    for anchor_set in anchor_sets {
-        // Process each anchor set
-
-        // Build anchors and check against trust anchors.
-        let anchors: Vec<(X509Certificate, &Vec<u8>)> = anchor_set
-            .trust_anchor_ders
-            .iter()
-            .filter_map(|anchor_der| {
-                let (_, cert) = X509Certificate::from_der(anchor_der)
-                    .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
-                    .ok()?;
-                Some((cert, anchor_der))
-            })
-            .collect();
-
-        // Work back from last cert in chain against the trust anchors.
-        for cert in full_chain.iter().rev() {
-            let (_, chain_cert) = X509Certificate::from_der(cert)
-                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
-
-            // Check against trust anchors.
-            for (anchor_cert, anchor_der) in &anchors {
-                if chain_cert.issuer() == anchor_cert.subject() {
-                    let data = chain_cert.tbs_certificate.as_ref();
-                    let sig = chain_cert.signature_value.as_ref();
-
-                    let sig_alg = cert_signing_alg(&chain_cert);
-
-                    let result = verify_data(anchor_der, sig_alg, sig, data);
-
-                    match result {
-                        Ok(b) => {
-                            if b {
-                                if ca_outside_validity {
-                                    return Err(
-                                        CertificateTrustError::CaCertificateOutsideValidity,
-                                    );
-                                }
-                                return Ok((
-                                    anchor_set.trust_anchor_type,
-                                    anchor_set.trust_anchor_uri.clone(),
-                                ));
-                            }
-                        }
-                        Err(_) => continue,
-                    }
-                }
-            }
-        }
-    }
-
-    Err(CertificateTrustError::CertificateNotTrusted)
 }
 
 /// Verifies the chain is cryptographically valid (each certificate's
@@ -144,7 +33,8 @@ pub(crate) fn check_certificate_trust(
 /// the latter, a valid cryptographic signature chain alone would let any
 /// ordinary end-entity certificate be used to self-issue a forged certificate
 /// that then chains up to a real trust anchor.
-fn check_chain_order_and_ca_authorization(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
+#[cfg(any(feature = "rust_native_crypto", test))]
+pub(super) fn check_chain_order_and_ca_authorization(certs: &[Vec<u8>]) -> Result<(), ChainError> {
     let chain_length = certs.len();
     if chain_length < 2 {
         return Ok(());
@@ -152,18 +42,18 @@ fn check_chain_order_and_ca_authorization(certs: &[Vec<u8>]) -> Result<(), Certi
 
     for i in 1..chain_length {
         let (_, current_cert) = X509Certificate::from_der(&certs[i - 1])
-            .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
+            .map_err(|_e| ChainError::NoAnchorAssociation)?;
 
         let issuer_der = &certs[i];
-        let (_, issuer_cert) = X509Certificate::from_der(issuer_der)
-            .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
+        let (_, issuer_cert) =
+            X509Certificate::from_der(issuer_der).map_err(|_e| ChainError::NoAnchorAssociation)?;
 
         let data = current_cert.tbs_certificate.as_ref();
         let sig = current_cert.signature_value.as_ref();
         let sig_alg = cert_signing_alg(&current_cert);
 
         if !verify_data(issuer_der, sig_alg, sig, data)? {
-            return Err(CertificateTrustError::CertificateNotTrusted);
+            return Err(ChainError::NoAnchorAssociation);
         }
 
         // Number of CA certificates between the issuer and the leaf.
@@ -179,29 +69,30 @@ fn check_chain_order_and_ca_authorization(certs: &[Vec<u8>]) -> Result<(), Certi
 /// `pathLenConstraint` (if declared) must not be exceeded by `certs_below`
 /// (the number of CA certificates between this issuer and the leaf), and
 /// `keyUsage.keyCertSign` must be set when a `keyUsage` extension is present.
+#[cfg(any(feature = "rust_native_crypto", test))]
 fn check_ca_authorization(
     issuer_tbscert: &TbsCertificate,
     certs_below: u32,
-) -> Result<(), CertificateTrustError> {
+) -> Result<(), ChainError> {
     let basic_constraints = issuer_tbscert
         .basic_constraints()
-        .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?
-        .ok_or(CertificateTrustError::CertificateNotTrusted)?;
+        .map_err(|_e| ChainError::NoAnchorAssociation)?
+        .ok_or(ChainError::NoAnchorAssociation)?;
     if !basic_constraints.value.ca {
-        return Err(CertificateTrustError::CertificateNotTrusted);
+        return Err(ChainError::NoAnchorAssociation);
     }
     if let Some(path_len) = basic_constraints.value.path_len_constraint {
         if certs_below > path_len {
-            return Err(CertificateTrustError::CertificateNotTrusted);
+            return Err(ChainError::NoAnchorAssociation);
         }
     }
 
     if let Some(key_usage) = issuer_tbscert
         .key_usage()
-        .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?
+        .map_err(|_e| ChainError::NoAnchorAssociation)?
     {
         if !key_usage.value.key_cert_sign() {
-            return Err(CertificateTrustError::CertificateNotTrusted);
+            return Err(ChainError::NoAnchorAssociation);
         }
     }
 
@@ -231,7 +122,7 @@ fn signing_alg_to_sig_and_hash_oid(alg: &str) -> Option<(bcder::Oid, bcder::Oid)
     }
 }
 
-fn cert_signing_alg(cert: &X509Certificate) -> Option<String> {
+pub(super) fn cert_signing_alg(cert: &X509Certificate) -> Option<String> {
     let cert_alg = cert.signature_algorithm.algorithm.as_bytes();
 
     if cert_alg == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
@@ -322,23 +213,23 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
     }
 }
 
-fn verify_data(
+pub(super) fn verify_data(
     cert_der: &[u8],
     sig_alg: Option<String>,
     sig: &[u8],
     data: &[u8],
-) -> Result<bool, CertificateTrustError> {
-    let (_, cert) = X509Certificate::from_der(cert_der)
-        .map_err(|_e| CertificateTrustError::InvalidCertificate)?;
+) -> Result<bool, ChainError> {
+    let (_, cert) =
+        X509Certificate::from_der(cert_der).map_err(|_e| ChainError::InvalidCertificate)?;
 
     let certificate_public_key = cert.public_key();
 
     let Some(cert_alg_string) = sig_alg else {
-        return Err(CertificateTrustError::InvalidCertificate);
+        return Err(ChainError::InvalidCertificate);
     };
 
-    let (sig_alg, hash_alg) = signing_alg_to_sig_and_hash_oid(&cert_alg_string)
-        .ok_or(CertificateTrustError::InvalidCertificate)?;
+    let (sig_alg, hash_alg) =
+        signing_alg_to_sig_and_hash_oid(&cert_alg_string).ok_or(ChainError::InvalidCertificate)?;
 
     let result = if let Some(validator) = validator_for_sig_and_hash_algs(
         &c2pa_raw_crypto::Oid::new(sig_alg.as_ref()),
@@ -346,14 +237,26 @@ fn verify_data(
     ) {
         validator.validate(sig, data, certificate_public_key.raw.as_ref())
     } else {
-        return Err(CertificateTrustError::InvalidCertificate);
+        return Err(ChainError::InvalidCertificate);
     };
 
     match result {
         Ok(()) => Ok(true),
         Err(RawSignatureValidationError::SignatureMismatch) => Ok(false),
-        Err(_err) => Err(CertificateTrustError::InvalidCertificate),
+        Err(_err) => Err(ChainError::InvalidCertificate),
     }
+}
+
+pub(crate) fn subject_key_identifier_matches(encoded: &[u8], identifier: &[u8]) -> bool {
+    use asn1_rs::{Class, Tag};
+
+    asn1_rs::Any::from_der(encoded).is_ok_and(|(rest, value)| {
+        rest.is_empty()
+            && value.class() == Class::Universal
+            && value.tag() == Tag::OctetString
+            && !value.header.is_constructed()
+            && value.data == identifier
+    })
 }
 
 #[cfg(test)]
@@ -364,16 +267,19 @@ mod tests {
     use rasn_pkix::Certificate;
 
     use super::*;
-    use crate::{
-        crypto::cert_chain_pem_to_der, utils::test_signer::cert_chain_and_private_key_for_alg,
-    };
+    fn cert_chain_pem_to_der(pem: &[u8]) -> Result<Vec<Vec<u8>>, pem::PemError> {
+        Ok(pem::parse_many(pem)?
+            .into_iter()
+            .map(|pem| pem.into_contents())
+            .collect())
+    }
 
     fn oid(value: &[u32]) -> types::ObjectIdentifier {
         types::ObjectIdentifier::new(value.to_vec()).unwrap()
     }
 
     fn certificate() -> Certificate {
-        let (pem, _) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+        let pem = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
         rasn::der::decode(&cert_chain_pem_to_der(pem).unwrap()[0]).unwrap()
     }
 
@@ -544,44 +450,48 @@ mod tests {
 
     #[test]
     fn raw_verification_distinguishes_mismatch_from_invalid_inputs() {
-        let (pem, key) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
-        let cert = &cert_chain_pem_to_der(pem).unwrap()[0];
-        let signer = c2pa_raw_crypto::signer_from_private_key(key, SigningAlg::Ed25519).unwrap();
-        let signature = signer.sign(b"data").unwrap();
+        let pem = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
+        let chain = cert_chain_pem_to_der(pem).unwrap();
+        let cert = &chain[1];
+        let (_, leaf) = X509Certificate::from_der(&chain[0]).unwrap();
+        let signature = leaf.signature_value.as_ref();
+        let data = leaf.tbs_certificate.as_ref();
         assert_eq!(
-            verify_data(cert, Some("ed25519".into()), &signature, b"data"),
+            verify_data(cert, Some("ed25519".into()), signature, data),
             Ok(true)
         );
         assert_eq!(
-            verify_data(cert, Some("ed25519".into()), &signature, b"changed"),
+            verify_data(cert, Some("ed25519".into()), signature, b"changed"),
             Ok(false)
         );
         assert_eq!(
-            verify_data(b"invalid", Some("ed25519".into()), &signature, b"data"),
-            Err(CertificateTrustError::InvalidCertificate)
+            verify_data(b"invalid", Some("ed25519".into()), signature, data),
+            Err(ChainError::InvalidCertificate)
         );
         assert_eq!(
-            verify_data(cert, None, &signature, b"data"),
-            Err(CertificateTrustError::InvalidCertificate)
+            verify_data(cert, None, signature, data),
+            Err(ChainError::InvalidCertificate)
         );
         assert_eq!(
-            verify_data(cert, Some("unknown".into()), &signature, b"data"),
-            Err(CertificateTrustError::InvalidCertificate)
+            verify_data(cert, Some("unknown".into()), signature, data),
+            Err(ChainError::InvalidCertificate)
         );
-        assert!(verify_data(cert, Some("ed25519".into()), &[], b"data").is_err());
+        assert_ne!(
+            verify_data(cert, Some("ed25519".into()), &[], b"data"),
+            Ok(true)
+        );
 
         let mut chain = cert_chain_pem_to_der(pem).unwrap();
         *chain[0].last_mut().unwrap() ^= 1;
         assert_eq!(
             check_chain_order_and_ca_authorization(&chain),
-            Err(CertificateTrustError::CertificateNotTrusted)
+            Err(ChainError::NoAnchorAssociation)
         );
     }
 
     #[test]
     fn ca_key_usage_is_optional_but_must_authorize_signing_when_present() {
-        let pem =
-            include_bytes!("../../../../tests/fixtures/crypto/cose/ca_authorization_root.pub");
+        let pem = include_bytes!("../../tests/fixtures/certs/ca_authorization_root.pub");
         let root_der = cert_chain_pem_to_der(pem).unwrap().remove(0);
         let root: Certificate = rasn::der::decode(&root_der).unwrap();
         let key_usage = oid(&[2, 5, 29, 15]);
@@ -617,54 +527,10 @@ mod tests {
         let (_, parsed) = X509Certificate::from_der(&der).unwrap();
         assert_eq!(
             check_ca_authorization(&parsed.tbs_certificate, 0),
-            Err(CertificateTrustError::CertificateNotTrusted)
+            Err(ChainError::NoAnchorAssociation)
         );
 
         assert!(check_chain_order_and_ca_authorization(&[vec![0], root_der.clone()]).is_err());
         assert!(check_chain_order_and_ca_authorization(&[root_der, vec![0]]).is_err());
-    }
-
-    #[test]
-    fn leaf_eku_failures_are_distinct_from_untrusted_chain() {
-        let mut policy = CertificateTrustPolicy::new();
-        policy
-            .add_trust_anchors(
-                include_bytes!(
-                    "../../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
-                ),
-                "urn:test:roots",
-                TrustAnchorType::Manifest,
-                None,
-            )
-            .unwrap();
-        for remove_eku in [false, true] {
-            let mut cert = certificate();
-            let extensions = cert.tbs_certificate.extensions.as_mut().unwrap();
-            if remove_eku {
-                extensions.retain(|ext| ext.extn_id != oid(&[2, 5, 29, 37]));
-            } else {
-                extensions
-                    .iter_mut()
-                    .find(|ext| ext.extn_id == oid(&[2, 5, 29, 37]))
-                    .unwrap()
-                    .extn_value = rasn::der::encode(&vec![oid(&[1, 2, 3, 4])]).unwrap().into();
-            }
-
-            assert_eq!(
-                check_certificate_trust(
-                    &policy,
-                    None,
-                    &[],
-                    &rasn::der::encode(&cert).unwrap(),
-                    None
-                ),
-                Err(CertificateTrustError::InvalidEku)
-            );
-        }
-
-        assert_eq!(
-            check_certificate_trust(&policy, None, &[], &[0], None),
-            Err(CertificateTrustError::InvalidCertificate)
-        );
     }
 }

@@ -10,10 +10,10 @@ publish = false
 
 [features]
 default = ["rust_native_crypto"]
-openssl = ["c2pa_raw_crypto/openssl"]
+openssl = ["c2pa_raw_crypto/openssl", "dep:openssl"]
 rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
 
-# Provisional bridge for the SDK's deferred profile, trust and OCSP consumers.
+# Provisional bridge for the SDK's timestamp and deferred OCSP consumers.
 sdk-compat = []
 
 [dependencies]
@@ -26,12 +26,15 @@ contentauth-sans-io-core = "0.2.0"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
 hex = "0.4.3"
 http = "1.4.1"
+nom = "7.1.3"
+openssl = { version = "0.10.80", optional = true }
 rasn = "0.28.13"
 rasn-cms = "0.28.13"
 rasn-pkix = "0.28.13"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
 thiserror = "2.0.18"
+x509-parser = "0.18.1"
 
 [dev-dependencies]
 pem = "4.0.0"

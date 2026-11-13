@@ -62,7 +62,10 @@ use super::response::{
     signed_data_and_bytes_from_time_stamp_response, signed_data_from_time_stamp_response,
     tst_info_from_signed_data, ContentInfo,
 };
-use crate::asn1::rfc3161::{Accuracy, TimeStampResp, TstInfo};
+use crate::{
+    asn1::rfc3161::{Accuracy, TimeStampResp, TstInfo},
+    x509::certificate::subject_key_identifier_matches,
+};
 
 #[cfg(test)]
 mod rsa_pss_ski_regression;
@@ -837,18 +840,6 @@ fn signer_certificate_matches(choice: &CertificateChoices, sid: &SignerIdentifie
                 })
             }),
     }
-}
-
-fn subject_key_identifier_matches(encoded: &[u8], identifier: &[u8]) -> bool {
-    use asn1_rs::{Class, Tag};
-
-    asn1_rs::Any::from_der(encoded).is_ok_and(|(rest, value)| {
-        rest.is_empty()
-            && value.class() == Class::Universal
-            && value.tag() == Tag::OctetString
-            && !value.header.is_constructed()
-            && value.data == identifier
-    })
 }
 
 const RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
