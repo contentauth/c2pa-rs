@@ -111,6 +111,7 @@ jobs:
           build-warnings: ${{ runner.os == 'Windows' && 'warn' || 'deny' }}
 
       - name: Run tests
+        shell: bash
         env:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
@@ -139,6 +140,7 @@ jobs:
           toolchain: ${{ matrix.rust_version != 'stable' && matrix.rust_version || '' }}
 
       - name: Run tests
+        shell: bash
         env:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
@@ -206,6 +208,7 @@ jobs:
           build-warnings: ${{ runner.os == 'Windows' && 'warn' || 'deny' }}
 
       - name: Run tests
+        shell: bash
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
