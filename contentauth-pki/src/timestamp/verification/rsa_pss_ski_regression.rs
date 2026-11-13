@@ -383,6 +383,7 @@ fn pss_parameter_defaults_and_null_or_absent_hash_parameters() -> TestResult {
             tlv(0xa2, &tlv(2, &[salt])),
         ]
         .concat();
+
         signer.signature_algorithm.parameters = Some(types::Any::new(tlv(0x30, &fields)));
 
         assert!(timestamp_signature_algorithm(&signer, key).is_ok());
