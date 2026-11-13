@@ -139,18 +139,23 @@ pub enum ChainError {
     /// No valid path was established to the supplied anchor set.
     #[error("no valid chain to the supplied anchor set")]
     NoAnchorAssociation,
+
     /// A certificate signature did not verify with the supplied issuer key.
     #[error("certificate signature mismatch")]
     SignatureMismatch,
+
     /// An issuing CA on an otherwise associated chain was outside its validity.
     #[error("a CA certificate in the chain is outside its validity period")]
     CaCertificateOutsideValidity,
+
     /// Certificate parsing, algorithm selection or signature inputs were invalid.
     #[error("the certificate or certificate chain is invalid")]
     InvalidCertificate,
+
     /// The selected cryptography backend returned an error.
     #[error("an error was reported by the cryptography library: {0}")]
     CryptoLibraryError(String),
+
     /// The requested backend was unavailable or could not be initialized.
     #[error("internal error ({0})")]
     InternalError(String),

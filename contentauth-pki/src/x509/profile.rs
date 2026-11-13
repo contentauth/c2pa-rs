@@ -35,13 +35,17 @@ use super::certificate::rsa_pss_algorithms;
 pub struct ProfilePolicy<'a> {
     /// Effective accepted purposes, after host configuration composition.
     pub allowed_ekus: &'a HashSet<String>,
+
     /// Every listed purpose must be present on an end-entity certificate.
     pub mandatory_ekus: &'a HashSet<String>,
+
     /// Accept emailProtection when the effective allowed set is empty.
     pub allow_email_protection_when_empty: bool,
+
     /// Accept timeStamping and OCSPSigning in the shared profile matcher.
     /// A host must separately reject them for roles that forbid these purposes.
     pub allow_specialty_purposes: bool,
+
     /// Reject CA certificates and require every mandatory purpose.
     pub end_entity: bool,
 }
@@ -127,6 +131,7 @@ impl ProfileValidCertificate<'_> {
 pub struct ProfileError {
     /// Typed profile failure.
     pub kind: CertificateProfileError,
+
     /// Diagnostic for host reporting; never an application status code.
     pub diagnostic: Option<&'static str>,
 }
