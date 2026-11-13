@@ -28,8 +28,8 @@ use crate::{
         asn1::rfc3161::TstInfo,
         base64::encode,
         cose::{
-            cert_chain_from_sign1, check_claim_signing_eku, check_end_entity_certificate_profile,
-            parse_cose_sign1, signing_alg_from_sign1, CertificateInfo, CertificateTrustError,
+            cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
+            signing_alg_from_sign1, CertificateInfo, CertificateRole, CertificateTrustError,
             CertificateTrustPolicy, CoseError, TrustAnchorType,
         },
     },
@@ -115,10 +115,42 @@ impl Verifier<'_> {
         tst_info: Option<&TstInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
+        if _sync {
+            self.verify_signature_for_role(
+                CertificateRole::ClaimSigner,
+                cose_sign1,
+                data,
+                additional_data,
+                tst_info,
+                validation_log,
+            )
+        } else {
+            self.verify_signature_for_role_async(
+                CertificateRole::ClaimSigner,
+                cose_sign1,
+                data,
+                additional_data,
+                tst_info,
+                validation_log,
+            )
+            .await
+        }
+    }
+
+    #[async_generic]
+    pub(crate) fn verify_signature_for_role(
+        &self,
+        role: CertificateRole,
+        cose_sign1: &[u8],
+        data: &[u8],
+        additional_data: &[u8],
+        tst_info: Option<&TstInfo>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<CertificateInfo, CoseError> {
         if !matches!(self, Self::IgnoreProfileAndTrustPolicy) {
             let sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
             let certificates = cert_chain_from_sign1(&sign1)?;
-            check_claim_signing_eku(&certificates[0], validation_log)?;
+            role.check_purpose(&certificates[0], validation_log)?;
         }
 
         if _sync {

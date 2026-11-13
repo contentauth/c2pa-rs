@@ -282,10 +282,24 @@ impl Verifier<'_> {
         let timestamp = timestamp.as_ref().or(manifest_timestamp);
         let log_start = validation_log.logged_items().len();
         let info = if _sync {
-            self.verify_signature(signature, data, &[], timestamp, validation_log)?
+            self.verify_signature_for_role(
+                super::CertificateRole::CawgIdentity,
+                signature,
+                data,
+                &[],
+                timestamp,
+                validation_log,
+            )?
         } else {
-            self.verify_signature_async(signature, data, &[], timestamp, validation_log)
-                .await?
+            self.verify_signature_for_role_async(
+                super::CertificateRole::CawgIdentity,
+                signature,
+                data,
+                &[],
+                timestamp,
+                validation_log,
+            )
+            .await?
         };
 
         if let Self::VerifyTrustPolicy(policy) | Self::VerifyTrustPolicyFor(policy, _) = self {
