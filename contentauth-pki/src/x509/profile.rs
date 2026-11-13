@@ -62,7 +62,9 @@ impl ProfilePolicy<'_> {
         let email = eku.email_protection
             && ((self.allow_email_protection_when_empty && self.allowed_ekus.is_empty())
                 || self.allowed_ekus.contains("1.3.6.1.5.5.7.3.4"));
+
         let specialty = self.allow_specialty_purposes && (eku.time_stamping || eku.ocsp_signing);
+
         (email
             || specialty
             || eku
@@ -108,6 +110,7 @@ pub fn check_profile<'a>(
 ) -> Result<ProfileValidCertificate<'a>, ProfileError> {
     let mut diagnostic = None;
     let mut report = |description| diagnostic = Some(description);
+
     let result = if policy.end_entity {
         check_end_entity_certificate_profile(certificate_der, policy, &mut report, validation_time)
     } else {
@@ -132,6 +135,7 @@ pub fn check_disallowed_ekus(
 ) -> Result<(), CertificateProfileError> {
     let (_, certificate) = X509Certificate::from_der(certificate_der)
         .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+
     let eku = certificate
         .extended_key_usage()
         .map_err(|_| CertificateProfileError::InvalidCertificate)?;
@@ -225,6 +229,7 @@ fn check_certificate_profile(
             .map_err(|_| CertificateProfileError::InvalidCertificate)?,
     ) {
         report("certificate expired");
+
         return Err(CertificateProfileError::CertificateNotValidAtTime);
     }
 
@@ -271,6 +276,7 @@ fn check_certificate_profile(
             let (_i, (ha_alg, mgf_ai)) = seq
                 .parse(|i| {
                     let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
+
                     if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
                         return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
                     }
@@ -279,6 +285,7 @@ fn check_certificate_profile(
                         .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
 
                     let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
+
                     if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
                         return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
                     }
@@ -295,6 +302,7 @@ fn check_certificate_profile(
             let mgf_ai_parameters = mgf_ai
                 .parameters
                 .ok_or(CertificateProfileError::InvalidCertificate)?;
+
             let mgf_ai_parameters = mgf_ai_parameters
                 .as_sequence()
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?;
@@ -369,6 +377,7 @@ fn check_certificate_profile(
         let seq = skpi_ber
             .as_sequence()
             .map_err(|_err| CertificateProfileError::InvalidCertificate)?;
+
         if seq.len() < 2 {
             return Err(CertificateProfileError::InvalidCertificate);
         }
@@ -376,6 +385,7 @@ fn check_certificate_profile(
         let modulus = seq[0]
             .as_bigint()
             .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+
         let exponent = seq[1]
             .as_bigint()
             .map_err(|_| CertificateProfileError::InvalidCertificate)?;
@@ -413,6 +423,7 @@ fn check_certificate_profile(
     let mut ski_good = false;
     let mut key_usage_good = false;
     let mut handled_all_critical = true;
+
     let extended_key_usage_good = match tbscert
         .extended_key_usage()
         .map_err(|_| CertificateProfileError::InvalidCertificate)?
@@ -463,9 +474,11 @@ fn check_certificate_profile(
             ParsedExtension::AuthorityKeyIdentifier(_aki) => {
                 aki_good = true;
             }
+
             ParsedExtension::SubjectKeyIdentifier(_spki) => {
                 ski_good = true;
             }
+
             ParsedExtension::KeyUsage(ku) => {
                 // "The keyCertSign bit shall only be asserted if the cA boolean is
                 // asserted in the Basic Constraints extension."
@@ -506,12 +519,14 @@ fn check_certificate_profile(
             ParsedExtension::CRLNumber(_) => (),
             ParsedExtension::ReasonCode(_) => (),
             ParsedExtension::InvalidityDate(_) => (),
+
             ParsedExtension::Unparsed => {
                 if e.critical {
                     // Unhandled critical extension.
                     handled_all_critical = false;
                 }
             }
+
             _ => {
                 if e.critical {
                     //println!("Oid: {}", e.oid.to_id_string());
@@ -605,6 +620,7 @@ fn is_valid_rsa_public_exponent(exponent: &BigInt) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn rsa_public_exponent_profile() {
         assert!(!is_valid_rsa_public_exponent(&BigInt::from(1u32)));

@@ -31,8 +31,10 @@ pub(crate) fn check_certificate_trust(
     } else {
         let mut full_chain: Vec<Vec<u8>> = Vec::new();
         full_chain.push(cert_der.to_vec());
+
         let mut in_chain = chain_der.to_vec();
         full_chain.append(&mut in_chain);
+
         full_chain
     };
 
@@ -47,20 +49,25 @@ pub(crate) fn check_certificate_trust(
     // for the certs from the anchor match onward, silently skipping every
     // cert between that match and the leaf.
     let check_time = validation_time;
+
     let check_time = x509_parser::time::ASN1Time::from_timestamp(check_time)
         .map_err(|_| ChainError::NoAnchorAssociation)?;
+
     // The end-entity certificate's validity is reported by the certificate
     // profile check. A CA certificate outside its validity is reported as such
     // only if the chain otherwise reaches a trust anchor, as OpenSSL does;
     // otherwise the chain is simply not trusted.
     let mut ca_outside_validity = false;
+
     for (depth, cert) in full_chain.iter().enumerate() {
         let (_, chain_cert) =
             X509Certificate::from_der(cert).map_err(|_e| ChainError::NoAnchorAssociation)?;
+
         if !chain_cert.validity().is_valid_at(check_time) {
             if depth == 0 {
                 return Err(ChainError::NoAnchorAssociation);
             }
+
             ca_outside_validity = true;
         }
     }
@@ -72,6 +79,7 @@ pub(crate) fn check_certificate_trust(
             let (_, cert) = X509Certificate::from_der(anchor_der)
                 .map_err(|_e| ChainError::NoAnchorAssociation)
                 .ok()?;
+
             Some((cert, anchor_der))
         })
         .collect();
@@ -97,9 +105,11 @@ pub(crate) fn check_certificate_trust(
                             if ca_outside_validity {
                                 return Err(ChainError::CaCertificateOutsideValidity);
                             }
+
                             return Ok(());
                         }
                     }
+
                     Err(_) => continue,
                 }
             }

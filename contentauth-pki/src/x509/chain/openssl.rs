@@ -33,6 +33,7 @@ pub(crate) fn check_certificate_trust(
     let mut ca_outside_validity = false;
 
     let mut cert_chain = Stack::new()?;
+
     for cert_der in chain_der {
         let x509_cert = X509::from_der(cert_der)?;
         cert_chain.push(x509_cert)?;
@@ -61,15 +62,18 @@ pub(crate) fn check_certificate_trust(
 
     // try trust anchors
     let mut store_ctx = X509StoreContext::new()?;
+
     if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| {
         let verified = f.verify_cert()?;
         let error = f.error().as_raw();
+
         if !verified
             && f.error_depth() > 0
             && (error == CERT_NOT_YET_VALID || error == CERT_HAS_EXPIRED)
         {
             ca_outside_validity = true;
         }
+
         Ok(verified)
     })? {
         return Ok(());
@@ -78,5 +82,6 @@ pub(crate) fn check_certificate_trust(
     if ca_outside_validity {
         return Err(ChainError::CaCertificateOutsideValidity);
     }
+
     Err(ChainError::NoAnchorAssociation)
 }

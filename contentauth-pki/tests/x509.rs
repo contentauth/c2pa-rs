@@ -51,10 +51,12 @@ fn signing_time(der: &[u8]) -> i64 {
 fn with_ekus(der: &[u8], purposes: &[&[u32]]) -> Vec<u8> {
     let mut certificate: Certificate = rasn::der::decode(der).unwrap();
     let eku_oid = types::ObjectIdentifier::new(vec![2, 5, 29, 37]).unwrap();
+
     let purposes: Vec<_> = purposes
         .iter()
         .map(|oid| types::ObjectIdentifier::new(oid.to_vec()).unwrap())
         .collect();
+
     certificate
         .tbs_certificate
         .extensions
@@ -64,6 +66,7 @@ fn with_ekus(der: &[u8], purposes: &[&[u32]]) -> Vec<u8> {
         .find(|extension| extension.extn_id == eku_oid)
         .unwrap()
         .extn_value = rasn::der::encode(&purposes).unwrap().into();
+
     rasn::der::encode(&certificate).unwrap()
 }
 
@@ -97,13 +100,16 @@ fn signature_profile_and_anchor_association_are_independent() {
 
     assert!(verify_chain_signatures(&chain).is_ok());
     assert!(check_profile(&chain[0], &policy, time).is_ok());
+
     let association = validate_chain_to_anchors(&chain, &chain[0], &anchors, time).unwrap();
+
     assert_eq!(association.anchors(), anchors);
 
     // The same valid signatures establish no association with an unrelated set.
     let other = ::pem::parse(include_bytes!("fixtures/certs/ca_authorization_root.pub"))
         .unwrap()
         .into_contents();
+
     assert_eq!(
         validate_chain_to_anchors(&chain, &chain[0], &[other], time).unwrap_err(),
         ChainError::NoAnchorAssociation,
@@ -116,18 +122,22 @@ fn signature_profile_and_anchor_association_are_independent() {
         .not_after
         .timestamp()
         + 1;
+
     assert_eq!(
         check_profile(&chain[0], &policy, expired).unwrap_err().kind,
         CertificateProfileError::CertificateNotValidAtTime,
     );
+
     assert!(verify_chain_signatures(&chain).is_ok());
 
     *chain[0].last_mut().unwrap() ^= 1;
     assert!(check_profile(&chain[0], &policy, time).is_ok());
+
     assert_eq!(
         verify_chain_signatures(&chain).unwrap_err(),
         ChainError::SignatureMismatch,
     );
+
     assert!(validate_chain_to_anchors(&chain, &chain[0], &anchors, time).is_err());
 }
 
@@ -147,15 +157,18 @@ fn explicit_role_constraints_do_not_redefine_identity_compatibility() {
         let certificate = with_ekus(&chain[0], &[oid]);
         let required = HashSet::from([purpose.to_string()]);
         let specialty = policy(&empty, &required);
+
         assert!(check_profile(&certificate, &specialty, time).is_ok());
 
         let other_required = HashSet::from([email.to_string()]);
+
         assert_eq!(
             check_profile(&certificate, &policy(&empty, &other_required), time)
                 .unwrap_err()
                 .kind,
             CertificateProfileError::InvalidEku,
         );
+
         assert_eq!(
             check_disallowed_ekus(&certificate, &[timestamp, ocsp]),
             Err(CertificateProfileError::InvalidEku),
@@ -172,28 +185,35 @@ fn host_eku_inputs_preserve_empty_explicit_alternate_and_mixed_rules() {
     let time = signing_time(&chain[0]);
     let empty = HashSet::new();
     let email = with_ekus(&chain[0], &[&[1, 3, 6, 1, 5, 5, 7, 3, 4]]);
+
     assert!(check_profile(&email, &policy(&empty, &empty), time).is_ok());
 
     let alternate_oid = "1.3.6.1.4.1.62558.2.1".to_string();
     let explicit = HashSet::from([alternate_oid]);
+
     assert!(check_profile(&email, &policy(&explicit, &empty), time).is_err());
+
     let alternate = with_ekus(&chain[0], &[&[1, 3, 6, 1, 4, 1, 62558, 2, 1]]);
+
     assert!(check_profile(&alternate, &policy(&explicit, &empty), time).is_ok());
 
     let additive = HashSet::from([
         "1.3.6.1.5.5.7.3.4".to_string(),
         "1.3.6.1.4.1.62558.2.1".to_string(),
     ]);
+
     assert!(check_profile(&email, &policy(&additive, &empty), time).is_ok());
     assert!(check_profile(&alternate, &policy(&additive, &empty), time).is_ok());
 
     let all_required = additive.clone();
+
     assert_eq!(
         check_profile(&alternate, &policy(&additive, &all_required), time)
             .unwrap_err()
             .kind,
         CertificateProfileError::InvalidEku,
     );
+
     let both = with_ekus(
         &chain[0],
         &[
@@ -201,6 +221,7 @@ fn host_eku_inputs_preserve_empty_explicit_alternate_and_mixed_rules() {
             &[1, 3, 6, 1, 4, 1, 62558, 2, 1],
         ],
     );
+
     assert!(check_profile(&both, &policy(&additive, &all_required), time).is_ok());
 
     for purposes in [
@@ -215,6 +236,7 @@ fn host_eku_inputs_preserve_empty_explicit_alternate_and_mixed_rules() {
         ],
     ] {
         let certificate = with_ekus(&chain[0], &purposes);
+
         assert!(check_profile(&certificate, &policy(&additive, &empty), time).is_err());
     }
 }

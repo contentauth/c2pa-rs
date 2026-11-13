@@ -119,6 +119,7 @@ pub fn validate_chain_to_anchors<'a>(
     #[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
     {
         let _ = (chain, certificate, validation_time);
+
         return Err(ChainError::InternalError(
             "no implementation for certificate evaluation available".into(),
         ));
