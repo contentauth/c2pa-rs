@@ -14,8 +14,8 @@
 //! Deterministic RFC 3161 CMS signature and message-imprint verification.
 //!
 //! Parsing and successful cryptography do **not** establish certificate-profile
-//! validity, chain validity, TSA trust or application acceptance. No clock,
-//! randomness, network client or executor is used. Generation time is attested
+//! validity, chain validity, TSA trust, or application acceptance. No clock,
+//! randomness, network client, or executor is used. Generation time is attested
 //! data, not an accepted signing time.
 //!
 //! Signers are tried in decoded CMS order. Each signer uses the first matching
@@ -33,7 +33,7 @@
 //!     .next()
 //!     .ok_or("no timestamp signer")??;
 //!
-//! // Inspect signed.generation_time(), signed.signer_validity() and
+//! // Inspect signed.generation_time(), signed.signer_validity(), and
 //! // signed.accuracy_seconds() under the host's temporal policy.
 //! let verified = signed.verify_message_imprint(message)?;
 //!
@@ -72,7 +72,7 @@ mod signed_attrs_tests;
 /// Stage at which a candidate failed, independent of host status-code policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VerificationStage {
-    /// Outer response, token or CMS decoding.
+    /// Outer response, token, or CMS decoding.
     Envelope,
 
     /// Ambiguous duplicate CMS signatures.
@@ -90,7 +90,7 @@ pub enum VerificationStage {
     /// CMS signed attributes or their digest.
     SignedAttributes,
 
-    /// Signature algorithm, parameters or public-key compatibility.
+    /// Signature algorithm, parameters, or public-key compatibility.
     SignatureAlgorithm,
 
     /// Cryptographic signature validation.
@@ -213,7 +213,7 @@ impl ParsedTimestamp {
     /// Verify each CMS signer, preserving decoded order and per-signer failures.
     ///
     /// This checks signed-attribute digests and signature algorithms/parameters,
-    /// but not the message imprint, temporal policy, certificate profile or trust.
+    /// but not the message imprint, temporal policy, certificate profile, or trust.
     /// A missing matching certificate is a typed per-signer failure, so hosts may
     /// retain their own last-candidate diagnostic semantics.
     pub fn verify_signatures(
@@ -371,7 +371,7 @@ impl ParsedTimestamp {
 
 /// Facts authenticated by a CMS signature, but not yet bound to the host message.
 ///
-/// This type is not a trusted/accepted signing time. Temporal, profile and trust
+/// This type is not a trusted/accepted signing time. Temporal, profile, and trust
 /// checks remain host decisions. In particular, validity bounds are facts rather
 /// than an implicit ambient-time or accuracy policy.
 pub struct SignatureVerifiedTimestamp<'a> {
@@ -451,7 +451,7 @@ impl<'a> SignatureVerifiedTimestamp<'a> {
 
 /// A CMS signature and message imprint verified for the supplied message.
 ///
-/// **Not** certificate-profile-valid, chain-valid, trusted or SDK-accepted.
+/// **Not** certificate-profile-valid, chain-valid, trusted, or SDK-accepted.
 /// Only the host can establish those independent outcomes.
 pub struct VerifiedTimestamp<'a>(SignatureVerifiedTimestamp<'a>);
 
@@ -476,7 +476,7 @@ impl VerifiedTimestamp<'_> {
 ///
 /// Supports response and bare-token forms and the same first-match issuer/serial
 /// and strict SKI lookup as verification. `None` means no token, certificates,
-/// signer or matching certificate; it is not a validation success.
+/// signer, or matching certificate; it is not a validation success.
 pub fn signer_certificate_from_token(token: &[u8]) -> Result<Option<Vec<u8>>, VerificationError> {
     let Some(sd) = signed_data_from_time_stamp_response(token).map_err(|kind| {
         VerificationError::new(
@@ -513,7 +513,7 @@ pub fn signer_certificate_from_token(token: &[u8]) -> Result<Option<Vec<u8>>, Ve
 /// Extract and encode the bare CMS token from an RFC 3161 response.
 ///
 /// Intended for containers such as COSE `sigTst2`; this only changes the envelope.
-/// It does not check the TSA status, message imprint, signature, profile or trust.
+/// It does not check the TSA status, message imprint, signature, profile, or trust.
 /// Callers retaining a legacy `sigTst` response should preserve its original bytes.
 pub fn token_from_response(response: &[u8]) -> Result<Vec<u8>, VerificationErrorKind> {
     let response = Constructed::decode(response, bcder::Mode::Der, TimeStampResp::take_from)
