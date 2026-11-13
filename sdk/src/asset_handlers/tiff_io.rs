@@ -2443,6 +2443,15 @@ impl AssetIO for TiffIO {
         }
     }
 
+    // Locating only reads, so it works for the read-only camera raw formats too.
+    fn object_locations(
+        &self,
+        _asset_type: &str,
+        input: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
+        C2paWriter::get_object_locations(self, input)
+    }
+
     fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }

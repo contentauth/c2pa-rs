@@ -576,6 +576,15 @@ impl AssetIO for AssetIoAdapter {
         (!self.is_read_only(asset_type)).then(|| Box::new(self.clone()) as Box<dyn C2paWriter>)
     }
 
+    // Locating only reads, so it works for the read-only camera raw formats too.
+    fn object_locations(
+        &self,
+        _asset_type: &str,
+        input: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
+        C2paWriter::get_object_locations(self, input)
+    }
+
     fn container_handler(&self, asset_type: &str) -> Option<Arc<dyn ContainerHandler>> {
         self.handler
             .clone()

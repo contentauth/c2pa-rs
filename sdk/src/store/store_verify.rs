@@ -52,8 +52,8 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
     pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
     pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
+    pub manifest_location_error: Option<String>, // why the manifest store could not be located in the asset, if the lookup failed
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
-    pub is_embedded: bool, // whether the manifest was read out of the asset being validated, vs. supplied separately (sidecar/remote)
 }
 
 impl Store {
@@ -433,10 +433,7 @@ impl Store {
         context: &Context,
     ) -> Result<StoreValidationInfo<'a>> {
         let io = context.io();
-        let mut svi = StoreValidationInfo {
-            is_embedded: self.embedded,
-            ..Default::default()
-        };
+        let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
         // find the manifest with the hash binding
@@ -488,11 +485,18 @@ impl Store {
                 }
             };
 
-            if let Ok(locations) = locations {
-                if let Some(manifest_loc) = locations.iter().find(|o| o.htype == ObjectType::C2pa) {
-                    svi.manifest_store_range =
-                        Some(HashRange::new(manifest_loc.offset, manifest_loc.length));
+            // A failed lookup leaves no range, so a data hash exclusion fails its
+            // check (fail closed); the reason is kept for the validation log.
+            match locations {
+                Ok(locations) => {
+                    if let Some(manifest_loc) =
+                        locations.iter().find(|o| o.htype == ObjectType::C2pa)
+                    {
+                        svi.manifest_store_range =
+                            Some(HashRange::new(manifest_loc.offset, manifest_loc.length));
+                    }
                 }
+                Err(error) => svi.manifest_location_error = Some(error.to_string()),
             }
         }
 

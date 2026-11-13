@@ -249,6 +249,23 @@ pub trait AssetIO: Sync + Send {
         None
     }
 
+    /// Returns the positions of the C2PA manifest, XMP and other regions of
+    /// `input`, an asset of `asset_type`. Validation needs it for every format it
+    /// reads, so a read-only format must still locate its manifest.
+    ///
+    /// Defaults to the [`get_writer`](AssetIO::get_writer)'s
+    /// [`C2paWriter::get_object_locations`]; [`Error::UnsupportedType`] if there is
+    /// no writer.
+    fn object_locations(
+        &self,
+        asset_type: &str,
+        input: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
+        self.get_writer(asset_type)
+            .ok_or(Error::UnsupportedType)?
+            .get_object_locations(input)
+    }
+
     /// Returns the asset-io container handler behind this handler, if it is one,
     /// for a direct (single-pass) save of `asset_type`.
     ///
@@ -1108,17 +1125,16 @@ impl HandlerRegistry {
     }
 
     /// Returns the byte positions and lengths of the key regions (the C2PA manifest, XMP,
-    /// and everything else) in `stream`, via the registered writer for `format`, checking
-    /// `fallback` if this registry has no match.
+    /// and everything else) in `stream`, via the registered handler for `format`,
+    /// checking `fallback` if this registry has no match. Works for read-only formats.
     pub(crate) fn object_locations(
         &self,
         format: &str,
         stream: &mut dyn ReadSeek,
     ) -> Result<Vec<ObjectLocations>> {
-        match self.writer(format) {
-            Some(w) => w.get_object_locations(stream),
-            None => Err(Error::UnsupportedType),
-        }
+        self.handler(format)
+            .ok_or(Error::UnsupportedType)?
+            .object_locations(format, stream)
     }
 }
 

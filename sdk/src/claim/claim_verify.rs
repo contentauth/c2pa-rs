@@ -105,10 +105,12 @@ pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
 /// covers exactly it. A mismatch means the exclusion covers non-manifest bytes -- a
 /// detached manifest applied to an unrelated asset, or content injected into the
 /// space freed by shrinking the manifest.
+///
+/// This fails closed: an exclusion that cannot be checked against a manifest found
+/// in the asset (none there, or the lookup failed) does not match.
 fn data_hash_exclusions_match_manifest(
     exclusions: &[HashRange],
     manifest_store_range: Option<&HashRange>,
-    is_embedded: bool,
 ) -> bool {
     // Remote/sidecar manifests carry a placeholder exclusion that excludes no
     // bytes; the whole asset is hashed, so there is nothing to police.
@@ -116,13 +118,10 @@ fn data_hash_exclusions_match_manifest(
         return true;
     }
 
-    match manifest_store_range {
-        // Manifest present in this asset: an exclusion must cover exactly it.
-        Some(range) => exclusions.contains(range),
-        // Manifest not in this asset: allow only if it was read from here
-        // (embedded); a detached manifest on an unrelated asset is rejected (#2643).
-        None => is_embedded,
-    }
+    // An exclusion must cover exactly the manifest found in this asset. With none
+    // found, nothing may be excluded: a detached manifest on an unrelated asset
+    // (#2643), or one whose location could not be determined.
+    manifest_store_range.is_some_and(|range| exclusions.contains(range))
 }
 
 impl Claim {
@@ -1218,11 +1217,16 @@ impl Claim {
                             if !data_hash_exclusions_match_manifest(
                                 exclusions,
                                 svi.manifest_store_range.as_ref(),
-                                svi.is_embedded,
                             ) {
+                                let description = match &svi.manifest_location_error {
+                                    Some(error) => format!(
+                                        "data hash exclusion cannot be checked: the manifest location in the asset could not be determined ({error})"
+                                    ),
+                                    None => "data hash exclusion does not match the manifest location in the asset".to_string(),
+                                };
                                 log_item!(
                                     claim.assertion_uri(&hash_binding_assertion.label()),
-                                    "data hash exclusion does not match the manifest location in the asset",
+                                    description,
                                     "verify_internal"
                                 )
                                 .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
@@ -2281,5 +2285,38 @@ impl Claim {
             Metadata::from_assertion(metadata_assertion.assertion())?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::data_hash_exclusions_match_manifest;
+    use crate::utils::hash_utils::HashRange;
+
+    #[test]
+    fn data_hash_exclusions_must_match_a_located_manifest() {
+        let manifest = HashRange::new(100, 50);
+        let exact = [manifest.clone()];
+        let with_extra = [HashRange::new(10, 5), manifest.clone()];
+        let wrong = [HashRange::new(100, 60)];
+        let placeholder = [HashRange::new(0, 0)];
+
+        assert!(data_hash_exclusions_match_manifest(&exact, Some(&manifest)));
+        assert!(data_hash_exclusions_match_manifest(
+            &with_extra,
+            Some(&manifest)
+        ));
+        assert!(!data_hash_exclusions_match_manifest(
+            &wrong,
+            Some(&manifest)
+        ));
+
+        // Nothing excluded: nothing to check, wherever the manifest is.
+        assert!(data_hash_exclusions_match_manifest(&placeholder, None));
+        assert!(data_hash_exclusions_match_manifest(&[], None));
+
+        // Bytes excluded but no manifest located (absent, or the lookup failed):
+        // fails closed, even for a manifest read from the asset itself.
+        assert!(!data_hash_exclusions_match_manifest(&exact, None));
     }
 }
