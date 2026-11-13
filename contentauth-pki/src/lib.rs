@@ -48,6 +48,7 @@
 //! verification are provided; only the internal CMS/X.509 support needed for those
 //! operations is included. X.509 chain/profile policy, OCSP, and COSE orchestration
 //! are not provided.
+//! COSE is supporting machinery, not a general-purpose COSE environment.
 
 #![deny(missing_docs)]
 #![deny(clippy::expect_used)]
