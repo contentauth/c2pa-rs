@@ -1,10 +1,10 @@
 [package]
-name = "contentauth-signature-infrastructure"
+name = "contentauth-pki"
 version = "0.0.0"
 edition = "2021"
 rust-version = "1.96.0"
 license = "MIT OR Apache-2.0"
-description = "Experimental sans-I/O signature infrastructure"
+description = "Experimental sans-I/O public key infrastructure workflows"
 readme = "README.md"
 publish = false
 

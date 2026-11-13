@@ -1,20 +1,20 @@
-name: Signature infrastructure experiment
+name: PKI experiment
 
 on:
   push:
     paths:
-      - 'contentauth-signature-infrastructure/**'
+      - 'contentauth-pki/**'
       - 'sdk/src/crypto/**'
       - 'sdk/Cargo.toml'
       - 'Cargo.toml'
-      - '.github/workflows/signature-infrastructure.yml'
+      - '.github/workflows/contentauth-pki.yml'
   pull_request:
     paths:
-      - 'contentauth-signature-infrastructure/**'
+      - 'contentauth-pki/**'
       - 'sdk/src/crypto/**'
       - 'sdk/Cargo.toml'
       - 'Cargo.toml'
-      - '.github/workflows/signature-infrastructure.yml'
+      - '.github/workflows/contentauth-pki.yml'
   workflow_dispatch:
 
 permissions:
@@ -33,21 +33,21 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Test the independent default and compatibility surfaces
         run: |
-          cargo test -p contentauth-signature-infrastructure
-          cargo test -p contentauth-signature-infrastructure --features sdk-compat
+          cargo test -p contentauth-pki
+          cargo test -p contentauth-pki --features sdk-compat
       - name: Lint both crate surfaces and the SDK adapter
         run: |
-          cargo clippy -p contentauth-signature-infrastructure --all-targets -- -D warnings
-          cargo clippy -p contentauth-signature-infrastructure --all-targets --features sdk-compat -- -D warnings
+          cargo clippy -p contentauth-pki --all-targets -- -D warnings
+          cargo clippy -p contentauth-pki --all-targets --features sdk-compat -- -D warnings
           cargo clippy -p c2pa --lib -- -D warnings
       - name: Check documentation
         run: |
-          RUSTDOCFLAGS='-D warnings' cargo doc -p contentauth-signature-infrastructure --no-deps
-          RUSTDOCFLAGS='-D warnings' cargo doc -p contentauth-signature-infrastructure --features sdk-compat --no-deps --document-private-items
+          RUSTDOCFLAGS='-D warnings' cargo doc -p contentauth-pki --no-deps
+          RUSTDOCFLAGS='-D warnings' cargo doc -p contentauth-pki --features sdk-compat --no-deps --document-private-items
       - name: Check WebAssembly portability
         run: |
-          cargo check -p contentauth-signature-infrastructure --target wasm32-unknown-unknown
-          cargo check -p contentauth-signature-infrastructure --target wasm32-wasip2
+          cargo check -p contentauth-pki --target wasm32-unknown-unknown
+          cargo check -p contentauth-pki --target wasm32-wasip2
           cargo check -p c2pa --no-default-features --features rust_native_crypto --target wasm32-unknown-unknown
       - name: Test SDK crypto compatibility
         run: |
