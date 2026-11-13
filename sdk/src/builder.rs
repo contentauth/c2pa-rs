@@ -4958,6 +4958,99 @@ mod tests {
         assert_eq!(num_placed_actions, 2);
     }
 
+    // Per the spec's _Validation of References_ section, an action's ingredient reference must
+    // carry the hash of the ingredient assertion it names, not only its label.
+    #[test]
+    fn test_action_ingredient_references_check_hashes() {
+        let context = test_context().into_shared();
+        let signer = test_signer(SigningAlg::Ps256);
+        let format = "image/jpeg";
+
+        // Signs a manifest with one ingredient, labelled "i", and `actions`.
+        let sign = |relationship: &str, actions: Vec<Action>| {
+            let mut builder = Builder::from_shared_context(&context);
+            builder
+                .add_ingredient_from_stream(
+                    json!({ "title": "ingredient", "relationship": relationship, "label": "i" })
+                        .to_string(),
+                    format,
+                    &mut Cursor::new(TEST_IMAGE_CLEAN),
+                )
+                .unwrap();
+            for action in actions {
+                builder.add_action(action).unwrap();
+            }
+            let mut output = Cursor::new(Vec::new());
+            builder.sign(
+                signer.as_ref(),
+                format,
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+        };
+        let by_id = |action: &str| {
+            Action::new(action)
+                .set_parameter("ingredientIds", vec!["i"])
+                .unwrap()
+        };
+        // Names the ingredient assertion, with a hash that is not its own.
+        let wrong_hash = |action: &str| {
+            let reference = HashedUri::new(
+                "self#jumbf=c2pa.assertions/c2pa.ingredient.v3".to_owned(),
+                None,
+                &[0; 32],
+            );
+            Action::new(action)
+                .set_parameter("ingredients", vec![reference])
+                .unwrap()
+        };
+        let created =
+            || Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::DigitalCapture);
+        let hash_mismatch = |result: Result<Vec<u8>>| match result {
+            Err(Error::InvalidManifest(results)) => results
+                .active_manifest()
+                .unwrap()
+                .failure()
+                .iter()
+                .any(|s| {
+                    s.code() == crate::validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH
+                        && s.explanation().is_some_and(|e| e.contains("hash mismatch"))
+                }),
+            _ => false,
+        };
+
+        sign("parentOf", vec![by_id(c2pa_action::OPENED)]).expect("opened");
+        assert!(
+            hash_mismatch(sign("parentOf", vec![wrong_hash(c2pa_action::OPENED)])),
+            "opened"
+        );
+
+        sign("componentOf", vec![created(), by_id(c2pa_action::PLACED)]).expect("placed");
+        assert!(
+            hash_mismatch(sign(
+                "componentOf",
+                vec![created(), wrong_hash(c2pa_action::PLACED)]
+            )),
+            "placed"
+        );
+
+        sign(
+            "parentOf",
+            vec![by_id(c2pa_action::OPENED), by_id(c2pa_action::TRANSCODED)],
+        )
+        .expect("transcoded");
+        assert!(
+            hash_mismatch(sign(
+                "parentOf",
+                vec![
+                    by_id(c2pa_action::OPENED),
+                    wrong_hash(c2pa_action::TRANSCODED)
+                ]
+            )),
+            "transcoded"
+        );
+    }
+
     #[test]
     fn test_created_bucket_takes_inception_regardless_of_declaration_order() {
         #[cfg(target_os = "wasi")]

@@ -32,6 +32,7 @@ use crate::{
     },
     crypto::cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy},
     error::{Error, Result},
+    hashed_uri::HashedUri,
     jumbf,
     jumbf::labels::{
         assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
@@ -309,8 +310,8 @@ impl Claim {
     }
 
     // Build a diagnostic message for ingredientMismatch errors, showing the failing
-    // action's index, type, each referenced ingredient URL, and the actual relationship
-    // found (vs. the expected one).
+    // action's index, type, each referenced ingredient URL, the actual relationship
+    // found (vs. the expected one), and whether the reference's hash matches.
     fn ingredient_mismatch_msg(
         claim: &Claim,
         action_index: usize,
@@ -318,27 +319,31 @@ impl Claim {
         params: &assertions::ActionParameters,
         expected_relationship: &str,
     ) -> String {
-        let urls: Vec<String> = {
-            let mut v = Vec::new();
-            if let Some(h) = &params.ingredient {
-                v.push(h.url());
-            }
-            if let Some(hs) = &params.ingredients {
-                v.extend(hs.iter().map(|h| h.url()));
-            }
-            v
-        };
-
-        let details: Vec<String> = urls
+        let refs: Vec<&HashedUri> = params
+            .ingredient
             .iter()
-            .map(|url| {
-                let found = assertion_label_from_uri(url).and_then(|target| {
+            .chain(params.ingredients.iter().flatten())
+            .collect();
+
+        let details: Vec<String> = refs
+            .iter()
+            .map(|h| {
+                let url = h.url();
+                let found = assertion_label_from_uri(&url).and_then(|target| {
                     claim.ingredient_assertions().iter().find_map(|i| {
                         if i.label() == target {
                             Ingredient::from_assertion(i.assertion()).ok().map(|ing| {
                                 let rel = ing.relationship.as_str();
                                 let title = ing.title.as_deref().unwrap_or("<no title>");
-                                format!("'{}' (title='{}', relationship='{}')", url, title, rel)
+                                let hash = if vec_compare(i.hash(), &h.hash()) {
+                                    ""
+                                } else {
+                                    ", hash mismatch"
+                                };
+                                format!(
+                                    "'{}' (title='{}', relationship='{}'{})",
+                                    url, title, rel, hash
+                                )
                             })
                         } else {
                             None
@@ -362,9 +367,23 @@ impl Claim {
         )
     }
 
-    // Perform 2.x action validation check, hashed URI references are only checked
-    // to be present and to be valild references an actual manifest store object.
-    //The hashed uri's hashes are are validated as part of the Claim assertions check.
+    /// Whether `h` is a valid hashed URI to an ingredient assertion of `claim` with
+    /// `relationship`: it names that assertion and carries its hash, per the spec's
+    /// _Validation of References_ section.
+    fn references_ingredient(claim: &Claim, h: &HashedUri, relationship: &Relationship) -> bool {
+        let Some(target) = assertion_label_from_uri(&h.url()) else {
+            return false;
+        };
+        claim.ingredient_assertions().iter().any(|i| {
+            i.label() == target
+                && vec_compare(i.hash(), &h.hash())
+                && Ingredient::from_assertion(i.assertion())
+                    .is_ok_and(|ingredient| &ingredient.relationship == relationship)
+        })
+    }
+
+    // Perform 2.x action validation check. An action's ingredient references must resolve
+    // to an ingredient assertion of this claim and carry its hash.
     pub(super) fn verify_actions(
         claim: &Claim,
         svi: &StoreValidationInfo<'_>,
@@ -644,39 +663,18 @@ impl Claim {
                         if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
-                            if claim.ingredient_assertions().iter().any(|i| {
-                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                        return target_label == i.label()
-                                            && ingredient.relationship == Relationship::ParentOf;
-                                    }
-                                }
-                                false
-                            }) {
+                            if Self::references_ingredient(claim, h, &Relationship::ParentOf) {
                                 found_good = 1;
                             }
                         } else if let Some(ingredients) = &params.ingredients {
                             for h in ingredients {
                                 // can we find a reference in the ingredient list
-                                // is it referenced from this manifest and only once
-                                found_good = claim
-                                    .ingredient_assertions()
-                                    .iter()
-                                    .filter(|i| {
-                                        if let Ok(ingredient) =
-                                            Ingredient::from_assertion(i.assertion())
-                                        {
-                                            if let Some(target_label) =
-                                                assertion_label_from_uri(&h.url())
-                                            {
-                                                return target_label == i.label()
-                                                    && ingredient.relationship
-                                                        == Relationship::ParentOf;
-                                            }
-                                        }
-                                        false
-                                    })
-                                    .count();
+                                // is it referenced from this manifest
+                                found_good = usize::from(Self::references_ingredient(
+                                    claim,
+                                    h,
+                                    &Relationship::ParentOf,
+                                ));
                             }
                         }
 
@@ -705,36 +703,15 @@ impl Claim {
                         if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
-                            if claim.ingredient_assertions().iter().any(|i| {
-                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                        return target_label == i.label()
-                                            && ingredient.relationship
-                                                == Relationship::ComponentOf;
-                                    }
-                                }
-                                false
-                            }) {
+                            if Self::references_ingredient(claim, h, &Relationship::ComponentOf) {
                                 found_good = 1;
                             }
                         } else if let Some(h_vec) = &params.ingredients {
                             for h in h_vec {
                                 // can we find a reference in the ingredient list
                                 // is it referenced from this manifest
-                                if claim.ingredient_assertions().iter().any(|i| {
-                                    if let Ok(ingredient) =
-                                        Ingredient::from_assertion(i.assertion())
-                                    {
-                                        if let Some(target_label) =
-                                            assertion_label_from_uri(&h.url())
-                                        {
-                                            return target_label == i.label()
-                                                && ingredient.relationship
-                                                    == Relationship::ComponentOf;
-                                        }
-                                    }
-                                    false
-                                }) {
+                                if Self::references_ingredient(claim, h, &Relationship::ComponentOf)
+                                {
                                     found_good = 1;
                                 }
                             }
@@ -811,15 +788,7 @@ impl Claim {
                         if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
-                            if claim.ingredient_assertions().iter().any(|i| {
-                                if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                    if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                        return target_label == i.label()
-                                            && ingredient.relationship == Relationship::ParentOf;
-                                    }
-                                }
-                                false
-                            }) {
+                            if Self::references_ingredient(claim, h, &Relationship::ParentOf) {
                                 parent_tested = Some(true);
                             }
 
@@ -831,20 +800,7 @@ impl Claim {
                             for h in h_vec {
                                 // can we find a reference in the ingredient list
                                 // is it referenced from this manifest
-                                if claim.ingredient_assertions().iter().any(|i| {
-                                    if let Ok(ingredient) =
-                                        Ingredient::from_assertion(i.assertion())
-                                    {
-                                        if let Some(target_label) =
-                                            assertion_label_from_uri(&h.url())
-                                        {
-                                            return target_label == i.label()
-                                                && ingredient.relationship
-                                                    == Relationship::ParentOf;
-                                        }
-                                    }
-                                    false
-                                }) {
+                                if Self::references_ingredient(claim, h, &Relationship::ParentOf) {
                                     parent_tested = Some(true);
                                 }
                             }
