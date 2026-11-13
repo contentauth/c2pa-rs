@@ -175,6 +175,13 @@ Binary builds are therefore entirely **tag-driven**, independent of how a tag wa
 
 * [`library-release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/library-release.yml) builds the `c2pa` / `c2pa-c-ffi` native libraries for every supported target on any `c2pa-v*` (real release) or `c2pa-rc-v*` (RC build) tag.
 
+Each matrix job uploads only the ZIP for its requested target, and a missing
+archive fails the upload. Universal macOS builds also produce Intel and ARM
+ZIPs as intermediate outputs; uploading those duplicates allows parallel
+artifact downloads into the shared release directory to overwrite the same
+files and corrupt otherwise valid ZIPs. The release job checks every downloaded
+ZIP with `unzip -t` before publishing any assets.
+
 A tag whose name contains `-rc.` yields a **prerelease** GitHub release; nothing on this path publishes to crates.io.
 
 How `release-plz` chooses a version, per crate:
