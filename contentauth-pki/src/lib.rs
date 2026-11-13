@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Experimental sans-I/O signature infrastructure.
+//! Experimental sans-I/O public key infrastructure (PKI) workflows.
 //!
 //! Signature workflows driven by your application. The crate describes the
 //! external operations it needs; your host performs them using its own HTTP
@@ -43,6 +43,7 @@
 //! This crate is an unpublished experiment. Only timestamp acquisition is
 //! currently provided; X.509, OCSP, COSE and timestamp verification workflows
 //! are not yet available here.
+//! COSE is supporting machinery, not a general-purpose COSE environment.
 
 #![deny(missing_docs)]
 #![deny(clippy::expect_used)]

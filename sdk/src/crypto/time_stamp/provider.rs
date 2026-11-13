@@ -132,11 +132,8 @@ pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
     let mut random = [0u8; 8];
     rand::rng().fill(&mut random);
 
-    contentauth_signature_infrastructure::timestamp::acquisition::request_body(
-        data,
-        u64::from_le_bytes(random),
-    )
-    .map_err(Into::into)
+    contentauth_pki::timestamp::acquisition::request_body(data, u64::from_le_bytes(random))
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
