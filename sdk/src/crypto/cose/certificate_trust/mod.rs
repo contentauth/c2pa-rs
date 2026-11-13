@@ -26,6 +26,7 @@ pub(crate) fn check_certificate_trust(
     signing_time_epoch: Option<i64>,
 ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
     let anchors = ctp.anchor_sets_for_certificate(anchor_type, cert_der)?;
+
     let time = match signing_time_epoch {
         Some(time) => time,
         None => SystemTime::now()
@@ -86,6 +87,7 @@ mod tests {
     #[allow(clippy::unwrap_used)]
     fn certificate() -> Certificate {
         let (pem, _) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+
         rasn::der::decode(&cert_chain_pem_to_der(pem).unwrap()[0]).unwrap()
     }
 
