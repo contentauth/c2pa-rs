@@ -123,8 +123,9 @@ pub struct TrustAnchor {
     pub trust_kind: TrustListKind,
 
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
-    /// certificates must have. This will overlay the default top level trust_config.
-    /// If the trust_kind is CAWG it will override the top level trust config
+    /// certificates must have. These add to the effective top-level EKUs for
+    /// this anchor set only; they do not enable a purpose for unrelated anchors.
+    /// Claim signers cannot use timeStamping or OCSPSigning, even if listed.
     ///
     /// When validating CAWG identity certificates.
     ///
@@ -274,9 +275,10 @@ pub struct Trust {
     /// When false, only the EKUs listed in [`Trust::trust_config`] (and any
     /// [`TrustAnchor::trust_config`]) are accepted for claim signing.
     /// For legacy compatibility, `id-kp-emailProtection` is also accepted when
-    /// no valid EKUs are loaded. `id-kp-timeStamping` and `id-kp-OCSPSigning`
-    /// remain accepted by the general profile check; TSA and OCSP responder
-    /// profiles additionally require their respective EKU.
+    /// no valid EKUs are loaded. Claim signing always rejects `id-kp-timeStamping`
+    /// and `id-kp-OCSPSigning`, including when explicitly configured. The shared
+    /// certificate profile still accepts these purposes for their own roles:
+    /// TSA and delegated OCSP responder profiles require their respective EKU.
     ///
     /// The default value is true.
     pub use_default_ekus: bool,

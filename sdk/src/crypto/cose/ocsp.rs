@@ -22,8 +22,8 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            cert_chain_from_sign1, check_end_entity_certificate_profile, validate_cose_tst_info,
-            validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy, CoseError,
+            cert_chain_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
+            CertificateTrustError, CertificateTrustPolicy, CoseError,
         },
         ocsp::OcspResponse,
     },
@@ -35,8 +35,6 @@ use crate::{
         SIGNING_CREDENTIAL_OCSP_SKIPPED, SIGNING_CREDENTIAL_REVOKED, SIGNING_CREDENTIAL_UNTRUSTED,
     },
 };
-
-const OCSP_OID_STR: &str = "1.3.6.1.5.5.7.3.9";
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
@@ -514,16 +512,14 @@ fn check_stapled_ocsp_response(
             }
         } else {
             // Only delegated responders require the OCSP signing EKU.
-            let mut new_ctp = CertificateTrustPolicy::default();
-            new_ctp.clear_ekus();
-            new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes());
-            if check_end_entity_certificate_profile(
-                first_cert,
-                &new_ctp,
-                validation_log,
-                tst_info.as_ref(),
-            )
-            .is_err()
+            if super::CertificateRole::DelegatedOcspResponder
+                .check_profile(
+                    first_cert,
+                    &CertificateTrustPolicy::new(),
+                    validation_log,
+                    tst_info.as_ref(),
+                )
+                .is_err()
             {
                 return Ok(OcspResponse::default());
             }
@@ -823,16 +819,14 @@ fn validate_fetched_ocsp(
                 return OcspResponse::default();
             }
         } else {
-            let mut new_ctp = CertificateTrustPolicy::default();
-            new_ctp.clear_ekus();
-            new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes());
-            if check_end_entity_certificate_profile(
-                first_cert,
-                &new_ctp,
-                &mut current_validation_log,
-                None,
-            )
-            .is_err()
+            if super::CertificateRole::DelegatedOcspResponder
+                .check_profile(
+                    first_cert,
+                    &CertificateTrustPolicy::new(),
+                    &mut current_validation_log,
+                    None,
+                )
+                .is_err()
             {
                 return OcspResponse::default();
             }

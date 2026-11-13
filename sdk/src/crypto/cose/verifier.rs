@@ -29,8 +29,8 @@ use crate::{
         base64::encode,
         cose::{
             cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
-            signing_alg_from_sign1, CertificateInfo, CertificateTrustError, CertificateTrustPolicy,
-            CoseError, TrustAnchorType,
+            signing_alg_from_sign1, CertificateInfo, CertificateRole, CertificateTrustError,
+            CertificateTrustPolicy, CoseError, TrustAnchorType,
         },
     },
     log_item,
@@ -105,6 +105,62 @@ fn spki_matches_signing_alg(alg: SigningAlg, spki: &AlgorithmIdentifier) -> bool
 }
 
 impl Verifier<'_> {
+    /// Verify a claim signature with role checks independent of anchor selection.
+    #[async_generic]
+    pub(crate) fn verify_claim_signature(
+        &self,
+        cose_sign1: &[u8],
+        data: &[u8],
+        additional_data: &[u8],
+        tst_info: Option<&TstInfo>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<CertificateInfo, CoseError> {
+        if _sync {
+            self.verify_signature_for_role(
+                CertificateRole::ClaimSigner,
+                cose_sign1,
+                data,
+                additional_data,
+                tst_info,
+                validation_log,
+            )
+        } else {
+            self.verify_signature_for_role_async(
+                CertificateRole::ClaimSigner,
+                cose_sign1,
+                data,
+                additional_data,
+                tst_info,
+                validation_log,
+            )
+            .await
+        }
+    }
+
+    #[async_generic]
+    pub(crate) fn verify_signature_for_role(
+        &self,
+        role: CertificateRole,
+        cose_sign1: &[u8],
+        data: &[u8],
+        additional_data: &[u8],
+        tst_info: Option<&TstInfo>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<CertificateInfo, CoseError> {
+        if !matches!(self, Self::IgnoreProfileAndTrustPolicy) {
+            let sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
+            let certificates = cert_chain_from_sign1(&sign1)?;
+            role.check_purpose(&certificates[0], validation_log)?;
+        }
+
+        if _sync {
+            self.verify_signature(cose_sign1, data, additional_data, tst_info, validation_log)
+        } else {
+            self.verify_signature_async(cose_sign1, data, additional_data, tst_info, validation_log)
+                .await
+        }
+    }
+
     /// Verify a COSE signature according to the configured policies.
     #[async_generic]
     pub fn verify_signature(
@@ -883,6 +939,116 @@ mod tests {
                     if invalid { 1 } else { 2 }
                 );
                 assert_eq!(log.logged_items()[0].label, "previous claim");
+            }
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn per_anchor_eku_additions_are_local_and_backend_independent() {
+        use c2pa_raw_crypto::signer_from_private_key;
+
+        use super::*;
+        use crate::crypto::{
+            cert_chain_pem_to_der,
+            cose::{cose_signer::RawSignerCoseSigner, sign, TimeStampStorage},
+        };
+
+        let certs = cert_chain_pem_to_der(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/disallowed_eku.pub"
+        ))
+        .unwrap();
+
+        let raw_signer = signer_from_private_key(
+            include_bytes!("../../../tests/fixtures/crypto/cose/disallowed_eku.priv"),
+            SigningAlg::Es256,
+        )
+        .unwrap();
+
+        let signer = RawSignerCoseSigner::new(raw_signer.as_ref(), &certs);
+
+        let signature = sign(
+            &signer,
+            b"claim",
+            None,
+            TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(),
+        )
+        .unwrap();
+
+        let sign1 = parse_cose_sign1(&signature, b"claim", &mut StatusTracker::default()).unwrap();
+
+        for use_defaults in [false, true] {
+            for config in [None, Some(""), Some("1.3.6.1.5.5.7.3.36")] {
+                let mut policy = CertificateTrustPolicy::new();
+
+                if use_defaults {
+                    policy.add_default_valid_ekus();
+                }
+
+                // This earlier anchor accepts the EKU but cannot validate this chain.
+                policy
+                    .add_trust_anchors(
+                        include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_root.pub"),
+                        "urn:test:unrelated",
+                        TrustAnchorType::Manifest,
+                        Some("1.3.6.1.5.5.7.3.36".into()),
+                    )
+                    .unwrap();
+
+                policy
+                    .add_trust_anchors(
+                        include_bytes!("../../../tests/fixtures/crypto/cose/key_usage_root.pub"),
+                        "urn:test:matching",
+                        TrustAnchorType::Manifest,
+                        config.map(str::to_owned),
+                    )
+                    .unwrap();
+
+                let verifier = Verifier::VerifyTrustPolicy(Cow::Borrowed(&policy));
+                let allowed = use_defaults || config == Some("1.3.6.1.5.5.7.3.36");
+
+                for use_async in [false, true] {
+                    let mut log = StatusTracker::default();
+
+                    let trust = if use_async {
+                        verifier.verify_trust_async(&sign1, None, &mut log).await
+                    } else {
+                        verifier.verify_trust(&sign1, None, &mut log)
+                    };
+
+                    assert_eq!(trust.is_ok(), allowed);
+
+                    if allowed {
+                        assert_eq!(
+                            trust.unwrap(),
+                            (TrustAnchorType::Manifest, Some("urn:test:matching".into()))
+                        );
+                    } else {
+                        assert!(matches!(
+                            trust,
+                            Err(CoseError::CertificateTrustError(
+                                CertificateTrustError::CertificateNotTrusted
+                            ))
+                        ));
+                    }
+
+                    assert_eq!(log.has_status(SIGNING_CREDENTIAL_TRUSTED), allowed);
+                    assert_eq!(log.has_status(SIGNING_CREDENTIAL_UNTRUSTED), !allowed);
+
+                    let mut log = StatusTracker::default();
+
+                    let result = if use_async {
+                        verifier
+                            .verify_signature_async(&signature, b"claim", b"", None, &mut log)
+                            .await
+                    } else {
+                        verifier.verify_signature(&signature, b"claim", b"", None, &mut log)
+                    };
+
+                    assert!(result.unwrap().validated);
+                    assert_eq!(log.has_status(SIGNING_CREDENTIAL_TRUSTED), allowed);
+                    assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);
+                }
             }
         }
     }
