@@ -20,3 +20,12 @@ updates:
       prefix: "chore"
     cooldown:
       default-days: 7
+
+  - package-ecosystem: "rust-toolchain"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    cooldown:
+      default-days: 7
