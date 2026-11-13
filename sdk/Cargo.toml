@@ -40,7 +40,7 @@ unstable_builder_filter = []
 # NFC. Experimental feature: exempt from the crate's usual semantic-versioning stability
 # guarantees and may change or be removed in any release. See docs/experimental-features.md.
 unstable_plain_text = ["dep:unicode-normalization"]
-file_io = []
+file_io = ["dep:glob"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
 openssl = [
@@ -115,7 +115,7 @@ coset = "0.4.2"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
 extfmt = "0.2.0"
 getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
-glob = "0.3.3"
+glob = { version = "0.3.3", optional = true }
 ed25519-dalek = { version = "2.2.0", features = [
     "alloc",
     "digest",
@@ -245,10 +245,8 @@ chrono = { version = "0.4.44", default-features = false, features = [
     "serde",
     "wasmbind",
 ] }
-console_log = { version = "1.0.0", features = ["color"] }
 # Enable getrandom with wasm_js feature for WASM support
 js-sys = "0.3.99"
-serde-wasm-bindgen = "0.6.5"
 wasm-bindgen = "0.2.122"
 wasm-bindgen-futures = "0.4.72"
 web-sys = { version = "0.3.99", features = [
@@ -264,7 +262,6 @@ web-sys = { version = "0.3.99", features = [
 anyhow = "1.0.103"
 env_logger = "0.11.10"
 flate2 = "1.1.10"
-glob = "0.3.3"
 hex-literal = "1.1.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 c2pa_macros = { path = "../macros" }
