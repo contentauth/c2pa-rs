@@ -137,7 +137,7 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo test --features "$FEATURES"
+          cargo test --no-default-features --features "$FEATURES"
 
   tests-cross:
     name: Unit tests
