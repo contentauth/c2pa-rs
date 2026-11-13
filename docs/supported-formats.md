@@ -11,6 +11,7 @@ The following table summarizes the supported media (asset) file formats. This in
 
 | Extensions      | MIME type                                                                      |
 | --------------- | ------------------------------------------------------------------------------- |
+| `arw`           | `image/x-sony-arw` <br/>Read-only
 | `avi`           | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`  |
 | `avif`          | `image/avif`                                                                    |
 | `c2pa`          | `application/x-c2pa-manifest-store`                                             |
