@@ -518,6 +518,7 @@ impl CertificateTrustPolicy {
         certificate_der: &[u8],
     ) -> Result<Vec<&TrustAnchor>, CertificateTrustError> {
         let anchors: Vec<_> = self.anchor_sets_of_type(anchor_type).collect();
+
         if anchors.is_empty() {
             return Err(CertificateTrustError::CertificateNotTrusted);
         }
@@ -525,6 +526,7 @@ impl CertificateTrustPolicy {
         let certificate = X509Certificate::from_der(certificate_der)
             .map_err(|_| CertificateTrustError::InvalidCertificate)?
             .1;
+
         let eku = certificate
             .extended_key_usage()
             .map_err(|_| CertificateTrustError::InvalidEku)?
@@ -537,6 +539,7 @@ impl CertificateTrustPolicy {
                     let mut policy = Self::new();
                     policy.additional_ekus.clone_from(&self.additional_ekus);
                     policy.add_valid_ekus(config.as_bytes());
+
                     policy.has_allowed_eku(eku.value).is_some()
                 } else {
                     self.has_allowed_eku(eku.value).is_some()

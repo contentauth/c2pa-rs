@@ -281,6 +281,7 @@ impl Verifier<'_> {
 
         let timestamp = timestamp.as_ref().or(manifest_timestamp);
         let log_start = validation_log.logged_items().len();
+
         let info = if _sync {
             self.verify_signature_for_role(
                 super::CertificateRole::CawgIdentity,
