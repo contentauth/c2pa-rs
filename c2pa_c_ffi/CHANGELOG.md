@@ -10,6 +10,7 @@ _13 November 2026_
 
 ### Fixed
 
+* Apply a default timeout to SDK HTTP requests (CAI-14227) (backport #3063) ([#3082](https://github.com/contentauth/c2pa-rs/pull/3082))
 * Preserve C header output with Cargo 1.100 (backport #3079) ([#3081](https://github.com/contentauth/c2pa-rs/pull/3081))
 
 ## [0.92.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.11...c2pa-c-ffi-v0.92.0)

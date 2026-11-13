@@ -12,6 +12,7 @@ _13 November 2026_
 
 ### Fixed
 
+* Apply a default timeout to SDK HTTP requests (CAI-14227) (backport #3063) ([#3082](https://github.com/contentauth/c2pa-rs/pull/3082))
 * Report incomplete C2PA APP11 manifests (backport #2922) ([#3078](https://github.com/contentauth/c2pa-rs/pull/3078))
 
 ## [0.92.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.11...c2pa-v0.92.0)
