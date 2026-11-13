@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 As of December 2025 and until the 1.0.0 version is released, the CAI team will only make minor version changes (incrementing the `x` in `0.x.0`) if breaking changes are made. Features will now result in a patch version change (incrementing the `y` in `0.x.y`). This brings us into closer compliance with typical SemVer practice (and follows the default behavior of [`release-plz`](https://release-plz.dev/docs/config#the-features_always_increment_minor-field).
 
+## [0.92.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.92.0...c2pa-v0.92.1)
+_13 November 2026_
+
+### Fixed
+
+* Apply a default timeout to SDK HTTP requests (CAI-14227) (backport #3063) ([#3082](https://github.com/contentauth/c2pa-rs/pull/3082))
+* Report incomplete C2PA APP11 manifests (backport #2922) ([#3078](https://github.com/contentauth/c2pa-rs/pull/3078))
+
 ## [0.92.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.11...c2pa-v0.92.0)
 _11 November 2026_
 
