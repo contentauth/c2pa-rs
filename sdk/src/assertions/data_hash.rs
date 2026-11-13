@@ -332,6 +332,10 @@ impl AssertionBase for DataHash {
     }
 }
 
+#[cfg(feature = "asset_io")]
+#[path = "data_hash_asset_io.rs"]
+mod asset_io_binding;
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::panic)]

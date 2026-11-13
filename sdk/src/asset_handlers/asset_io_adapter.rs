@@ -6,7 +6,7 @@
 // store, which asset-io layout becomes which `ObjectLocations` and `BoxMap`, and how
 // errors are reported.
 
-use std::{collections::HashSet, io::Read, sync::Arc};
+use std::{io::Read, sync::Arc};
 
 use ::asset_io as aio;
 use aio::{
@@ -23,13 +23,15 @@ use crate::{
     read_seek::{ReadSeek, ReadWriteSeek},
 };
 
-/// JUMBF superbox type UUID of the C2PA Manifest Store ("c2pa"), spec 11.1.4.2.
-pub(crate) const C2PA_STORE_UUID: [u8; 16] = [
-    0x63, 0x32, 0x70, 0x61, 0x00, 0x11, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
-];
+/// The smallest C2PA manifest store: a `jumb` superbox whose `jumd` description
+/// has the C2PA store type (spec 11.1.4.2) and label `c2pa`, with no manifests.
+/// Used to learn where a manifest would go.
+pub(crate) const MANIFEST_PLACEHOLDER: &[u8] =
+    b"\0\0\0\x26jumb\0\0\0\x1ejumd\x63\x32\x70\x61\0\x11\0\x10\x80\0\0\xaa\0\x38\x9b\x71\x03c2pa\0";
 
-/// The smallest JUMBF asset-io accepts, used to learn where a manifest would go.
-const PLACEHOLDER: [u8; 8] = [0, 0, 0, 8, b'j', b'u', b'm', b'b'];
+/// The name a box hash gives bytes past the end of the container's structure
+/// (C2PA 18.7.2).
+const AFTER_BOX: &str = "c2pa.after";
 
 const TIFF_READ_ONLY_TYPES: [&str; 4] = ["arw", "image/x-sony-arw", "nef", "image/x-nikon-nef"];
 const MP3_COMPAT_TYPES: [&str; 2] = ["audio/x-mp3", "audio/mpeg3"];
@@ -47,10 +49,16 @@ fn err(e: aio::Error) -> Error {
         aio::Error::UserCanceled => Error::OperationCancelled,
         aio::Error::UnsupportedFormat => Error::UnsupportedType,
         aio::Error::UnsupportedFeature(f) => Error::NotImplemented(f.to_string()),
-        aio::Error::Ambiguous { what, .. } if what == ItemKind::Jumbf.as_str() => {
-            Error::TooManyManifestStores
-        }
         other => Error::InvalidAsset(other.to_string()),
+    }
+}
+
+/// [`err`] for a lookup of the C2PA store, where more than one is the asset's
+/// fault, not the container's.
+pub(crate) fn store_err(e: aio::Error) -> Error {
+    match e {
+        aio::Error::Ambiguous { .. } => Error::TooManyManifestStores,
+        other => err(other),
     }
 }
 
@@ -114,6 +122,12 @@ impl AssetIoAdapter {
             && handler.detect(&header)
     }
 
+    /// Whether `asset_type` is read only: camera raw formats served by the TIFF
+    /// handler.
+    fn is_read_only(&self, asset_type: &str) -> bool {
+        self.container() == Some(aio::containers::tiff::ID) && is_tiff_read_only_type(asset_type)
+    }
+
     /// Whether a hash excludes only the manifest's payload, not the whole segment
     /// holding it. SVG tags and ID3 frame headers stay in the hashed asset.
     fn excludes_payload_only(&self) -> bool {
@@ -124,34 +138,56 @@ impl AssetIoAdapter {
     }
 }
 
-/// The JUMBF items that are C2PA Manifest Stores.
-fn c2pa_items<'s>(s: &'s Structure, src: &mut dyn ReadSeek) -> Result<Vec<&'s aio::Item>> {
+/// Whether `bytes` begin with a JUMBF superbox of the C2PA store type.
+fn is_c2pa_store(bytes: &[u8]) -> bool {
+    aio::jumbf::superbox_type(bytes) == Some(aio::jumbf::C2PA_STORE_TYPE)
+}
+
+/// The item holding the asset's C2PA manifest store.
+///
+/// A container that reserves an element for the store (an SVG `<c2pa:manifest>`,
+/// a PNG `caBX` chunk) reports every such element as a store, whatever it holds.
+/// When there are several, as in an SVG with a second, injected element, the store
+/// is the one holding a C2PA store superbox. Reading, locating and writing must all
+/// agree on it: data-hash verification compares the exclusion with this location.
+fn c2pa_store_item<'s>(s: &'s Structure, src: &mut dyn ReadSeek) -> Result<Option<&'s aio::Item>> {
+    match s.c2pa_item() {
+        Err(aio::Error::Ambiguous { .. }) => {}
+        other => return other.map_err(store_err),
+    }
     let mut src = src;
-    let mut v = Vec::new();
-    for e in s.items_of(ItemKind::Jumbf) {
-        if s.jumbf_type(&mut src, e).map_err(err)? == Some(C2PA_STORE_UUID) {
-            v.push(e);
+    let mut found = None;
+    for item in s
+        .items_of(ItemKind::C2pa)
+        .filter(|item| item.label() != Some(aio::labels::UPDATE))
+    {
+        let content = match s.read_content(&mut src, item) {
+            Ok(content) => content,
+            // Not even decodable (bad base64): not a store.
+            Err(aio::Error::InvalidFormat(_)) => continue,
+            Err(e) => return Err(err(e)),
+        };
+        if is_c2pa_store(&content) && found.replace(item).is_some() {
+            return Err(Error::TooManyManifestStores);
         }
     }
-    Ok(v)
+    Ok(found)
 }
 
 impl C2paReader for AssetIoAdapter {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let mut input = input_stream;
         let s = self.parse(&mut *input)?;
-        let c2pa = c2pa_items(&s, &mut *input)?;
-        let store = if c2pa.is_empty() {
-            None
-        } else if c2pa.len() == s.items_of(ItemKind::Jumbf).count() {
-            s.store(&mut input).map_err(err)?
-        } else if c2pa.len() == 1 {
-            Some(s.read_content(&mut input, c2pa[0]).map_err(err)?)
-        } else {
-            return Err(Error::TooManyManifestStores);
+        let store = match c2pa_store_item(&s, &mut *input)? {
+            None => None,
+            // `c2pa_store` also joins an ISO BMFF `original` and `update`.
+            Some(_) if s.c2pa_item().is_ok() => s.c2pa_store(&mut input).map_err(store_err)?,
+            Some(item) => Some(s.read_content(&mut input, item).map_err(err)?),
         };
         match store {
-            Some(v) if !v.is_empty() => Ok(v),
+            // A dedicated carrier may hold anything; only a C2PA store superbox is
+            // a manifest store.
+            Some(v) if is_c2pa_store(&v) => Ok(v),
             _ => Err(Error::JumbfNotFound),
         }
     }
@@ -179,7 +215,7 @@ impl C2paWriter for AssetIoAdapter {
         // final manifest of the same size. Filling the placeholder in place keeps
         // every byte the hash covers where it is, which a rewrite does not promise
         // (a PDF appends a revision instead of replacing the store).
-        if let [item] = c2pa_items(&s, &mut *input)?.as_slice() {
+        if let Some(item) = c2pa_store_item(&s, &mut *input)? {
             let stored = item.transfer().encode(store_bytes).map_err(err)?;
             if stored.len() as u64 == item.len() {
                 input.rewind()?;
@@ -196,7 +232,7 @@ impl C2paWriter for AssetIoAdapter {
         s.write(
             &mut input,
             &mut output,
-            &Updates::new().set_jumbf(store_bytes.to_vec()),
+            &Updates::new().set_c2pa(store_bytes.to_vec()),
             &mut aio::NullSink,
         )
         .map_err(err)?;
@@ -209,8 +245,8 @@ impl C2paWriter for AssetIoAdapter {
     ) -> Result<Vec<ObjectLocations>> {
         let mut input = input_stream;
         let s = self.parse(&mut *input)?;
-        let existing: Vec<aio::Extent> = c2pa_items(&s, &mut *input)?
-            .iter()
+        let existing: Vec<aio::Extent> = c2pa_store_item(&s, &mut *input)?
+            .into_iter()
             .flat_map(|e| e.extents().copied())
             .collect();
 
@@ -218,11 +254,14 @@ impl C2paWriter for AssetIoAdapter {
         // one, so the manifest has a location to be excluded at.
         let (layout, manifest) = if existing.is_empty() {
             let planned = s
-                .plan(&mut input, &Updates::new().set_jumbf(PLACEHOLDER.to_vec()))
+                .plan(
+                    &mut input,
+                    &Updates::new().set_c2pa(MANIFEST_PLACEHOLDER.to_vec()),
+                )
                 .map_err(err)?;
             let ids: Vec<_> = planned
-                .item(ItemKind::Jumbf)
-                .map_err(err)?
+                .c2pa_item()
+                .map_err(store_err)?
                 .map(|e| e.extents().copied().collect())
                 .unwrap_or_default();
             (planned, ids)
@@ -295,11 +334,7 @@ impl C2paWriter for AssetIoAdapter {
         output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         // Only the C2PA store: any other JUMBF in the asset is left alone.
-        self.apply(
-            input_stream,
-            output_stream,
-            &Updates::new().remove_jumbf_of(C2PA_STORE_UUID),
-        )
+        self.apply(input_stream, output_stream, &Updates::new().remove_c2pa())
     }
 }
 
@@ -338,29 +373,19 @@ impl WriteXmp for AssetIoAdapter {
 impl ComposedManifestRef for AssetIoAdapter {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
         self.handler()?
-            .compose(ItemKind::Jumbf, manifest_data)
+            .compose(ItemKind::C2pa, manifest_data)
             .map_err(err)
     }
 }
 
 /// Box map from the layout model alone. The only format knowledge here is the
 /// name table; the traversal is the same for every container.
-fn box_map_from_layout(
-    s: &Structure,
-    mut src: &mut dyn ReadSeek,
-    c2pa_store: Option<&aio::Item>,
-) -> Result<Vec<BoxMap>> {
+fn box_map_from_layout(s: &Structure, c2pa_store: Option<&aio::Item>) -> Result<Vec<BoxMap>> {
     // Which segments belong to the C2PA Manifest Store (not just any JUMBF).
-    let mut store: HashSet<aio::SegmentId> = HashSet::new();
-    if let Some(item) = c2pa_store {
-        store.extend(item.extents().map(|p| p.segment()));
-    } else {
-        for e in s.items_of(ItemKind::Jumbf) {
-            if s.jumbf_type(&mut src, e).map_err(err)? == Some(C2PA_STORE_UUID) {
-                store.extend(e.extents().map(|p| p.segment()));
-            }
-        }
-    }
+    let store: Vec<aio::SegmentId> = c2pa_store
+        .into_iter()
+        .flat_map(|item| item.extents().map(|p| p.segment()))
+        .collect();
 
     // Bytes beyond the container's structure (data after the last chunk, or the
     // images after the first one) are not boxes; they are one `c2pa.after` box.
@@ -404,7 +429,7 @@ fn box_map_from_layout(
             return Ok(());
         }
         // Unnamed elements (fill bytes) are not boxes.
-        let Some(name) = s.box_name(e.name()) else {
+        let Some(name) = s.box_name(id, e) else {
             return Ok(());
         };
         let mut bm = BoxMap::new(vec![name.into_owned()], ext.offset(), ext.len());
@@ -426,7 +451,7 @@ fn box_map_from_layout(
     // of the file. Only the hard binding of the whole asset has it.
     if let Some(t) = after {
         out.push(BoxMap::new(
-            vec![aio::AFTER_BOX.to_string()],
+            vec![AFTER_BOX.to_string()],
             t.offset(),
             t.len(),
         ));
@@ -436,16 +461,15 @@ fn box_map_from_layout(
 
 pub(crate) fn box_map_from_structure(
     s: &Structure,
-    src: &mut dyn ReadSeek,
     c2pa_store: Option<&aio::Item>,
 ) -> Result<Vec<BoxMap>> {
     Ok(if s.container_id() == aio::containers::gif::ID {
-        s.c2pa_boxes_with(c2pa_store)
+        s.complete_boxes(c2pa_store.map(|item| (item, C2PA_BOXHASH)), AFTER_BOX)
             .map_err(err)?
             .into_iter()
             .map(|b| {
-                let mut map =
-                    BoxMap::new(vec![b.name.into_owned()], b.range.offset(), b.range.len());
+                let name = b.name.map(|n| n.into_owned()).unwrap_or_default();
+                let mut map = BoxMap::new(vec![name], b.range.offset(), b.range.len());
                 if map.names == [C2PA_BOXHASH] {
                     map = map
                         .with_allowed_exclusions(vec![AllowedExclusion::whole_box(b.range.len())]);
@@ -465,7 +489,7 @@ pub(crate) fn box_map_from_structure(
             })
             .collect::<Vec<_>>()
     } else {
-        return box_map_from_layout(s, src, c2pa_store);
+        return box_map_from_layout(s, c2pa_store);
     })
 }
 
@@ -473,8 +497,8 @@ impl AssetBoxHash for AssetIoAdapter {
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         let mut input = input_stream;
         let s = self.parse(&mut *input)?;
-        let store = s.c2pa_item(&mut input).map_err(err)?;
-        let mut out = box_map_from_structure(&s, &mut *input, store)?;
+        let store = c2pa_store_item(&s, &mut *input)?;
+        let mut out = box_map_from_structure(&s, store)?;
 
         // With no manifest, a zero-length excluded placeholder marks where it will
         // go, so the list of boxes matches the file once it is embedded.
@@ -483,11 +507,14 @@ impl AssetBoxHash for AssetIoAdapter {
             .any(|b| b.names.first().is_some_and(|n| n == C2PA_BOXHASH))
         {
             let planned = s
-                .plan(&mut input, &Updates::new().set_jumbf(PLACEHOLDER.to_vec()))
+                .plan(
+                    &mut input,
+                    &Updates::new().set_c2pa(MANIFEST_PLACEHOLDER.to_vec()),
+                )
                 .map_err(err)?;
             let first = planned
-                .item(ItemKind::Jumbf)
-                .map_err(err)?
+                .c2pa_item()
+                .map_err(store_err)?
                 .and_then(|e| e.extents().next())
                 .ok_or(Error::EmbeddingError)?;
             let at = planned
@@ -546,9 +573,13 @@ impl AssetIO for AssetIoAdapter {
     }
 
     fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
-        let read_only = self.container() == Some(aio::containers::tiff::ID)
-            && is_tiff_read_only_type(asset_type);
-        (!read_only).then(|| Box::new(self.clone()) as Box<dyn C2paWriter>)
+        (!self.is_read_only(asset_type)).then(|| Box::new(self.clone()) as Box<dyn C2paWriter>)
+    }
+
+    fn container_handler(&self, asset_type: &str) -> Option<Arc<dyn ContainerHandler>> {
+        self.handler
+            .clone()
+            .filter(|_| !self.is_read_only(asset_type))
     }
 
     fn supported_types(&self) -> &[&str] {

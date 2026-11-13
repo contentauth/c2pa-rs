@@ -26,6 +26,9 @@ pub use asset_reference::AssetReference;
 mod asset_types;
 pub use asset_types::{AssetTypeEnum, AssetTypes};
 
+#[cfg(feature = "asset_io")]
+pub(crate) mod asset_binding;
+
 mod bmff_hash;
 pub use bmff_hash::{
     BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, MerkleMap, MerkleUuidBoxes, SubsetMap,

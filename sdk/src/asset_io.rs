@@ -249,6 +249,18 @@ pub trait AssetIO: Sync + Send {
         None
     }
 
+    /// Returns the asset-io container handler behind this handler, if it is one,
+    /// for a direct (single-pass) save of `asset_type`.
+    ///
+    /// Defaults to `None`: a legacy handler, saved through its [`C2paWriter`].
+    #[cfg(feature = "asset_io")]
+    fn container_handler(
+        &self,
+        _asset_type: &str,
+    ) -> Option<Arc<dyn ::asset_io::container_api::ContainerHandler>> {
+        None
+    }
+
     // -- File-based operations --
 
     /// Reads the C2PA manifest store from the file at `asset_path`.
@@ -844,6 +856,17 @@ impl HandlerRegistry {
     /// writer instance on each call.
     pub(crate) fn writer(&self, format: &str) -> Option<Box<dyn C2paWriter>> {
         self.handler(format).and_then(|h| h.get_writer(format))
+    }
+
+    /// Looks up the asset-io container handler that writes `format` in a direct save,
+    /// checking `fallback` if this registry has no match. `None` when the format's
+    /// handler does not write through asset-io.
+    #[cfg(feature = "asset_io")]
+    pub(crate) fn container_handler(
+        &self,
+        format: &str,
+    ) -> Option<Arc<dyn ::asset_io::container_api::ContainerHandler>> {
+        self.handler(format)?.container_handler(format)
     }
 
     /// Looks up the full [`AssetIO`] handler for the file extension of `asset_path`, if any.
