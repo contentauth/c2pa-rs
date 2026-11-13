@@ -142,9 +142,9 @@ and the response body. SDK-managed redirects share the same budget. A remote man
 timeout returns `Error::RemoteManifestFetch`.
 
 The limit is added by `Context::resolver()` and `Context::resolver_async()`, so custom
-resolvers must honor the `c2pa::http::RequestTimeout` request extension. C and C++ HTTP
-resolver callbacks receive the remaining limit as `C2paHttpRequest.timeout_ms` (0 means no
-limit) and must apply it to their HTTP client; the SDK cannot interrupt a callback. The
+Rust resolvers must honor the `c2pa::http::RequestTimeout` request extension. In this
+release, C and C++ HTTP resolver callbacks do not receive the timeout budget and must
+enforce their own HTTP client timeouts; the SDK cannot interrupt a callback. The
 browser-based reqwest resolver on WASM cannot enforce this timeout. Public
 `SignerSettings::c2pa_signer()` and `SignerSettings::cawg_signer()` calls without a
 `Context` use the default.
