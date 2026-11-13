@@ -290,18 +290,15 @@ fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
 
 /// Return DER encoded TimeStampToken used by sigTst2 from TimeStampResponse.
 pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
-    contentauth_pki::timestamp::verification::token_from_response(ts)
-        .map_err(|error| {
-            use contentauth_pki::timestamp::verification::VerificationErrorKind;
+    contentauth_pki::timestamp::verification::token_from_response(ts).map_err(|error| {
+        use contentauth_pki::timestamp::verification::VerificationErrorKind;
 
-            match error {
-                VerificationErrorKind::DecodeError(message) => {
-                    CoseError::InternalError(message).into()
-                }
+        match error {
+            VerificationErrorKind::DecodeError(message) => CoseError::InternalError(message).into(),
 
-                other => CoseError::InternalError(other.to_string()).into(),
-            }
-        })
+            other => CoseError::InternalError(other.to_string()).into(),
+        }
+    })
 }
 
 #[cfg(test)]
