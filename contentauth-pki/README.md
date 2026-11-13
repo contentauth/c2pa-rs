@@ -91,6 +91,9 @@ unverified certificate and crate-specific errors. SDK-specific timestamp
 verification, trust and acquisition orchestration are not deprecated: those
 still apply host policy beyond the extracted primitives.
 
+These three compatibility APIs are deprecated since 0.93.0 and will be removed
+in 0.94.0, scheduled for mid-March 2027.
+
 `x509::chain::verify_chain_signatures` checks certificate signatures only.
 `validate_chain_to_anchors` checks the existing backend's chain/CA-authorization
 and validity mechanics against exactly one supplied anchor set. The SDK filters
