@@ -59,7 +59,7 @@ fn report_crypto_failure(error: &VerificationError, log: &mut StatusTracker) {
         .informational(log);
 }
 
-/// Verify timestamp cryptography, temporal validity and SDK-selected TSA policy.
+/// Verify timestamp cryptography, temporal validity, and SDK-selected TSA policy.
 ///
 /// The reusable crate supplies authenticated facts, not an accepted signing time.
 /// Legacy callers may explicitly skip profile/trust checks as before. Both APIs
