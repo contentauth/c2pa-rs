@@ -672,6 +672,19 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_zip_empty_uris_is_malformed() -> Result<()> {
+        let collection = CollectionHash::new("sha256".to_owned());
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        assert!(matches!(
+            collection.verify_zip_stream_hash(&mut stream, None),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_MALFORMED
+        ));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_verify_zip_missing_central_directory_hash_is_malformed() -> Result<()> {
         let mut collection = gen_zip_collection_hash()?;
         collection.zip_central_directory_hash = None;
@@ -779,6 +792,18 @@ mod tests {
         assert!(matches!(
             collection.verify_hash(dir.path()),
             Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_directory_verify_empty_uris_is_malformed() -> Result<()> {
+        let collection = CollectionHash::new("sha256".to_owned());
+
+        assert!(matches!(
+            collection.verify_hash(Path::new(".")),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_MALFORMED
         ));
 
         Ok(())
