@@ -61,7 +61,12 @@ impl CertificateRole {
             }
         }
 
-        check_end_entity_certificate_profile(certificate_der, &policy, validation_log, timestamp)
+        check_end_entity_certificate_profile_with_sdk_policy(
+            certificate_der,
+            &policy,
+            validation_log,
+            timestamp,
+        )
     }
 
     pub(crate) fn check_purpose(
@@ -105,7 +110,45 @@ fn check_claim_signing_eku(
 }
 
 /// Check the end-entity profile with SDK-selected policy, time and reporting.
+///
+/// Use [`ProfilePolicy::check_certificate`] with an explicit
+/// [`ProfilePolicy`] whose `end_entity` field is `true`. Select role/EKU policy
+/// and validation time in the host, and map profile failures to host reporting.
+#[deprecated(
+    note = "Use contentauth_pki::x509::profile::ProfilePolicy::check_certificate (end_entity = true) with host-selected validation time/reporting."
+)]
 pub fn check_end_entity_certificate_profile(
+    certificate_der: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut StatusTracker,
+    timestamp: Option<&TstInfo>,
+) -> Result<(), CertificateProfileError> {
+    check_end_entity_certificate_profile_with_sdk_policy(
+        certificate_der,
+        ctp,
+        validation_log,
+        timestamp,
+    )
+}
+
+/// Check the certificate profile with SDK-selected policy, time and reporting.
+///
+/// Use [`ProfilePolicy::check_certificate`] with an explicit
+/// [`ProfilePolicy`] whose `end_entity` field is `false`. Select role/EKU policy
+/// and validation time in the host, and map profile failures to host reporting.
+#[deprecated(
+    note = "Use contentauth_pki::x509::profile::ProfilePolicy::check_certificate (end_entity = false) with host-selected validation time/reporting."
+)]
+pub fn check_certificate_profile(
+    certificate_der: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut StatusTracker,
+    timestamp: Option<&TstInfo>,
+) -> Result<(), CertificateProfileError> {
+    check_certificate_profile_with_sdk_policy(certificate_der, ctp, validation_log, timestamp)
+}
+
+pub(crate) fn check_end_entity_certificate_profile_with_sdk_policy(
     certificate_der: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
@@ -114,8 +157,7 @@ pub fn check_end_entity_certificate_profile(
     check_profile(certificate_der, ctp, validation_log, timestamp, true)
 }
 
-/// Check the certificate profile with SDK-selected policy, time and reporting.
-pub fn check_certificate_profile(
+fn check_certificate_profile_with_sdk_policy(
     certificate_der: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut StatusTracker,
@@ -150,7 +192,8 @@ fn check_profile(
         end_entity,
     };
 
-    profile::check_profile(certificate_der, &policy, time)
+    policy
+        .check_certificate(certificate_der, time)
         .map(|_| ())
         .map_err(|error| {
             if let Some(description) = error.diagnostic {
@@ -181,8 +224,9 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::{pem::Pem, prelude::FromDer};
 
+    use super::check_end_entity_certificate_profile_with_sdk_policy as check_end_entity_certificate_profile;
     use crate::{
-        crypto::cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
+        crypto::cose::CertificateTrustPolicy,
         status_tracker::StatusTracker,
         utils::ephemeral_cert::generate_ephemeral_chain,
         validation_results::validation_codes::{
@@ -509,7 +553,7 @@ mod tests {
         let der = rasn::der::encode(cert).unwrap();
         let mut log = StatusTracker::default();
 
-        let result = super::check_certificate_profile(
+        let result = super::check_certificate_profile_with_sdk_policy(
             &der,
             &CertificateTrustPolicy::default(),
             &mut log,
@@ -639,7 +683,7 @@ mod tests {
 
             let mut log = StatusTracker::default();
 
-            let result = super::check_certificate_profile(
+            let result = super::check_certificate_profile_with_sdk_policy(
                 &rasn::der::encode(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut log,
@@ -912,7 +956,7 @@ mod tests {
             let der = rasn::der::encode(&cert).unwrap();
 
             assert_eq!(
-                super::check_certificate_profile(
+                super::check_certificate_profile_with_sdk_policy(
                     &der,
                     &CertificateTrustPolicy::default(),
                     &mut StatusTracker::default(),
@@ -1017,7 +1061,7 @@ mod tests {
 
             let mut log = StatusTracker::default();
 
-            let result = super::check_certificate_profile(
+            let result = super::check_certificate_profile_with_sdk_policy(
                 &rasn::der::encode(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut log,
@@ -1164,7 +1208,7 @@ mod tests {
 
             cert.tbs_certificate.signature = cert.signature_algorithm.clone();
 
-            let result = super::check_certificate_profile(
+            let result = super::check_certificate_profile_with_sdk_policy(
                 &rasn::der::encode(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut StatusTracker::default(),

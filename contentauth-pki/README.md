@@ -75,11 +75,21 @@ codes.
 
 ## X.509 boundary
 
-`x509::profile::check_profile` takes DER, a `ProfilePolicy`, and host-selected Unix
-seconds. The host supplies the effective allowed and mandatory EKU sets, chooses
-end-entity constraints, and explicitly selects specialty-purpose and empty-list
-emailProtection compatibility. `ProfileError` retains the typed rejection and
+`x509::profile::ProfilePolicy::check_certificate` takes DER and host-selected Unix
+seconds. The host constructs the policy with effective allowed and mandatory
+EKU sets, chooses end-entity constraints, and explicitly selects specialty-purpose
+and empty-list emailProtection compatibility. `ProfileError` retains the typed rejection and
 optional original diagnostic; SDK error/status mapping remains host-side.
+
+The hidden SDK `check_certificate_profile` and
+`check_end_entity_certificate_profile` compatibility APIs are deprecated in
+favor of this method. Select `end_entity = false` or `true`, respectively, and
+keep role selection, time and reporting host-side. The hidden SDK
+`tsa_signer_cert_der_from_token` lookup is also deprecated in favor of
+`timestamp::verification::signer_certificate_from_token`, which returns an
+unverified certificate and crate-specific errors. SDK-specific timestamp
+verification, trust and acquisition orchestration are not deprecated: those
+still apply host policy beyond the extracted primitives.
 
 `x509::chain::verify_chain_signatures` checks certificate signatures only.
 `validate_chain_to_anchors` checks the existing backend's chain/CA-authorization

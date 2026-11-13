@@ -47,6 +47,36 @@ pub struct ProfilePolicy<'a> {
 }
 
 impl ProfilePolicy<'_> {
+    /// Check a certificate's profile using Unix seconds selected by the host.
+    ///
+    /// Diagnostic/error precedence is retained. Passing this check alone cannot
+    /// establish cryptographic validity or trust.
+    pub fn check_certificate<'a>(
+        &self,
+        certificate_der: &'a [u8],
+        validation_time: i64,
+    ) -> Result<ProfileValidCertificate<'a>, ProfileError> {
+        let mut diagnostic = None;
+        let mut report = |description| diagnostic = Some(description);
+
+        let result = if self.end_entity {
+            check_end_entity_certificate_profile(
+                certificate_der,
+                self,
+                &mut report,
+                validation_time,
+            )
+        } else {
+            check_certificate_profile(certificate_der, self, &mut report, validation_time)
+        };
+
+        result
+            .map(|()| ProfileValidCertificate {
+                der: certificate_der,
+            })
+            .map_err(|kind| ProfileError { kind, diagnostic })
+    }
+
     fn has_mandatory_ekus(&self) -> bool {
         !self.mandatory_ekus.is_empty()
     }
@@ -99,31 +129,6 @@ pub struct ProfileError {
     pub kind: CertificateProfileError,
     /// Diagnostic for host reporting; never an application status code.
     pub diagnostic: Option<&'static str>,
-}
-
-/// Validate a profile using Unix seconds selected by the host.
-///
-/// Diagnostic/error precedence is retained. Passing this check alone cannot
-/// establish cryptographic validity or trust.
-pub fn check_profile<'a>(
-    certificate_der: &'a [u8],
-    policy: &ProfilePolicy<'_>,
-    validation_time: i64,
-) -> Result<ProfileValidCertificate<'a>, ProfileError> {
-    let mut diagnostic = None;
-    let mut report = |description| diagnostic = Some(description);
-
-    let result = if policy.end_entity {
-        check_end_entity_certificate_profile(certificate_der, policy, &mut report, validation_time)
-    } else {
-        check_certificate_profile(certificate_der, policy, &mut report, validation_time)
-    };
-
-    result
-        .map(|()| ProfileValidCertificate {
-            der: certificate_der,
-        })
-        .map_err(|kind| ProfileError { kind, diagnostic })
 }
 
 /// Reject certificate purposes explicitly forbidden by a host-selected role.

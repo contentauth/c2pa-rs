@@ -32,7 +32,7 @@ use crate::{
             cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
             signing_time_from_sign1, timestamp_token_bytes_from_sign1,
         },
-        time_stamp::tsa_signer_cert_der_from_token,
+        time_stamp::tsa_signer_cert_der_from_token_with_sdk_errors,
     },
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_assertion_uri},
@@ -493,7 +493,7 @@ impl<'a> CrJsonExporter<'a> {
         let ts_time = signing_time_from_sign1(&sign1, data.as_ref(), false).map(|t| t.to_rfc3339());
 
         let tsa_cert_info = timestamp_token_bytes_from_sign1(&sign1).and_then(|token_bytes| {
-            tsa_signer_cert_der_from_token(&token_bytes)
+            tsa_signer_cert_der_from_token_with_sdk_errors(&token_bytes)
                 .ok()
                 .flatten()
                 .and_then(|tsa_der| parse_certificate_from_der(&tsa_der).ok().flatten())

@@ -28,9 +28,9 @@ use crate::{
         asn1::rfc3161::TstInfo,
         base64::encode,
         cose::{
-            cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
-            signing_alg_from_sign1, CertificateInfo, CertificateRole, CertificateTrustError,
-            CertificateTrustPolicy, CoseError, TrustAnchorType,
+            cert_chain_from_sign1, check_end_entity_certificate_profile_with_sdk_policy,
+            parse_cose_sign1, signing_alg_from_sign1, CertificateInfo, CertificateRole,
+            CertificateTrustError, CertificateTrustPolicy, CoseError, TrustAnchorType,
         },
     },
     log_item,
@@ -345,14 +345,14 @@ impl Verifier<'_> {
             let mut adjusted_ctp = ctp.clone();
             adjusted_ctp.to_mut().add_valid_ekus(ekus.as_bytes());
 
-            Ok(check_end_entity_certificate_profile(
+            Ok(check_end_entity_certificate_profile_with_sdk_policy(
                 end_entity_cert_der,
                 adjusted_ctp.as_ref(),
                 validation_log,
                 tst_info,
             )?)
         } else {
-            Ok(check_end_entity_certificate_profile(
+            Ok(check_end_entity_certificate_profile_with_sdk_policy(
                 end_entity_cert_der,
                 ctp.as_ref(),
                 validation_log,

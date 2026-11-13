@@ -41,7 +41,7 @@
 //!         end_entity: true,
 //!     };
 //!
-//!     let profile_valid = profile::check_profile(certificate, &policy, validation_time)?;
+//!     let profile_valid = policy.check_certificate(certificate, validation_time)?;
 //!
 //!     let associated = chain::validate_chain_to_anchors(
 //!         ordered_chain,
