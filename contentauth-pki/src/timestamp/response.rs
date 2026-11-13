@@ -89,7 +89,7 @@ impl TimeStampResponse {
 
     /// Decode timestamp information, if present and of the expected type.
     ///
-    /// This does not verify its message imprint, signature or trustworthiness.
+    /// This does not verify its message imprint, signature, or trustworthiness.
     pub fn tst_info(&self) -> Result<Option<TstInfo>, AcquisitionError> {
         if let Some(signed_data) = self.signed_data()? {
             if signed_data.encap_content_info.content_type

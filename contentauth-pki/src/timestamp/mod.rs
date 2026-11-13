@@ -14,7 +14,7 @@
 //! RFC 3161 timestamp workflows.
 //!
 //! Acquisition returns unverified response bytes. Cryptographic verification,
-//! certificate-profile validation and trust evaluation remain in the host SDK.
+//! certificate-profile validation, and trust evaluation remain in the host SDK.
 
 pub mod acquisition;
 
