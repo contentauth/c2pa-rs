@@ -35,6 +35,10 @@ make test
 The build will have two features activated: `rust_native_crypto` and `file_io`.
 Note that running the `make test` command will also check formatting of the code.
 
+The build generates `c2pa.h` alongside the library in the target profile directory
+(for example, `target/aarch64-apple-ios/release`). Set `C2PA_HEADER_DIR` to override
+the header output directory.
+
 ### Building for Emscripten
 
 With the Emscripten SDK activated, run:
