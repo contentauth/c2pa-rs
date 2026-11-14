@@ -65,14 +65,13 @@ impl ProfilePolicy<'_> {
         let mut report = |description| diagnostic = Some(description);
 
         let result = if self.end_entity {
-            check_end_entity_certificate_profile(
+            self.check_end_entity_certificate_profile(
                 certificate.parsed(),
-                self,
                 &mut report,
                 validation_time,
             )
         } else {
-            check_certificate_profile(certificate.parsed(), self, &mut report, validation_time)
+            self.check_certificate_profile(certificate.parsed(), &mut report, validation_time)
         };
 
         result
@@ -80,6 +79,356 @@ impl ProfilePolicy<'_> {
                 der: certificate.certificate_der(),
             })
             .map_err(|kind| ProfileError { kind, diagnostic })
+    }
+
+    fn check_end_entity_certificate_profile(
+        &self,
+        signcert: &X509Certificate<'_>,
+        report: &mut impl FnMut(&'static str),
+        validation_time: i64,
+    ) -> Result<(), CertificateProfileError> {
+        self.check_certificate_profile(signcert, report, validation_time)?;
+
+        // Role-specific policies require every mandatory EKU, not just an allowed one.
+        if self.has_mandatory_ekus() {
+            if let Ok(Some(BasicExtension { value: eku, .. })) = signcert.extended_key_usage() {
+                if !self.verify_mandatory_ekus(eku) {
+                    report("certificate missing mandatory EKU");
+
+                    return Err(CertificateProfileError::InvalidEku);
+                }
+            } else {
+                report("certificate missing mandatory EKU");
+
+                return Err(CertificateProfileError::InvalidEku);
+            }
+        }
+
+        let tbscert = &signcert.tbs_certificate;
+
+        // If we are expecting an end-entity cert, make sure that is so
+        if tbscert.is_ca() {
+            report("expected end-entity certificate");
+
+            return Err(CertificateProfileError::InvalidCertificate);
+        }
+
+        Ok(())
+    }
+
+    fn check_certificate_profile(
+        &self,
+        signcert: &X509Certificate<'_>,
+        report: &mut impl FnMut(&'static str),
+        validation_time: i64,
+    ) -> Result<(), CertificateProfileError> {
+        // Version shall be v3 as per RFC 5280, section 4.1.2.1.
+        if signcert.version() != X509Version::V3 {
+            report("certificate version incorrect");
+
+            return Err(CertificateProfileError::InvalidCertificateVersion);
+        }
+
+        if !signcert.validity().is_valid_at(
+            x509_parser::time::ASN1Time::from_timestamp(validation_time)
+                .map_err(|_| CertificateProfileError::InvalidCertificate)?,
+        ) {
+            report("certificate expired");
+
+            return Err(CertificateProfileError::CertificateNotValidAtTime);
+        }
+
+        // https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.3
+        // The outer signatureAlgorithm MUST match the signed tbsCertificate.signature field.
+        if signcert.tbs_certificate.signature != signcert.signature_algorithm {
+            report(
+                "certificate signature algorithm does not match tbsCertificate signature algorithm",
+            );
+
+            return Err(CertificateProfileError::InvalidCertificate);
+        }
+
+        let cert_alg = &signcert.signature_algorithm.algorithm;
+
+        // Certificate must be signed with one of the following algorithms.
+        if !(*cert_alg == SHA256_WITH_RSAENCRYPTION_OID
+            || *cert_alg == SHA384_WITH_RSAENCRYPTION_OID
+            || *cert_alg == SHA512_WITH_RSAENCRYPTION_OID
+            || *cert_alg == ECDSA_WITH_SHA256_OID
+            || *cert_alg == ECDSA_WITH_SHA384_OID
+            || *cert_alg == ECDSA_WITH_SHA512_OID
+            || *cert_alg == RSASSA_PSS_OID
+            || *cert_alg == ED25519_OID)
+        {
+            report("certificate algorithm not supported");
+
+            return Err(CertificateProfileError::UnsupportedAlgorithm);
+        }
+
+        // https://datatracker.ietf.org/doc/html/rfc8410#section-3
+        // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
+        if *cert_alg == ED25519_OID && signcert.signature_algorithm.parameters.is_some() {
+            report("certificate Ed25519 signature algorithm parameters must be absent");
+
+            return Err(CertificateProfileError::InvalidCertificate);
+        }
+
+        // Verify RSA_PSS parameters.
+        if *cert_alg == RSASSA_PSS_OID {
+            if let Some(parameters) = &signcert.signature_algorithm.parameters {
+                let (ha_alg, mgf_ai) = rsa_pss_algorithms(parameters)
+                    .ok_or(CertificateProfileError::InvalidCertificate)?;
+
+                let mgf_ai_parameters = mgf_ai
+                    .parameters
+                    .ok_or(CertificateProfileError::InvalidCertificate)?;
+
+                let mgf_ai_parameters = mgf_ai_parameters
+                    .as_sequence()
+                    .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+
+                let (_i, mgf_ai_params_algorithm) =
+                    <Any as asn1_rs::FromDer>::from_der(&mgf_ai_parameters.content)
+                        .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+
+                let mgf_ai_params_algorithm = mgf_ai_params_algorithm
+                    .as_oid()
+                    .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+
+                if ha_alg.algorithm.to_id_string() != mgf_ai_params_algorithm.to_id_string() {
+                    report("certificate algorithm error");
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+
+                // check for one of the mandatory types
+                if !(ha_alg.algorithm == SHA256_OID
+                    || ha_alg.algorithm == SHA384_OID
+                    || ha_alg.algorithm == SHA512_OID)
+                {
+                    report("certificate hash algorithm not supported");
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+            } else {
+                report("certificate missing algorithm parameters");
+
+                return Err(CertificateProfileError::InvalidCertificate);
+            }
+        }
+
+        // CHeck curves for SPKI EC algorithms.
+        let pk = signcert.public_key();
+        let skpi_alg = &pk.algorithm;
+
+        if skpi_alg.algorithm == EC_PUBLICKEY_OID {
+            if let Some(parameters) = &skpi_alg.parameters {
+                let named_curve_oid = parameters
+                    .as_oid()
+                    .map_err(|_err| CertificateProfileError::InvalidCertificate)?;
+
+                // Must be one of these named curves.
+                if !(named_curve_oid == PRIME256V1_OID
+                    || named_curve_oid == SECP384R1_OID
+                    || named_curve_oid == SECP521R1_OID)
+                {
+                    report("certificate unsupported EC curve");
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+            } else {
+                return Err(CertificateProfileError::InvalidCertificate);
+            }
+        }
+
+        // https://datatracker.ietf.org/doc/html/rfc8410#section-3
+        // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
+        if skpi_alg.algorithm == ED25519_OID && skpi_alg.parameters.is_some() {
+            report("certificate Ed25519 public key parameters must be absent");
+
+            return Err(CertificateProfileError::InvalidCertificate);
+        }
+
+        // Check modulus minimum length for RSA & PSS algorithms.
+        if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
+            let (_, skpi_ber) = parse_ber_sequence(&pk.subject_public_key.data)
+                .map_err(|_err| CertificateProfileError::InvalidCertificate)?;
+
+            let seq = skpi_ber
+                .as_sequence()
+                .map_err(|_err| CertificateProfileError::InvalidCertificate)?;
+
+            if seq.len() < 2 {
+                return Err(CertificateProfileError::InvalidCertificate);
+            }
+
+            let modulus = seq[0]
+                .as_bigint()
+                .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+
+            let exponent = seq[1]
+                .as_bigint()
+                .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+
+            if modulus.bits() < 2048 {
+                report("certificate key length too short");
+
+                return Err(CertificateProfileError::InvalidCertificate);
+            }
+
+            if !is_valid_rsa_public_exponent(&exponent) {
+                report("certificate RSA public exponent is invalid");
+
+                return Err(CertificateProfileError::InvalidCertificate);
+            }
+        }
+
+        let tbscert = &signcert.tbs_certificate;
+
+        // Disallow self-signed certificates.
+        if tbscert.is_ca() && tbscert.issuer() == tbscert.subject() {
+            report("certificate issuer and subject cannot be the same (self-signed disallowed)");
+
+            return Err(CertificateProfileError::SelfSignedCertificate);
+        }
+
+        // Disallow unique IDs.
+        if signcert.issuer_uid.is_some() || signcert.subject_uid.is_some() {
+            report("certificate issuer/subject unique ids are not allowed");
+
+            return Err(CertificateProfileError::InvalidCertificate);
+        }
+
+        let mut aki_good = false;
+        let mut ski_good = false;
+        let mut key_usage_good = false;
+        let mut handled_all_critical = true;
+
+        let extended_key_usage_good = match tbscert
+            .extended_key_usage()
+            .map_err(|_| CertificateProfileError::InvalidCertificate)?
+        {
+            Some(BasicExtension { value: eku, .. }) => {
+                if eku.any {
+                    report("certificate 'any' EKU not allowed");
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+
+                if self.allowed_eku(eku).is_none() {
+                    report("certificate missing required EKU");
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+
+                // one or the other || either of these two, and no others field
+                if (eku.ocsp_signing && eku.time_stamping)
+                    || ((eku.ocsp_signing ^ eku.time_stamping)
+                        && (eku.client_auth
+                            | eku.code_signing
+                            | eku.email_protection
+                            | eku.server_auth
+                            | !eku.other.is_empty()))
+                {
+                    report("certificate invalid set of EKUs");
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+
+                true
+            }
+
+            None => tbscert.is_ca(), // if is not ca it must be present
+        };
+
+        // Time-stamping and OCSP signing certificates are valid for exactly one of
+        // those purposes (checked above).
+        let signs_time_stamps_or_ocsp = matches!(
+            tbscert.extended_key_usage(),
+            Ok(Some(BasicExtension { value: eku, .. })) if eku.time_stamping || eku.ocsp_signing
+        );
+
+        // Populate needed extension info.
+        for e in signcert.extensions() {
+            match e.parsed_extension() {
+                ParsedExtension::AuthorityKeyIdentifier(_aki) => {
+                    aki_good = true;
+                }
+
+                ParsedExtension::SubjectKeyIdentifier(_spki) => {
+                    ski_good = true;
+                }
+
+                ParsedExtension::KeyUsage(ku) => {
+                    // "The keyCertSign bit shall only be asserted if the cA boolean is
+                    // asserted in the Basic Constraints extension."
+                    if ku.key_cert_sign() && !tbscert.is_ca() {
+                        report("certificate asserts keyCertSign key usage but is not a CA");
+
+                        return Err(CertificateProfileError::InvalidCertificate);
+                    }
+
+                    // "Certificates used to sign C2PA manifests shall assert the
+                    // digitalSignature bit." Time-stamping and OCSP signing certificates
+                    // may assert nonRepudiation instead (RFC 3161, section 2.3).
+                    if !tbscert.is_ca() && !signs_time_stamps_or_ocsp && !ku.digital_signature() {
+                        report("certificate missing digitalSignature key usage");
+
+                        return Err(CertificateProfileError::InvalidCertificate);
+                    }
+
+                    if ku.digital_signature() || ku.key_cert_sign() || ku.non_repudiation() {
+                        key_usage_good = true;
+                    }
+
+                    // TO DO: warn if not marked critical.
+                    // if !e.critical { // warn here somehow}
+                }
+
+                ParsedExtension::CertificatePolicies(_) => (),
+                ParsedExtension::PolicyMappings(_) => (),
+                ParsedExtension::SubjectAlternativeName(_) => (),
+                ParsedExtension::BasicConstraints(_) => (),
+                ParsedExtension::NameConstraints(_) => (),
+                ParsedExtension::PolicyConstraints(_) => (),
+                ParsedExtension::ExtendedKeyUsage(_) => (),
+                ParsedExtension::CRLDistributionPoints(_) => (),
+                ParsedExtension::InhibitAnyPolicy(_) => (),
+                ParsedExtension::AuthorityInfoAccess(_) => (),
+                ParsedExtension::NSCertType(_) => (),
+                ParsedExtension::CRLNumber(_) => (),
+                ParsedExtension::ReasonCode(_) => (),
+                ParsedExtension::InvalidityDate(_) => (),
+
+                ParsedExtension::Unparsed => {
+                    if e.critical {
+                        // Unhandled critical extension.
+                        handled_all_critical = false;
+                    }
+                }
+
+                _ => {
+                    if e.critical {
+                        //println!("Oid: {}", e.oid.to_id_string());
+                        // Unhandled critical extension.
+                        handled_all_critical = false;
+                    }
+                }
+            }
+        }
+
+        // If cert is a CA must have valid SubjectKeyIdentifier.
+        ski_good = if tbscert.is_ca() { ski_good } else { true };
+
+        // Check all flags.
+        if aki_good && ski_good && key_usage_good && extended_key_usage_good && handled_all_critical
+        {
+            Ok(())
+        } else {
+            report("certificate params incorrect");
+
+            Err(CertificateProfileError::InvalidCertificate)
+        }
     }
 
     fn has_mandatory_ekus(&self) -> bool {
@@ -135,353 +484,6 @@ pub struct ProfileError {
 
     /// Diagnostic for host reporting; never an application status code.
     pub diagnostic: Option<&'static str>,
-}
-
-fn check_end_entity_certificate_profile(
-    signcert: &X509Certificate<'_>,
-    ctp: &ProfilePolicy<'_>,
-    report: &mut impl FnMut(&'static str),
-    validation_time: i64,
-) -> Result<(), CertificateProfileError> {
-    check_certificate_profile(signcert, ctp, report, validation_time)?;
-
-    // Role-specific policies require every mandatory EKU, not just an allowed one.
-    if ctp.has_mandatory_ekus() {
-        if let Ok(Some(BasicExtension { value: eku, .. })) = signcert.extended_key_usage() {
-            if !ctp.verify_mandatory_ekus(eku) {
-                report("certificate missing mandatory EKU");
-
-                return Err(CertificateProfileError::InvalidEku);
-            }
-        } else {
-            report("certificate missing mandatory EKU");
-
-            return Err(CertificateProfileError::InvalidEku);
-        }
-    }
-
-    let tbscert = &signcert.tbs_certificate;
-
-    // If we are expecting an end-entity cert, make sure that is so
-    if tbscert.is_ca() {
-        report("expected end-entity certificate");
-
-        return Err(CertificateProfileError::InvalidCertificate);
-    }
-
-    Ok(())
-}
-
-fn check_certificate_profile(
-    signcert: &X509Certificate<'_>,
-    ctp: &ProfilePolicy<'_>,
-    report: &mut impl FnMut(&'static str),
-    validation_time: i64,
-) -> Result<(), CertificateProfileError> {
-    // Version shall be v3 as per RFC 5280, section 4.1.2.1.
-    if signcert.version() != X509Version::V3 {
-        report("certificate version incorrect");
-
-        return Err(CertificateProfileError::InvalidCertificateVersion);
-    }
-
-    if !signcert.validity().is_valid_at(
-        x509_parser::time::ASN1Time::from_timestamp(validation_time)
-            .map_err(|_| CertificateProfileError::InvalidCertificate)?,
-    ) {
-        report("certificate expired");
-
-        return Err(CertificateProfileError::CertificateNotValidAtTime);
-    }
-
-    // https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.3
-    // The outer signatureAlgorithm MUST match the signed tbsCertificate.signature field.
-    if signcert.tbs_certificate.signature != signcert.signature_algorithm {
-        report("certificate signature algorithm does not match tbsCertificate signature algorithm");
-
-        return Err(CertificateProfileError::InvalidCertificate);
-    }
-
-    let cert_alg = &signcert.signature_algorithm.algorithm;
-
-    // Certificate must be signed with one of the following algorithms.
-    if !(*cert_alg == SHA256_WITH_RSAENCRYPTION_OID
-        || *cert_alg == SHA384_WITH_RSAENCRYPTION_OID
-        || *cert_alg == SHA512_WITH_RSAENCRYPTION_OID
-        || *cert_alg == ECDSA_WITH_SHA256_OID
-        || *cert_alg == ECDSA_WITH_SHA384_OID
-        || *cert_alg == ECDSA_WITH_SHA512_OID
-        || *cert_alg == RSASSA_PSS_OID
-        || *cert_alg == ED25519_OID)
-    {
-        report("certificate algorithm not supported");
-
-        return Err(CertificateProfileError::UnsupportedAlgorithm);
-    }
-
-    // https://datatracker.ietf.org/doc/html/rfc8410#section-3
-    // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
-    if *cert_alg == ED25519_OID && signcert.signature_algorithm.parameters.is_some() {
-        report("certificate Ed25519 signature algorithm parameters must be absent");
-
-        return Err(CertificateProfileError::InvalidCertificate);
-    }
-
-    // Verify RSA_PSS parameters.
-    if *cert_alg == RSASSA_PSS_OID {
-        if let Some(parameters) = &signcert.signature_algorithm.parameters {
-            let (ha_alg, mgf_ai) = rsa_pss_algorithms(parameters)
-                .ok_or(CertificateProfileError::InvalidCertificate)?;
-
-            let mgf_ai_parameters = mgf_ai
-                .parameters
-                .ok_or(CertificateProfileError::InvalidCertificate)?;
-
-            let mgf_ai_parameters = mgf_ai_parameters
-                .as_sequence()
-                .map_err(|_| CertificateProfileError::InvalidCertificate)?;
-
-            let (_i, mgf_ai_params_algorithm) =
-                <Any as asn1_rs::FromDer>::from_der(&mgf_ai_parameters.content)
-                    .map_err(|_| CertificateProfileError::InvalidCertificate)?;
-
-            let mgf_ai_params_algorithm = mgf_ai_params_algorithm
-                .as_oid()
-                .map_err(|_| CertificateProfileError::InvalidCertificate)?;
-
-            if ha_alg.algorithm.to_id_string() != mgf_ai_params_algorithm.to_id_string() {
-                report("certificate algorithm error");
-
-                return Err(CertificateProfileError::InvalidCertificate);
-            }
-
-            // check for one of the mandatory types
-            if !(ha_alg.algorithm == SHA256_OID
-                || ha_alg.algorithm == SHA384_OID
-                || ha_alg.algorithm == SHA512_OID)
-            {
-                report("certificate hash algorithm not supported");
-
-                return Err(CertificateProfileError::InvalidCertificate);
-            }
-        } else {
-            report("certificate missing algorithm parameters");
-
-            return Err(CertificateProfileError::InvalidCertificate);
-        }
-    }
-
-    // CHeck curves for SPKI EC algorithms.
-    let pk = signcert.public_key();
-    let skpi_alg = &pk.algorithm;
-
-    if skpi_alg.algorithm == EC_PUBLICKEY_OID {
-        if let Some(parameters) = &skpi_alg.parameters {
-            let named_curve_oid = parameters
-                .as_oid()
-                .map_err(|_err| CertificateProfileError::InvalidCertificate)?;
-
-            // Must be one of these named curves.
-            if !(named_curve_oid == PRIME256V1_OID
-                || named_curve_oid == SECP384R1_OID
-                || named_curve_oid == SECP521R1_OID)
-            {
-                report("certificate unsupported EC curve");
-
-                return Err(CertificateProfileError::InvalidCertificate);
-            }
-        } else {
-            return Err(CertificateProfileError::InvalidCertificate);
-        }
-    }
-
-    // https://datatracker.ietf.org/doc/html/rfc8410#section-3
-    // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
-    if skpi_alg.algorithm == ED25519_OID && skpi_alg.parameters.is_some() {
-        report("certificate Ed25519 public key parameters must be absent");
-
-        return Err(CertificateProfileError::InvalidCertificate);
-    }
-
-    // Check modulus minimum length for RSA & PSS algorithms.
-    if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
-        let (_, skpi_ber) = parse_ber_sequence(&pk.subject_public_key.data)
-            .map_err(|_err| CertificateProfileError::InvalidCertificate)?;
-
-        let seq = skpi_ber
-            .as_sequence()
-            .map_err(|_err| CertificateProfileError::InvalidCertificate)?;
-
-        if seq.len() < 2 {
-            return Err(CertificateProfileError::InvalidCertificate);
-        }
-
-        let modulus = seq[0]
-            .as_bigint()
-            .map_err(|_| CertificateProfileError::InvalidCertificate)?;
-
-        let exponent = seq[1]
-            .as_bigint()
-            .map_err(|_| CertificateProfileError::InvalidCertificate)?;
-
-        if modulus.bits() < 2048 {
-            report("certificate key length too short");
-
-            return Err(CertificateProfileError::InvalidCertificate);
-        }
-
-        if !is_valid_rsa_public_exponent(&exponent) {
-            report("certificate RSA public exponent is invalid");
-
-            return Err(CertificateProfileError::InvalidCertificate);
-        }
-    }
-
-    let tbscert = &signcert.tbs_certificate;
-
-    // Disallow self-signed certificates.
-    if tbscert.is_ca() && tbscert.issuer() == tbscert.subject() {
-        report("certificate issuer and subject cannot be the same (self-signed disallowed)");
-
-        return Err(CertificateProfileError::SelfSignedCertificate);
-    }
-
-    // Disallow unique IDs.
-    if signcert.issuer_uid.is_some() || signcert.subject_uid.is_some() {
-        report("certificate issuer/subject unique ids are not allowed");
-
-        return Err(CertificateProfileError::InvalidCertificate);
-    }
-
-    let mut aki_good = false;
-    let mut ski_good = false;
-    let mut key_usage_good = false;
-    let mut handled_all_critical = true;
-
-    let extended_key_usage_good = match tbscert
-        .extended_key_usage()
-        .map_err(|_| CertificateProfileError::InvalidCertificate)?
-    {
-        Some(BasicExtension { value: eku, .. }) => {
-            if eku.any {
-                report("certificate 'any' EKU not allowed");
-
-                return Err(CertificateProfileError::InvalidCertificate);
-            }
-
-            if ctp.allowed_eku(eku).is_none() {
-                report("certificate missing required EKU");
-
-                return Err(CertificateProfileError::InvalidCertificate);
-            }
-
-            // one or the other || either of these two, and no others field
-            if (eku.ocsp_signing && eku.time_stamping)
-                || ((eku.ocsp_signing ^ eku.time_stamping)
-                    && (eku.client_auth
-                        | eku.code_signing
-                        | eku.email_protection
-                        | eku.server_auth
-                        | !eku.other.is_empty()))
-            {
-                report("certificate invalid set of EKUs");
-
-                return Err(CertificateProfileError::InvalidCertificate);
-            }
-
-            true
-        }
-
-        None => tbscert.is_ca(), // if is not ca it must be present
-    };
-
-    // Time-stamping and OCSP signing certificates are valid for exactly one of
-    // those purposes (checked above).
-    let signs_time_stamps_or_ocsp = matches!(
-        tbscert.extended_key_usage(),
-        Ok(Some(BasicExtension { value: eku, .. })) if eku.time_stamping || eku.ocsp_signing
-    );
-
-    // Populate needed extension info.
-    for e in signcert.extensions() {
-        match e.parsed_extension() {
-            ParsedExtension::AuthorityKeyIdentifier(_aki) => {
-                aki_good = true;
-            }
-
-            ParsedExtension::SubjectKeyIdentifier(_spki) => {
-                ski_good = true;
-            }
-
-            ParsedExtension::KeyUsage(ku) => {
-                // "The keyCertSign bit shall only be asserted if the cA boolean is
-                // asserted in the Basic Constraints extension."
-                if ku.key_cert_sign() && !tbscert.is_ca() {
-                    report("certificate asserts keyCertSign key usage but is not a CA");
-
-                    return Err(CertificateProfileError::InvalidCertificate);
-                }
-
-                // "Certificates used to sign C2PA manifests shall assert the
-                // digitalSignature bit." Time-stamping and OCSP signing certificates
-                // may assert nonRepudiation instead (RFC 3161, section 2.3).
-                if !tbscert.is_ca() && !signs_time_stamps_or_ocsp && !ku.digital_signature() {
-                    report("certificate missing digitalSignature key usage");
-
-                    return Err(CertificateProfileError::InvalidCertificate);
-                }
-
-                if ku.digital_signature() || ku.key_cert_sign() || ku.non_repudiation() {
-                    key_usage_good = true;
-                }
-
-                // TO DO: warn if not marked critical.
-                // if !e.critical { // warn here somehow}
-            }
-
-            ParsedExtension::CertificatePolicies(_) => (),
-            ParsedExtension::PolicyMappings(_) => (),
-            ParsedExtension::SubjectAlternativeName(_) => (),
-            ParsedExtension::BasicConstraints(_) => (),
-            ParsedExtension::NameConstraints(_) => (),
-            ParsedExtension::PolicyConstraints(_) => (),
-            ParsedExtension::ExtendedKeyUsage(_) => (),
-            ParsedExtension::CRLDistributionPoints(_) => (),
-            ParsedExtension::InhibitAnyPolicy(_) => (),
-            ParsedExtension::AuthorityInfoAccess(_) => (),
-            ParsedExtension::NSCertType(_) => (),
-            ParsedExtension::CRLNumber(_) => (),
-            ParsedExtension::ReasonCode(_) => (),
-            ParsedExtension::InvalidityDate(_) => (),
-
-            ParsedExtension::Unparsed => {
-                if e.critical {
-                    // Unhandled critical extension.
-                    handled_all_critical = false;
-                }
-            }
-
-            _ => {
-                if e.critical {
-                    //println!("Oid: {}", e.oid.to_id_string());
-                    // Unhandled critical extension.
-                    handled_all_critical = false;
-                }
-            }
-        }
-    }
-
-    // If cert is a CA must have valid SubjectKeyIdentifier.
-    ski_good = if tbscert.is_ca() { ski_good } else { true };
-
-    // Check all flags.
-    if aki_good && ski_good && key_usage_good && extended_key_usage_good && handled_all_critical {
-        Ok(())
-    } else {
-        report("certificate params incorrect");
-
-        Err(CertificateProfileError::InvalidCertificate)
-    }
 }
 
 /// Describes errors that can be identified when checking a certificate's
