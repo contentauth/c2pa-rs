@@ -75,16 +75,35 @@ codes.
 
 ## X.509 boundary
 
-`x509::profile::ProfilePolicy::check_certificate` takes DER and host-selected Unix
-seconds. The host constructs the policy with effective allowed and mandatory
-EKU sets, chooses end-entity constraints, and explicitly selects specialty-purpose
-and empty-list emailProtection compatibility. `ProfileError` retains the typed rejection and
+`x509::ParsedCertificate::from_der` parses DER once, borrowing the original bytes
+and keeping the parser representation private. Parsing establishes no signature,
+profile, or trust guarantee. Only the original DER is exposed; purpose exclusions
+are checked with `ParsedCertificate::check_disallowed_ekus`.
+
+`x509::profile::ProfilePolicy::check_certificate` takes a borrowed
+`ParsedCertificate` and host-selected Unix seconds. The host constructs the
+policy with effective allowed and mandatory EKU sets, chooses end-entity
+constraints, and explicitly selects specialty-purpose and empty-list
+emailProtection compatibility. `ProfileError` retains the typed rejection and
 optional original diagnostic; SDK error/status mapping remains host-side.
+
+Reuse the same parsed certificate for purpose and profile checks:
+
+```rust
+let certificate = contentauth_pki::x509::ParsedCertificate::from_der(der)?;
+certificate.check_disallowed_ekus(&disallowed)?;
+let profile_valid = policy.check_certificate(&certificate, validation_time)?;
+```
+
+Parsing retains the existing trailing-DER compatibility and diagnostic. The
+profile-valid result borrows the DER, not the parsed wrapper or policy, so neither
+must remain alive after the check.
 
 The hidden SDK `check_certificate_profile` and
 `check_end_entity_certificate_profile` compatibility APIs are deprecated in
 favor of this method. Select `end_entity = false` or `true`, respectively, and
-keep role selection, time, and reporting host-side. The hidden SDK
+parse with `ParsedCertificate::from_der`. Keep role selection, time, and reporting
+host-side, including mapping parsing and profile failures. The hidden SDK
 `tsa_signer_cert_der_from_token` lookup is also deprecated in favor of
 `timestamp::verification::signer_certificate_from_token`, which returns an
 unverified certificate and crate-specific errors. SDK-specific timestamp
@@ -105,8 +124,8 @@ evaluation time: the host always supplies it explicitly.
 
 The SDK retains `CertificateRole` and selects the settled #3040 policy: claim
 signers explicitly reject timeStamping/OCSPSigning through
-`check_disallowed_ekus`; TSA/delegated OCSP roles clear configured purposes and
-require their respective mandatory EKU. CAWG identity profiles deliberately do
+`ParsedCertificate::check_disallowed_ekus`; TSA/delegated OCSP roles clear
+configured purposes and require their respective mandatory EKU. CAWG identity profiles deliberately do
 not inherit claim exclusions. CAWG documentSigning, interim S/MIME policies,
 cutoff, and trusted associated timestamps remain unchanged; #3077 is separate.
 The generic SDK profile APIs retain their existing compatibility contract.

@@ -15,7 +15,7 @@ use std::borrow::Cow;
 
 use chrono::{DateTime, Utc};
 pub use contentauth_pki::x509::profile::CertificateProfileError;
-use contentauth_pki::x509::profile::{self, ProfilePolicy};
+use contentauth_pki::x509::{profile::ProfilePolicy, ParsedCertificate};
 use web_time::SystemTime;
 
 use crate::{
@@ -43,9 +43,12 @@ impl CertificateRole {
         timestamp: Option<&TstInfo>,
     ) -> Result<(), CertificateProfileError> {
         let mut policy = Cow::Borrowed(policy);
+        let mut certificate = None;
 
         match self {
-            Self::ClaimSigner => check_claim_signing_eku(certificate_der, validation_log)?,
+            Self::ClaimSigner => {
+                certificate = Some(check_claim_signing_eku(certificate_der, validation_log)?);
+            }
             // Preserve CAWG's existing profile and configured purposes. Its
             // long-term identity-purpose policy is tracked in #3077.
             Self::CawgIdentity => {}
@@ -61,11 +64,13 @@ impl CertificateRole {
             }
         }
 
-        check_end_entity_certificate_profile_with_sdk_policy(
+        check_profile(
             certificate_der,
             &policy,
             validation_log,
             timestamp,
+            true,
+            certificate.as_ref(),
         )
     }
 
@@ -75,7 +80,9 @@ impl CertificateRole {
         validation_log: &mut StatusTracker,
     ) -> Result<(), CertificateProfileError> {
         match self {
-            Self::ClaimSigner => check_claim_signing_eku(certificate_der, validation_log),
+            Self::ClaimSigner => {
+                check_claim_signing_eku(certificate_der, validation_log).map(|_| ())
+            }
             Self::CawgIdentity => Ok(()),
             Self::TimestampSigner | Self::DelegatedOcspResponder => self.check_profile(
                 certificate_der,
@@ -87,14 +94,17 @@ impl CertificateRole {
     }
 }
 
-fn check_claim_signing_eku(
-    certificate_der: &[u8],
+fn check_claim_signing_eku<'a>(
+    certificate_der: &'a [u8],
     validation_log: &mut StatusTracker,
-) -> Result<(), CertificateProfileError> {
-    let result = profile::check_disallowed_ekus(
-        certificate_der,
-        &["1.3.6.1.5.5.7.3.8", "1.3.6.1.5.5.7.3.9"],
-    );
+) -> Result<ParsedCertificate<'a>, CertificateProfileError> {
+    let result = ParsedCertificate::from_der(certificate_der)
+        .map_err(|error| error.kind)
+        .and_then(|certificate| {
+            certificate.check_disallowed_ekus(&["1.3.6.1.5.5.7.3.8", "1.3.6.1.5.5.7.3.9"])?;
+
+            Ok(certificate)
+        });
 
     if let Err(error) = &result {
         log_item!(
@@ -113,7 +123,8 @@ fn check_claim_signing_eku(
 ///
 /// Use [`ProfilePolicy::check_certificate`] with an explicit
 /// [`ProfilePolicy`] whose `end_entity` field is `true`. Select role/EKU policy
-/// and validation time in the host, and map profile failures to host reporting.
+/// and validation time in the host, parse with [`ParsedCertificate::from_der`],
+/// and map parsing/profile failures to host reporting.
 #[deprecated(
     since = "0.93.0",
     note = "Use `contentauth_pki::x509::profile::ProfilePolicy::check_certificate()` instead (end_entity = true), with host-selected validation time/reporting. Will be removed in 0.94.0 (scheduled for mid-March 2027)."
@@ -136,7 +147,8 @@ pub fn check_end_entity_certificate_profile(
 ///
 /// Use [`ProfilePolicy::check_certificate`] with an explicit
 /// [`ProfilePolicy`] whose `end_entity` field is `false`. Select role/EKU policy
-/// and validation time in the host, and map profile failures to host reporting.
+/// and validation time in the host, parse with [`ParsedCertificate::from_der`],
+/// and map parsing/profile failures to host reporting.
 #[deprecated(
     since = "0.93.0",
     note = "Use `contentauth_pki::x509::profile::ProfilePolicy::check_certificate()` instead (end_entity = false), with host-selected validation time/reporting. Will be removed in 0.94.0 (scheduled for mid-March 2027)."
@@ -156,7 +168,7 @@ pub(crate) fn check_end_entity_certificate_profile_with_sdk_policy(
     validation_log: &mut StatusTracker,
     timestamp: Option<&TstInfo>,
 ) -> Result<(), CertificateProfileError> {
-    check_profile(certificate_der, ctp, validation_log, timestamp, true)
+    check_profile(certificate_der, ctp, validation_log, timestamp, true, None)
 }
 
 fn check_certificate_profile_with_sdk_policy(
@@ -165,7 +177,7 @@ fn check_certificate_profile_with_sdk_policy(
     validation_log: &mut StatusTracker,
     timestamp: Option<&TstInfo>,
 ) -> Result<(), CertificateProfileError> {
-    check_profile(certificate_der, ctp, validation_log, timestamp, false)
+    check_profile(certificate_der, ctp, validation_log, timestamp, false, None)
 }
 
 fn check_profile(
@@ -174,6 +186,7 @@ fn check_profile(
     validation_log: &mut StatusTracker,
     timestamp: Option<&TstInfo>,
     end_entity: bool,
+    certificate: Option<&ParsedCertificate<'_>>,
 ) -> Result<(), CertificateProfileError> {
     let time = if let Some(timestamp) = timestamp {
         let time: DateTime<Utc> = timestamp.gen_time.clone().into();
@@ -194,24 +207,27 @@ fn check_profile(
         end_entity,
     };
 
-    policy
-        .check_certificate(certificate_der, time)
-        .map(|_| ())
-        .map_err(|error| {
-            if let Some(description) = error.diagnostic {
-                let status = if error.kind == CertificateProfileError::CertificateNotValidAtTime {
-                    SIGNING_CREDENTIAL_EXPIRED
-                } else {
-                    SIGNING_CREDENTIAL_INVALID
-                };
+    let result = match certificate {
+        Some(certificate) => policy.check_certificate(certificate, time),
+        None => ParsedCertificate::from_der(certificate_der)
+            .and_then(|certificate| policy.check_certificate(&certificate, time)),
+    };
 
-                log_item!("", description, "check_certificate_profile")
-                    .validation_status(status)
-                    .failure_no_throw(validation_log, &error.kind);
-            }
+    result.map(|_| ()).map_err(|error| {
+        if let Some(description) = error.diagnostic {
+            let status = if error.kind == CertificateProfileError::CertificateNotValidAtTime {
+                SIGNING_CREDENTIAL_EXPIRED
+            } else {
+                SIGNING_CREDENTIAL_INVALID
+            };
 
-            error.kind
-        })
+            log_item!("", description, "check_certificate_profile")
+                .validation_status(status)
+                .failure_no_throw(validation_log, &error.kind);
+        }
+
+        error.kind
+    })
 }
 
 #[cfg(test)]
@@ -235,6 +251,41 @@ mod tests {
             SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID,
         },
     };
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn parsed_certificate_failures_preserve_sdk_reporting() {
+        let policy = CertificateTrustPolicy::default();
+        let der = [0x30, 0x00];
+
+        for (claim_role, expected_description) in [
+            (true, "certificate cannot authorize claim signing"),
+            (false, "certificate could not be parsed"),
+        ] {
+            let mut log = StatusTracker::default();
+
+            let result = if claim_role {
+                super::CertificateRole::ClaimSigner.check_profile(&der, &policy, &mut log, None)
+            } else {
+                check_end_entity_certificate_profile(&der, &policy, &mut log, None)
+            };
+
+            assert_eq!(
+                result,
+                Err(super::CertificateProfileError::InvalidCertificate)
+            );
+
+            assert_eq!(log.logged_items().len(), 1);
+            assert_eq!(log.logged_items()[0].description, expected_description);
+            assert_eq!(
+                log.logged_items()[0].validation_status,
+                Some(SIGNING_CREDENTIAL_INVALID.into())
+            );
+        }
+    }
 
     #[test]
     #[cfg_attr(

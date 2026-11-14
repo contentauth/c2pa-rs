@@ -15,7 +15,7 @@
 
 use std::collections::HashSet;
 
-use asn1_rs::{Any, FromDer};
+use asn1_rs::Any;
 use thiserror::Error;
 use x509_parser::{
     certificate::{BasicExtension, X509Certificate},
@@ -26,7 +26,7 @@ use x509_parser::{
     x509::X509Version,
 };
 
-use super::certificate::rsa_pss_algorithms;
+use super::{certificate::rsa_pss_algorithms, ParsedCertificate};
 
 /// Concrete constraints chosen by the host for a certificate's role.
 ///
@@ -51,13 +51,14 @@ pub struct ProfilePolicy<'a> {
 }
 
 impl ProfilePolicy<'_> {
-    /// Check a certificate's profile using Unix seconds selected by the host.
+    /// Check a parsed certificate's profile using Unix seconds selected by the host.
     ///
     /// Diagnostic/error precedence is retained. Passing this check alone cannot
-    /// establish cryptographic validity or trust.
+    /// establish cryptographic validity or trust. The result borrows the DER,
+    /// independently of the parsed wrapper and policy lifetimes.
     pub fn check_certificate<'a>(
         &self,
-        certificate_der: &'a [u8],
+        certificate: &ParsedCertificate<'a>,
         validation_time: i64,
     ) -> Result<ProfileValidCertificate<'a>, ProfileError> {
         let mut diagnostic = None;
@@ -65,18 +66,18 @@ impl ProfilePolicy<'_> {
 
         let result = if self.end_entity {
             check_end_entity_certificate_profile(
-                certificate_der,
+                certificate.parsed(),
                 self,
                 &mut report,
                 validation_time,
             )
         } else {
-            check_certificate_profile(certificate_der, self, &mut report, validation_time)
+            check_certificate_profile(certificate.parsed(), self, &mut report, validation_time)
         };
 
         result
             .map(|()| ProfileValidCertificate {
-                der: certificate_der,
+                der: certificate.certificate_der(),
             })
             .map_err(|kind| ProfileError { kind, diagnostic })
     }
@@ -125,7 +126,7 @@ impl ProfileValidCertificate<'_> {
     }
 }
 
-/// Profile rejection with the optional diagnostic emitted by the original check.
+/// Parsing or profile rejection with the optional diagnostic for host reporting.
 #[derive(Debug, Error)]
 #[error("{kind}")]
 pub struct ProfileError {
@@ -136,59 +137,13 @@ pub struct ProfileError {
     pub diagnostic: Option<&'static str>,
 }
 
-/// Reject certificate purposes explicitly forbidden by a host-selected role.
-///
-/// This is only a purpose exclusion check, not a full profile check. Missing
-/// EKUs are evaluated separately by the selected profile. No application role
-/// is inferred and neither configuration nor trust can bypass this check.
-pub fn check_disallowed_ekus(
-    certificate_der: &[u8],
-    disallowed: &[&str],
-) -> Result<(), CertificateProfileError> {
-    let (_, certificate) = X509Certificate::from_der(certificate_der)
-        .map_err(|_| CertificateProfileError::InvalidCertificate)?;
-
-    let eku = certificate
-        .extended_key_usage()
-        .map_err(|_| CertificateProfileError::InvalidCertificate)?;
-
-    if let Some(eku) = eku {
-        let present = |oid: &&str| match *oid {
-            "1.3.6.1.5.5.7.3.1" => eku.value.server_auth,
-            "1.3.6.1.5.5.7.3.2" => eku.value.client_auth,
-            "1.3.6.1.5.5.7.3.3" => eku.value.code_signing,
-            "1.3.6.1.5.5.7.3.4" => eku.value.email_protection,
-            "1.3.6.1.5.5.7.3.8" => eku.value.time_stamping,
-            "1.3.6.1.5.5.7.3.9" => eku.value.ocsp_signing,
-            "2.5.29.37.0" => eku.value.any,
-            _ => eku
-                .value
-                .other
-                .iter()
-                .any(|other| other.to_id_string() == *oid),
-        };
-
-        if disallowed.iter().any(present) {
-            return Err(CertificateProfileError::InvalidEku);
-        }
-    }
-
-    Ok(())
-}
-
 fn check_end_entity_certificate_profile(
-    certificate_der: &[u8],
+    signcert: &X509Certificate<'_>,
     ctp: &ProfilePolicy<'_>,
     report: &mut impl FnMut(&'static str),
     validation_time: i64,
 ) -> Result<(), CertificateProfileError> {
-    check_certificate_profile(certificate_der, ctp, report, validation_time)?;
-
-    let (_rem, signcert) = X509Certificate::from_der(certificate_der).map_err(|_err| {
-        report("certificate could not be parsed");
-
-        CertificateProfileError::InvalidCertificate
-    })?;
+    check_certificate_profile(signcert, ctp, report, validation_time)?;
 
     // Role-specific policies require every mandatory EKU, not just an allowed one.
     if ctp.has_mandatory_ekus() {
@@ -218,17 +173,11 @@ fn check_end_entity_certificate_profile(
 }
 
 fn check_certificate_profile(
-    certificate_der: &[u8],
+    signcert: &X509Certificate<'_>,
     ctp: &ProfilePolicy<'_>,
     report: &mut impl FnMut(&'static str),
     validation_time: i64,
 ) -> Result<(), CertificateProfileError> {
-    let (_rem, signcert) = X509Certificate::from_der(certificate_der).map_err(|_err| {
-        report("certificate could not be parsed");
-
-        CertificateProfileError::InvalidCertificate
-    })?;
-
     // Version shall be v3 as per RFC 5280, section 4.1.2.1.
     if signcert.version() != X509Version::V3 {
         report("certificate version incorrect");
