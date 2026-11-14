@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -94,22 +94,19 @@ impl ProfilePolicy<'_> {
             if let Ok(Some(BasicExtension { value: eku, .. })) = signcert.extended_key_usage() {
                 if !self.verify_mandatory_ekus(eku) {
                     report("certificate missing mandatory EKU");
-
                     return Err(CertificateProfileError::InvalidEku);
                 }
             } else {
                 report("certificate missing mandatory EKU");
-
                 return Err(CertificateProfileError::InvalidEku);
             }
         }
 
         let tbscert = &signcert.tbs_certificate;
 
-        // If we are expecting an end-entity cert, make sure that is so
+        // If we are expecting an end-entity cert, make sure that is so.
         if tbscert.is_ca() {
             report("expected end-entity certificate");
-
             return Err(CertificateProfileError::InvalidCertificate);
         }
 
@@ -125,7 +122,6 @@ impl ProfilePolicy<'_> {
         // Version shall be v3 as per RFC 5280, section 4.1.2.1.
         if signcert.version() != X509Version::V3 {
             report("certificate version incorrect");
-
             return Err(CertificateProfileError::InvalidCertificateVersion);
         }
 
@@ -134,7 +130,6 @@ impl ProfilePolicy<'_> {
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
         ) {
             report("certificate expired");
-
             return Err(CertificateProfileError::CertificateNotValidAtTime);
         }
 
@@ -161,7 +156,6 @@ impl ProfilePolicy<'_> {
             || *cert_alg == ED25519_OID)
         {
             report("certificate algorithm not supported");
-
             return Err(CertificateProfileError::UnsupportedAlgorithm);
         }
 
@@ -169,7 +163,6 @@ impl ProfilePolicy<'_> {
         // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
         if *cert_alg == ED25519_OID && signcert.signature_algorithm.parameters.is_some() {
             report("certificate Ed25519 signature algorithm parameters must be absent");
-
             return Err(CertificateProfileError::InvalidCertificate);
         }
 
@@ -197,7 +190,6 @@ impl ProfilePolicy<'_> {
 
                 if ha_alg.algorithm.to_id_string() != mgf_ai_params_algorithm.to_id_string() {
                     report("certificate algorithm error");
-
                     return Err(CertificateProfileError::InvalidCertificate);
                 }
 
@@ -207,12 +199,10 @@ impl ProfilePolicy<'_> {
                     || ha_alg.algorithm == SHA512_OID)
                 {
                     report("certificate hash algorithm not supported");
-
                     return Err(CertificateProfileError::InvalidCertificate);
                 }
             } else {
                 report("certificate missing algorithm parameters");
-
                 return Err(CertificateProfileError::InvalidCertificate);
             }
         }
@@ -233,7 +223,6 @@ impl ProfilePolicy<'_> {
                     || named_curve_oid == SECP521R1_OID)
                 {
                     report("certificate unsupported EC curve");
-
                     return Err(CertificateProfileError::InvalidCertificate);
                 }
             } else {
@@ -245,7 +234,6 @@ impl ProfilePolicy<'_> {
         // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
         if skpi_alg.algorithm == ED25519_OID && skpi_alg.parameters.is_some() {
             report("certificate Ed25519 public key parameters must be absent");
-
             return Err(CertificateProfileError::InvalidCertificate);
         }
 
@@ -272,13 +260,11 @@ impl ProfilePolicy<'_> {
 
             if modulus.bits() < 2048 {
                 report("certificate key length too short");
-
                 return Err(CertificateProfileError::InvalidCertificate);
             }
 
             if !is_valid_rsa_public_exponent(&exponent) {
                 report("certificate RSA public exponent is invalid");
-
                 return Err(CertificateProfileError::InvalidCertificate);
             }
         }
@@ -288,14 +274,12 @@ impl ProfilePolicy<'_> {
         // Disallow self-signed certificates.
         if tbscert.is_ca() && tbscert.issuer() == tbscert.subject() {
             report("certificate issuer and subject cannot be the same (self-signed disallowed)");
-
             return Err(CertificateProfileError::SelfSignedCertificate);
         }
 
         // Disallow unique IDs.
         if signcert.issuer_uid.is_some() || signcert.subject_uid.is_some() {
             report("certificate issuer/subject unique ids are not allowed");
-
             return Err(CertificateProfileError::InvalidCertificate);
         }
 
@@ -311,13 +295,11 @@ impl ProfilePolicy<'_> {
             Some(BasicExtension { value: eku, .. }) => {
                 if eku.any {
                     report("certificate 'any' EKU not allowed");
-
                     return Err(CertificateProfileError::InvalidCertificate);
                 }
 
                 if self.allowed_eku(eku).is_none() {
                     report("certificate missing required EKU");
-
                     return Err(CertificateProfileError::InvalidCertificate);
                 }
 
@@ -331,7 +313,6 @@ impl ProfilePolicy<'_> {
                             | !eku.other.is_empty()))
                 {
                     report("certificate invalid set of EKUs");
-
                     return Err(CertificateProfileError::InvalidCertificate);
                 }
 
@@ -364,7 +345,6 @@ impl ProfilePolicy<'_> {
                     // asserted in the Basic Constraints extension."
                     if ku.key_cert_sign() && !tbscert.is_ca() {
                         report("certificate asserts keyCertSign key usage but is not a CA");
-
                         return Err(CertificateProfileError::InvalidCertificate);
                     }
 
@@ -373,7 +353,6 @@ impl ProfilePolicy<'_> {
                     // may assert nonRepudiation instead (RFC 3161, section 2.3).
                     if !tbscert.is_ca() && !signs_time_stamps_or_ocsp && !ku.digital_signature() {
                         report("certificate missing digitalSignature key usage");
-
                         return Err(CertificateProfileError::InvalidCertificate);
                     }
 
@@ -426,7 +405,6 @@ impl ProfilePolicy<'_> {
             Ok(())
         } else {
             report("certificate params incorrect");
-
             Err(CertificateProfileError::InvalidCertificate)
         }
     }
