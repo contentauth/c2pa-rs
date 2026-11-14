@@ -163,6 +163,9 @@ pub struct TrustAnchor {
     ///
     /// When used for C2PA this will not be C2PA trust list recognized or acknowledged certificates and
     /// should only be used for non-C2PA conformant cases.
+    ///
+    /// Only the allowed list of a [`TrustListKind::Manifest`] entry trusts claim signers. The
+    /// allowed list of a [`TrustListKind::CAWG`] entry trusts CAWG identities only.
     pub allowed_list: Option<String>,
 
     /// Exact-match allow-list of trusted CAWG identity claims aggregation (ICA)

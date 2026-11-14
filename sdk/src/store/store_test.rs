@@ -58,14 +58,14 @@ use crate::{
     asset_io::ReadWriteSeek,
     claim::{AssertionStoreJsonFormat, Claim, ClaimAssertion, ClaimAssetData},
     context::Context,
-    crypto::cose::CertificateTrustPolicy,
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
     jumbf::{boxes::C2PA_REDACTION_UUID, labels::to_assertion_uri},
     jumbf_io::load_jumbf_from_stream,
-    settings::{Settings, SettingsValidate},
+    settings::{Settings, SettingsValidate, TrustAnchor, TrustListKind},
     status_tracker::{ErrorBehavior, LogItem, StatusTracker},
     store::{InvalidClaimError, Store, StoreValidationInfo},
     utils::{
@@ -6804,6 +6804,50 @@ fn test_from_context_without_default_ekus() {
         .ctp
         .has_allowed_eku(&eku(c2pa_claim_signing))
         .is_none());
+}
+
+#[test]
+fn test_from_context_allowed_list_is_manifest_only() {
+    // C2PA 2.5 13.4.3: only the private credential store, a manifest entry's allowed list,
+    // trusts a claim signer directly.
+    let claim_signer_chain_pem = include_bytes!("../../tests/fixtures/certs/es256.pub");
+    let claim_signer_chain_der =
+        crate::crypto::cert_chain_pem_to_der(claim_signer_chain_pem).unwrap();
+    let allowed_list_with_claim_signer =
+        String::from_utf8(claim_signer_chain_pem.to_vec()).unwrap();
+
+    // The store's only trust entry has the given kind, no anchors, and the claim signer on allow list.
+    let allowed_list_trusts_claim_signer = |kind: TrustListKind| {
+        let mut settings = Settings::default();
+        settings.trust.anchors = Some(vec![TrustAnchor {
+            trust_anchors: String::new(),
+            trust_uri: None,
+            trust_kind: kind,
+            trust_config: None,
+            allowed_list: Some(allowed_list_with_claim_signer.clone()),
+            trusted_ica_issuers: None,
+        }]);
+        let store = Store::from_context(&Context::new().with_settings(settings).unwrap());
+
+        store
+            .ctp
+            .check_certificate_trust_for(
+                Some(TrustAnchorType::Manifest),
+                &claim_signer_chain_der[1..],
+                &claim_signer_chain_der[0],
+                None,
+            )
+            .is_ok()
+    };
+
+    // A manifest entry's allowed list trusts the claim signer.
+    assert!(allowed_list_trusts_claim_signer(TrustListKind::Manifest));
+
+    // A CAWG entry's allowed list does not trust the claim signer.
+    assert!(!allowed_list_trusts_claim_signer(TrustListKind::CAWG));
+
+    // A TSA entry's allowed list does not trust the claim signer.
+    assert!(!allowed_list_trusts_claim_signer(TrustListKind::TSA));
 }
 
 #[test]
