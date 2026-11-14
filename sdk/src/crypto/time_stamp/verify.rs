@@ -282,7 +282,20 @@ pub fn verify_time_stamp(
 
 /// Extract the first TSA signer's certificate without verifying or trusting it.
 /// Supports issuer/serial and strictly decoded subject-key-identifier signer IDs.
+///
+/// Use [`contentauth_pki::timestamp::verification::signer_certificate_from_token`]
+/// for the same unverified lookup, mapping its error to host reporting as needed.
+#[deprecated(
+    since = "0.93.0",
+    note = "Use `contentauth_pki::timestamp::verification::signer_certificate_from_token()` instead; the returned certificate is unverified and not trusted. Will be removed in 0.94.0 (scheduled for mid-March 2027)."
+)]
 pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, TimeStampError> {
+    tsa_signer_cert_der_from_token_with_sdk_errors(ts)
+}
+
+pub(crate) fn tsa_signer_cert_der_from_token_with_sdk_errors(
+    ts: &[u8],
+) -> Result<Option<Vec<u8>>, TimeStampError> {
     signer_certificate_from_token(ts).map_err(Into::into)
 }
 
@@ -391,7 +404,7 @@ mod tests {
         ));
 
         // A non-SEQUENCE is treated as an absent optional token by lookup.
-        assert!(tsa_signer_cert_der_from_token(b"not DER")
+        assert!(tsa_signer_cert_der_from_token_with_sdk_errors(b"not DER")
             .expect("non-SEQUENCE is treated as an absent token")
             .is_none());
     }
@@ -817,7 +830,7 @@ pub(crate) mod message_imprint_regression {
     fn private_credential_store_is_not_a_timestamp_authority() {
         use openssl::x509::X509;
 
-        use super::tsa_signer_cert_der_from_token;
+        use super::tsa_signer_cert_der_from_token_with_sdk_errors;
         use crate::crypto::cose::TrustAnchorType;
 
         let token = build_token_with(
@@ -830,7 +843,7 @@ pub(crate) mod message_imprint_regression {
             },
         );
 
-        let signer_der = tsa_signer_cert_der_from_token(&token)
+        let signer_der = tsa_signer_cert_der_from_token_with_sdk_errors(&token)
             .unwrap()
             .expect("token carries its signer certificate");
 
@@ -883,7 +896,7 @@ pub(crate) mod message_imprint_regression {
     fn manifest_trust_anchor_is_not_a_timestamp_authority() {
         use openssl::x509::X509;
 
-        use super::tsa_signer_cert_der_from_token;
+        use super::tsa_signer_cert_der_from_token_with_sdk_errors;
         use crate::crypto::cose::TrustAnchorType;
 
         let token = build_token_with(
@@ -896,7 +909,7 @@ pub(crate) mod message_imprint_regression {
             },
         );
 
-        let signer_der = tsa_signer_cert_der_from_token(&token)
+        let signer_der = tsa_signer_cert_der_from_token_with_sdk_errors(&token)
             .unwrap()
             .expect("token carries its signer certificate");
 
@@ -1154,7 +1167,7 @@ pub(crate) mod message_imprint_regression {
         ));
 
         assert!(
-            super::tsa_signer_cert_der_from_token(&encode_token(&missing))
+            super::tsa_signer_cert_der_from_token_with_sdk_errors(&encode_token(&missing))
                 .unwrap()
                 .is_none()
         );
@@ -1195,7 +1208,7 @@ pub(crate) mod message_imprint_regression {
         ));
 
         assert!(
-            super::tsa_signer_cert_der_from_token(&encode_token(&no_signers))
+            super::tsa_signer_cert_der_from_token_with_sdk_errors(&encode_token(&no_signers))
                 .unwrap()
                 .is_none()
         );
@@ -1276,7 +1289,7 @@ pub(crate) mod message_imprint_regression {
             },
         );
 
-        let expected = super::tsa_signer_cert_der_from_token(&token)
+        let expected = super::tsa_signer_cert_der_from_token_with_sdk_errors(&token)
             .unwrap()
             .unwrap();
 
@@ -1307,7 +1320,7 @@ pub(crate) mod message_imprint_regression {
             let token = encode_token(&sd);
 
             assert_eq!(
-                super::tsa_signer_cert_der_from_token(&token).unwrap(),
+                super::tsa_signer_cert_der_from_token_with_sdk_errors(&token).unwrap(),
                 if raw_extension {
                     None
                 } else {
@@ -1351,7 +1364,7 @@ pub(crate) mod message_imprint_regression {
                 },
             );
 
-            let cert = super::tsa_signer_cert_der_from_token(&token)
+            let cert = super::tsa_signer_cert_der_from_token_with_sdk_errors(&token)
                 .unwrap()
                 .unwrap();
 
@@ -1523,7 +1536,7 @@ pub(crate) mod message_imprint_regression {
                     },
                 );
 
-                let tsa = super::tsa_signer_cert_der_from_token(&token)
+                let tsa = super::tsa_signer_cert_der_from_token_with_sdk_errors(&token)
                     .unwrap()
                     .unwrap();
 
@@ -1721,7 +1734,7 @@ pub(crate) mod message_imprint_regression {
             },
         );
 
-        let cert = super::tsa_signer_cert_der_from_token(&token)
+        let cert = super::tsa_signer_cert_der_from_token_with_sdk_errors(&token)
             .unwrap()
             .unwrap();
 
@@ -1834,7 +1847,7 @@ pub(crate) mod message_imprint_regression {
             assert!(log.has_status(TIMESTAMP_UNTRUSTED));
 
             if valid_profile {
-                let cert = super::tsa_signer_cert_der_from_token(&token)
+                let cert = super::tsa_signer_cert_der_from_token_with_sdk_errors(&token)
                     .unwrap()
                     .unwrap();
 
@@ -1876,9 +1889,11 @@ pub(crate) mod message_imprint_regression {
             sd.signer_infos = vec![signer].into();
             let token = encode_token(&sd);
 
-            assert!(super::tsa_signer_cert_der_from_token(&token)
-                .unwrap()
-                .is_none());
+            assert!(
+                super::tsa_signer_cert_der_from_token_with_sdk_errors(&token)
+                    .unwrap()
+                    .is_none()
+            );
 
             assert!(matches!(
                 verify_time_stamp(
@@ -1901,7 +1916,7 @@ pub(crate) mod message_imprint_regression {
 
         let token = encode_token(&sd);
 
-        assert!(super::tsa_signer_cert_der_from_token(&token).is_err());
+        assert!(super::tsa_signer_cert_der_from_token_with_sdk_errors(&token).is_err());
 
         assert!(matches!(
             check_error(&token, TIMESTAMP_UNTRUSTED),

@@ -18,7 +18,7 @@
 
 pub use crate::asn1::{AlgorithmIdentifier, GeneralizedTime};
 
-/// Timestamp structures still consumed by SDK profile, trust, OCSP, and acquisition adapters.
+/// Timestamp structures still consumed by SDK timestamp, OCSP, and acquisition adapters.
 pub mod rfc3161 {
     pub use crate::asn1::rfc3161::{Accuracy, MessageImprint, TimeStampReq, TstInfo};
 }

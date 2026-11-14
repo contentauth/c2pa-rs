@@ -158,7 +158,10 @@ fn rsa_profiles_reach_validated_and_trusted_sdk_statuses() {
 fn rsa_profiles_and_ski_signers_reach_normal_tsa_trust_validation() {
     for token in [PS256, PS384, PS512, PKCS1] {
         let mut sd = decode(token);
-        let cert_der = tsa_signer_cert_der_from_token(token).unwrap().unwrap();
+        let cert_der = tsa_signer_cert_der_from_token_with_sdk_errors(token)
+            .unwrap()
+            .unwrap();
+
         let pem = pem::encode(&pem::Pem::new("CERTIFICATE", cert_der));
         let mut policy = CertificateTrustPolicy::new();
 
@@ -264,7 +267,9 @@ fn pss_actual_salt_must_match_the_declared_profile() {
 #[test]
 fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
     let mut sd = decode(PS256);
-    let expected = tsa_signer_cert_der_from_token(PS256).unwrap().unwrap();
+    let expected = tsa_signer_cert_der_from_token_with_sdk_errors(PS256)
+        .unwrap()
+        .unwrap();
 
     assert!(verify(PS256).0.is_ok());
 
@@ -291,7 +296,7 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
     let token = encode(&sd);
 
     assert_eq!(
-        tsa_signer_cert_der_from_token(&token).unwrap(),
+        tsa_signer_cert_der_from_token_with_sdk_errors(&token).unwrap(),
         Some(expected)
     );
 
@@ -333,7 +338,10 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
 
         let token = encode(&changed);
 
-        assert!(tsa_signer_cert_der_from_token(&token).unwrap().is_none());
+        assert!(tsa_signer_cert_der_from_token_with_sdk_errors(&token)
+            .unwrap()
+            .is_none());
+
         assert!(matches!(verify(&token).0, Err(TimeStampError::InvalidData)));
     }
 
@@ -341,6 +349,9 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
     sd.signer_infos = vec![signer].into();
     let token = encode(&sd);
 
-    assert!(tsa_signer_cert_der_from_token(&token).unwrap().is_none());
+    assert!(tsa_signer_cert_der_from_token_with_sdk_errors(&token)
+        .unwrap()
+        .is_none());
+
     assert!(matches!(verify(&token).0, Err(TimeStampError::InvalidData)));
 }

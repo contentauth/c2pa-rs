@@ -32,9 +32,12 @@ pub use certificate_trust_policy::{
 };
 
 mod certificate_profile;
-pub(crate) use certificate_profile::CertificateRole;
+#[allow(deprecated)]
 pub use certificate_profile::{
     check_certificate_profile, check_end_entity_certificate_profile, CertificateProfileError,
+};
+pub(crate) use certificate_profile::{
+    check_end_entity_certificate_profile_with_sdk_policy, CertificateRole,
 };
 
 mod error;

@@ -2,9 +2,10 @@
 
 `contentauth-pki` is an **unpublished, provisional**
 workspace crate. The acquisition foundation implements host-driven RFC 3161
-timestamp acquisition. This second layer adds deterministic timestamp
-cryptographic verification and only its private CMS/X.509 support. Certificate
-profile/chain policy, trust, OCSP, and COSE orchestration remain in the C2PA SDK.
+timestamp acquisition. Subsequent layers add deterministic timestamp
+cryptographic verification and X.509 certificate/profile/chain mechanics.
+Application roles, profile policy selection, trust, OCSP, and COSE orchestration
+remain in the C2PA SDK.
 
 The scope is public key infrastructure (PKI) workflows for content authenticity.
 COSE is supporting machinery, not a general-purpose COSE environment.
@@ -62,14 +63,95 @@ remains host-side; it is not a new success or fallback in this crate.
 | Acquired/unverified | HTTP envelope, structure, and available reflected nonce checked; original bytes returned. |
 | Signature-verified | `SignatureVerifiedTimestamp`: CMS signature and signed-attribute digest checked; not yet bound to the host message. |
 | Cryptographically verified | `VerifiedTimestamp`: signature plus message imprint checked. Not an accepted signing time. |
-| Profile-valid | Not produced here. Existing SDK certificate/profile checks remain authoritative. |
+| Certificate-signature-verified | `SignatureVerifiedChain`: each certificate signature checked against the next key; not CA authorization or trust. |
+| Profile-valid | `ProfileValidCertificate`: supplied profile constraints and host time satisfied; no signature or trust check. |
+| Anchor-associated | `AnchorAssociation`: valid path to one explicitly supplied anchor set at the supplied time; not role authorization or host trust. |
 | Trusted | Not produced here. SDK trust policy and C2PA/CAWG reporting remain authoritative. |
 
-These are distinct claims, not interchangeable booleans. Later extraction should
-accept explicit facts and policy inputs chosen by the host rather than infer
-SDK policy, configure resolvers, consult settings, or emit C2PA status codes.
-No public verification-policy abstraction or empty subsystem scaffolding is
-introduced in anticipation of that work.
+These are distinct claims, not interchangeable booleans. The crate accepts
+explicit facts and policy inputs chosen by the host, rather than inferring
+SDK policy, configuring resolvers, consulting settings, or emitting C2PA status
+codes.
+
+## X.509 boundary
+
+`x509::ParsedCertificate::from_der` parses DER once, borrowing the original bytes
+and keeping the parser representation private. Parsing establishes no signature,
+profile, or trust guarantee. Only the original DER is exposed; purpose exclusions
+are checked with `ParsedCertificate::check_disallowed_ekus`.
+
+`x509::profile::ProfilePolicy::check_certificate` takes a borrowed
+`ParsedCertificate` and host-selected Unix seconds. The host constructs the
+policy with effective allowed and mandatory EKU sets, chooses end-entity
+constraints, and explicitly selects specialty-purpose and empty-list
+emailProtection compatibility. `ProfileError` retains the typed rejection and
+optional original diagnostic; SDK error/status mapping remains host-side.
+
+Reuse the same parsed certificate for purpose and profile checks:
+
+```rust
+let certificate = contentauth_pki::x509::ParsedCertificate::from_der(der)?;
+certificate.check_disallowed_ekus(&disallowed)?;
+let profile_valid = policy.check_certificate(&certificate, validation_time)?;
+```
+
+Parsing retains the existing trailing-DER compatibility and diagnostic. The
+profile-valid result borrows the DER, not the parsed wrapper or policy, so neither
+must remain alive after the check.
+
+The hidden SDK `check_certificate_profile` and
+`check_end_entity_certificate_profile` compatibility APIs are deprecated in
+favor of this method. Select `end_entity = false` or `true`, respectively, and
+parse with `ParsedCertificate::from_der`. Keep role selection, time, and reporting
+host-side, including mapping parsing and profile failures. The hidden SDK
+`tsa_signer_cert_der_from_token` lookup is also deprecated in favor of
+`timestamp::verification::signer_certificate_from_token`, which returns an
+unverified certificate and crate-specific errors. SDK-specific timestamp
+verification, trust, and acquisition orchestration are not deprecated: those
+still apply host policy beyond the extracted primitives.
+
+These three compatibility APIs are deprecated since 0.93.0 and will be removed
+in 0.94.0, scheduled for mid-March 2027.
+
+`x509::chain::verify_chain_signatures` checks certificate signatures only.
+`validate_chain_to_anchors` checks the existing backend's chain/CA-authorization
+and validity mechanics against exactly one supplied anchor set. The SDK filters
+anchor sets by list type and their own effective EKUs before calling it, then
+associates the returned result with its trust-list URI. Private credential
+membership and passthrough remain separate host decisions, not chain proofs.
+No trust anchors or clock are selected inside the crate, including OpenSSL's
+evaluation time: the host always supplies it explicitly.
+
+The SDK retains `CertificateRole` and selects the settled #3040 policy: claim
+signers explicitly reject timeStamping/OCSPSigning through
+`ParsedCertificate::check_disallowed_ekus`; TSA/delegated OCSP roles clear
+configured purposes and require their respective mandatory EKU. CAWG identity profiles deliberately do
+not inherit claim exclusions. CAWG documentSigning, interim S/MIME policies,
+cutoff, and trusted associated timestamps remain unchanged; #3077 is separate.
+The generic SDK profile APIs retain their existing compatibility contract.
+Issuer-signed OCSP still uses its separate issuing-CA authorization path.
+
+Defaults, absent/empty/explicit lists, and anchor-local additions are interpreted
+by the SDK, not migrated into this crate. A nonempty configured list still
+selects supported alternate claim purposes rather than universally requiring
+claimSigning; an explicitly selected empty-list emailProtection fallback is
+preserved. Mixed-specialty/anyExtendedKeyUsage restrictions, CA constraints,
+algorithm checks, and existing failure precedence are retained. Existing
+OpenSSL/Rust-native path-building differences are not silently harmonized:
+OpenSSL uses strict/partial-chain path building; Rust-native checks the supplied
+linear chain and searches its existing anchor relationships. An association is
+never a full certificate-profile or revocation verdict.
+
+Certificate parsers, signature-algorithm helpers, and strict SKI decoding remain
+crate-private and shared with timestamp verification. No public ASN.1 type or
+codec API, general settings migration, OCSP fetch, or revocation-budget policy is
+introduced.
+
+The crate has no direct `nom` dependency. The shared certificate RSA-PSS parser
+uses fallible ASN.1 decoding without constructing `nom` errors; existing
+certificate parameter acceptance is preserved, including ignored trailing
+parameters. ASN.1/X.509 dependencies still bring `nom` transitively; migrating
+those dependencies is a separate effort.
 
 ## Verifying a timestamp
 
@@ -151,7 +233,7 @@ this crate and do not depend on the SDK fixture directory.
 `asn1` and `timestamp::response` are private. Timestamp response interpretation
 lives alongside acquisition, rather than in the shared ASN.1 codec layer.
 The opt-in `sdk-compat` bridge now exposes only the legacy timestamp facts and
-request structures still needed by deferred SDK profile/trust/OCSP consumers
+request structures still needed by SDK timestamp/OCSP consumers
 and acquisition adapters. `verified_timestamp_info` adapts a `VerifiedTimestamp`
 to the existing SDK `TstInfo` contract; it does not validate trust. CMS signer/data
 types, response wrappers, and token/response codecs are no longer exported.
@@ -169,14 +251,11 @@ The crate's name, API, and compatibility feature are experimental.
 
 ## Subsequent bounded layers
 
-1. Move X.509 chain/profile mechanics with explicit host-selected role/policy
-   inputs and separate verified/profile-valid/trusted outcomes. Do not silently
-   redefine role-specific EKU acceptance: #3025 remains unresolved.
-2. Extract OCSP parsing and verification using the shared certificate foundation,
+1. Extract OCSP parsing and verification using the shared certificate foundation,
    then host-driven acquisition. Preserve issuer-signed responses, authoritative
    status reporting, and bounded reads. #3026 verification-resource budgets remain
    unresolved; this layer neither invents budgets nor claims they are solved.
-3. Move COSE verification/signing orchestration atop those primitives while the
+2. Move COSE verification/signing orchestration atop those primitives while the
    SDK retains C2PA/CAWG mapping, settings, resolver wiring, and SDK policy.
 
 Each layer depends on the shared codec/fact boundary below it and should carry
