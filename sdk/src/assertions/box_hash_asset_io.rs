@@ -20,7 +20,8 @@ use super::{BoxHash, BoxMap};
 use crate::{
     assertion::{Assertion, AssertionBase},
     assertions::asset_binding::{
-        asset_io_error, AssetBinding, BindingKind, HashSpan, MaybeBinding, PlannedAsset,
+        asset_io_error, AssetBinding, BindingDefaults, BindingKind, HashSpan, MaybeBinding,
+        PlannedAsset,
     },
     asset_handlers::asset_io_adapter::box_map_from_structure,
     asset_io::C2PA_BOXHASH,
@@ -143,15 +144,18 @@ fn from_claim(claim: &Claim) -> MaybeBinding {
 }
 
 /// The default for a container made entirely of named boxes, except ISO BMFF,
-/// whose binding C2PA defines separately.
+/// whose binding C2PA defines separately, unless the defaults rule it out.
 fn default_for(
     structure: &Structure,
     _context: &Context,
     _claim: &Claim,
     _alg: &str,
+    defaults: &BindingDefaults,
 ) -> MaybeBinding {
-    Ok((!is_bmff(structure) && structure.supports_named_boxes())
-        .then(|| Box::new(BoxHash { boxes: Vec::new() }) as Box<dyn AssetBinding>))
+    Ok(
+        (defaults.named_boxes && !is_bmff(structure) && structure.supports_named_boxes())
+            .then(|| Box::new(BoxHash { boxes: Vec::new() }) as Box<dyn AssetBinding>),
+    )
 }
 
 fn is_bmff(structure: &Structure) -> bool {
@@ -209,6 +213,12 @@ impl AssetBinding for BoxHash {
     ) -> Result<Vec<HashSpan>> {
         let boxes = output_boxes(asset)?;
         self.resolve(&boxes, default_alg)
+    }
+
+    /// The store is one excluded box, hashed by no entry, and no entry records a
+    /// position, so the store's size does not matter.
+    fn depends_on_store_size(&self) -> bool {
+        false
     }
 
     fn set_hashes(&mut self, digests: Vec<Vec<u8>>) {

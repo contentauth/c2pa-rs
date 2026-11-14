@@ -146,6 +146,27 @@ pub(crate) trait AssetBinding {
 
     /// Store the digests of the spans [`plan_hashes`](Self::plan_hashes) returned.
     fn set_hashes(&mut self, digests: Vec<Vec<u8>>);
+
+    /// Whether the hashes depend on where the manifest store is and how large it
+    /// is. A binding that does not can be signed with a store of any size, such as
+    /// a compressed one, without settling the store's size first.
+    fn depends_on_store_size(&self) -> bool {
+        true
+    }
+}
+
+/// Which defaults [`default_binding`] may choose.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BindingDefaults {
+    /// Whether a container made entirely of named boxes defaults to a box hash.
+    /// Without it, such a container gets a data hash, as `save_to_stream` gives it.
+    pub named_boxes: bool,
+}
+
+impl Default for BindingDefaults {
+    fn default() -> Self {
+        Self { named_boxes: true }
+    }
 }
 
 /// A binding, if one applies.
@@ -158,8 +179,9 @@ pub(crate) struct BindingKind {
     /// saving supports.
     pub from_claim: fn(&Claim) -> MaybeBinding,
     /// A new binding of this kind for a structure, using the context's settings,
-    /// the claim and the default algorithm, if it is the right default.
-    pub default_for: fn(&Structure, &Context, &Claim, &str) -> MaybeBinding,
+    /// the claim, the default algorithm and the allowed defaults, if it is the
+    /// right default.
+    pub default_for: fn(&Structure, &Context, &Claim, &str, &BindingDefaults) -> MaybeBinding,
 }
 
 /// Every binding direct saving supports, in the order a default is chosen: the
@@ -197,9 +219,10 @@ pub(crate) fn default_binding(
     context: &Context,
     claim: &Claim,
     alg: &str,
+    defaults: &BindingDefaults,
 ) -> Result<Box<dyn AssetBinding>> {
     for kind in BINDINGS {
-        if let Some(binding) = (kind.default_for)(structure, context, claim, alg)? {
+        if let Some(binding) = (kind.default_for)(structure, context, claim, alg, defaults)? {
             return Ok(binding);
         }
     }

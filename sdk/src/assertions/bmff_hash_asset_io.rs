@@ -22,7 +22,8 @@ use super::{BmffHash, ExclusionsMap};
 use crate::{
     assertion::{Assertion, AssertionBase},
     assertions::asset_binding::{
-        asset_io_error, AssetBinding, BindingKind, HashSpan, MaybeBinding, PlannedAsset,
+        asset_io_error, AssetBinding, BindingDefaults, BindingKind, HashSpan, MaybeBinding,
+        PlannedAsset,
     },
     claim::Claim,
     context::Context,
@@ -60,7 +61,13 @@ fn from_claim(claim: &Claim) -> MaybeBinding {
 }
 
 /// The default for ISO BMFF, with the settings' default exclusions.
-fn default_for(structure: &Structure, context: &Context, claim: &Claim, alg: &str) -> MaybeBinding {
+fn default_for(
+    structure: &Structure,
+    context: &Context,
+    claim: &Claim,
+    alg: &str,
+    _defaults: &BindingDefaults,
+) -> MaybeBinding {
     if !is_bmff(structure) {
         return Ok(None);
     }

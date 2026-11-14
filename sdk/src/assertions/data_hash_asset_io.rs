@@ -20,7 +20,8 @@ use super::DataHash;
 use crate::{
     assertion::{Assertion, AssertionBase},
     assertions::asset_binding::{
-        asset_io_error, AssetBinding, BindingKind, HashSpan, MaybeBinding, PlannedAsset,
+        asset_io_error, AssetBinding, BindingDefaults, BindingKind, HashSpan, MaybeBinding,
+        PlannedAsset,
     },
     claim::Claim,
     context::Context,
@@ -74,6 +75,7 @@ fn default_for(
     _context: &Context,
     _claim: &Claim,
     alg: &str,
+    _defaults: &BindingDefaults,
 ) -> MaybeBinding {
     Ok(Some(Box::new(DataHash::placeholder(alg, Vec::new())?)))
 }
