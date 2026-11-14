@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::str::FromStr;
+
 use asn1_rs::{Any, Class, FromDer, Header, Tag};
 use c2pa_raw_crypto::{
     oids::*, validator_for_sig_and_hash_algs, RawSignatureValidationError, SigningAlg,
@@ -89,6 +91,93 @@ impl<'a> ParsedCertificate<'a> {
         }
 
         Ok(())
+    }
+
+    /// Check direct issuance, certificate signature, and the issuer's CA authority.
+    ///
+    /// This establishes no path trust, validity time, role, or profile. It retains
+    /// the OCSP direct-issuance algorithm compatibility, including strict SHA-2
+    /// RSA-PSS digest, MGF, salt-length, and trailer checks. Path-length constraints
+    /// are evaluated separately when building a full chain.
+    pub fn is_issued_by(&self, issuer: &ParsedCertificate<'_>) -> bool {
+        let cert = &self.certificate;
+        let issuer = &issuer.certificate;
+
+        if cert.issuer() != issuer.subject()
+            || cert.tbs_certificate.signature != cert.signature_algorithm
+            || !issuer
+                .basic_constraints()
+                .is_ok_and(|bc| bc.is_some_and(|bc| bc.value.ca))
+            || !issuer
+                .key_usage()
+                .is_ok_and(|ku| ku.is_none_or(|ku| ku.value.key_cert_sign()))
+        {
+            return false;
+        }
+
+        // Preserve the OCSP certificate-codec compatibility before signature checks.
+        if rasn::der::decode::<rasn_pkix::Certificate>(self.der).is_err() {
+            return false;
+        }
+
+        let algorithms = if cert.signature_algorithm.algorithm.as_bytes() == RSA_PSS_OID.as_bytes()
+        {
+            use x509_parser::signature_algorithm::SignatureAlgorithm;
+
+            let Ok(SignatureAlgorithm::RSASSA_PSS(params)) =
+                SignatureAlgorithm::try_from(&cert.signature_algorithm)
+            else {
+                return false;
+            };
+
+            let hash_oid = params.hash_algorithm_oid().to_id_string();
+
+            let digest_len = match hash_oid.as_str() {
+                "2.16.840.1.101.3.4.2.1" => 32,
+                "2.16.840.1.101.3.4.2.2" => 48,
+                "2.16.840.1.101.3.4.2.3" => 64,
+                _ => return false,
+            };
+
+            let Ok(mgf) = params.mask_gen_algorithm() else {
+                return false;
+            };
+
+            if mgf.mgf.to_id_string() != "1.2.840.113549.1.1.8"
+                || mgf.hash.to_id_string() != hash_oid
+                || params.salt_length() != digest_len
+                || params.trailer_field() != 1
+            {
+                return false;
+            }
+
+            bcder::Oid::from_str(&hash_oid)
+                .ok()
+                .map(|hash| (raw_crypto_oid_to_bcder_oid(&RSA_PSS_OID), hash))
+        } else {
+            cert_signing_alg(cert)
+                .as_deref()
+                .and_then(signing_alg_to_sig_and_hash_oid)
+        };
+
+        let Some((signature, hash)) = algorithms else {
+            return false;
+        };
+
+        let Some(validator) = validator_for_sig_and_hash_algs(
+            &c2pa_raw_crypto::Oid::new(signature.as_ref()),
+            &c2pa_raw_crypto::Oid::new(hash.as_ref()),
+        ) else {
+            return false;
+        };
+
+        validator
+            .validate(
+                cert.signature_value.as_ref(),
+                cert.tbs_certificate.as_ref(),
+                issuer.public_key().raw,
+            )
+            .is_ok()
     }
 
     pub(super) fn parsed(&self) -> &X509Certificate<'a> {

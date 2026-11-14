@@ -28,9 +28,12 @@
 //!   These are deterministic functions, not suspended workflows. Certificate
 //!   policy selection, trust, and acceptance remain host decisions.
 //! - **[X.509 mechanics](x509):** certificate signatures, explicit profile
-//!   constraints and chain evaluation against host-selected anchors and time.
+//!   constraints, and chain evaluation against host-selected anchors and time.
 //!   Signature verification, profile validity, and anchor association are distinct
 //!   outcomes; none alone grants application trust.
+//! - **[OCSP mechanics](ocsp):** parse unverified claims, authenticate responder
+//!   signatures, and bind claims to a host-supplied leaf and issuer. Responder
+//!   authorization, freshness, signing-time policy, and acceptance remain host-side.
 //!
 //! # Driving a workflow
 //!
@@ -49,8 +52,9 @@
 //! cryptographic checks, then apply host profile/trust policy before acceptance.
 //!
 //! This crate is an unpublished experiment. Timestamp acquisition, cryptographic
-//! verification, and X.509 mechanics are provided. Application role/policy
-//! selection, trust reporting, OCSP, and COSE orchestration remain host-side.
+//! verification, X.509 mechanics, and deterministic OCSP checks are provided.
+//! Application role/policy selection, trust reporting, OCSP acquisition and
+//! acceptance, and COSE orchestration remain host-side.
 //! COSE is supporting machinery, not a general-purpose COSE environment.
 
 #![deny(missing_docs)]
@@ -58,6 +62,7 @@
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
 
+pub mod ocsp;
 pub mod timestamp;
 pub mod x509;
 
