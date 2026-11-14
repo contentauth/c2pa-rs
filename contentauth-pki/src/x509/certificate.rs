@@ -19,7 +19,82 @@ use c2pa_raw_crypto::{
 use x509_parser::certificate::TbsCertificate;
 use x509_parser::{certificate::X509Certificate, x509::AlgorithmIdentifier};
 
-use super::chain::ChainError;
+use super::{
+    chain::ChainError,
+    profile::{CertificateProfileError, ProfileError},
+};
+
+/// A parsed X.509 certificate borrowing its original DER encoding.
+///
+/// Parsing establishes no signature, profile, or trust guarantee. The parser
+/// representation remains private so hosts can reuse checks without depending
+/// on ASN.1 implementation types.
+pub struct ParsedCertificate<'a> {
+    der: &'a [u8],
+    certificate: X509Certificate<'a>,
+}
+
+impl<'a> ParsedCertificate<'a> {
+    /// Parse a certificate without verifying its signature, profile, or trust.
+    ///
+    /// Trailing bytes are retained in the DER accessor and ignored during
+    /// parsing, preserving the existing certificate-checking behavior.
+    pub fn from_der(der: &'a [u8]) -> Result<Self, ProfileError> {
+        let (_, certificate) = X509Certificate::from_der(der).map_err(|_| ProfileError {
+            kind: CertificateProfileError::InvalidCertificate,
+            diagnostic: Some("certificate could not be parsed"),
+        })?;
+
+        Ok(Self { der, certificate })
+    }
+
+    /// Original encoding, including any trailing bytes; no trust is implied.
+    pub fn certificate_der(&self) -> &'a [u8] {
+        self.der
+    }
+
+    /// Reject certificate purposes explicitly forbidden by a host-selected role.
+    ///
+    /// This checks exclusions only, not a full profile. Missing EKUs are
+    /// evaluated separately by the selected profile. No application role is
+    /// inferred and neither configuration nor trust can bypass this check.
+    pub fn check_disallowed_ekus(
+        &self,
+        disallowed: &[&str],
+    ) -> Result<(), CertificateProfileError> {
+        let eku = self
+            .certificate
+            .extended_key_usage()
+            .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+
+        if let Some(eku) = eku {
+            let present = |oid: &&str| match *oid {
+                "1.3.6.1.5.5.7.3.1" => eku.value.server_auth,
+                "1.3.6.1.5.5.7.3.2" => eku.value.client_auth,
+                "1.3.6.1.5.5.7.3.3" => eku.value.code_signing,
+                "1.3.6.1.5.5.7.3.4" => eku.value.email_protection,
+                "1.3.6.1.5.5.7.3.8" => eku.value.time_stamping,
+                "1.3.6.1.5.5.7.3.9" => eku.value.ocsp_signing,
+                "2.5.29.37.0" => eku.value.any,
+                _ => eku
+                    .value
+                    .other
+                    .iter()
+                    .any(|other| other.to_id_string() == *oid),
+            };
+
+            if disallowed.iter().any(present) {
+                return Err(CertificateProfileError::InvalidEku);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn parsed(&self) -> &X509Certificate<'a> {
+        &self.certificate
+    }
+}
 
 /// Convert a [`c2pa_raw_crypto::Oid`] into a `bcder::Oid` by reusing the OID's
 /// DER content octets directly.

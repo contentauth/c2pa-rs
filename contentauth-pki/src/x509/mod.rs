@@ -22,7 +22,7 @@
 //! ```rust
 //! use std::collections::HashSet;
 //!
-//! use contentauth_pki::x509::{chain, profile};
+//! use contentauth_pki::x509::{chain, profile, ParsedCertificate};
 //!
 //! fn check_host_selected_tsa(
 //!     certificate: &[u8],
@@ -41,7 +41,9 @@
 //!         end_entity: true,
 //!     };
 //!
-//!     let profile_valid = policy.check_certificate(certificate, validation_time)?;
+//!     let certificate = ParsedCertificate::from_der(certificate)?;
+//!
+//!     let profile_valid = policy.check_certificate(&certificate, validation_time)?;
 //!
 //!     let associated = chain::validate_chain_to_anchors(
 //!         ordered_chain,
@@ -62,3 +64,5 @@ pub mod chain;
 pub mod profile;
 
 pub(crate) mod certificate;
+
+pub use certificate::ParsedCertificate;

@@ -15,7 +15,8 @@ use std::collections::HashSet;
 
 use contentauth_pki::x509::{
     chain::{validate_chain_to_anchors, verify_chain_signatures, ChainError},
-    profile::{check_disallowed_ekus, CertificateProfileError, ProfilePolicy},
+    profile::{CertificateProfileError, ProfilePolicy},
+    ParsedCertificate,
 };
 use rasn::types;
 use rasn_pkix::Certificate;
@@ -108,7 +109,9 @@ fn signature_profile_and_anchor_association_are_independent() {
             ..policy
         };
 
-        local_policy.check_certificate(&chain[0], time).unwrap()
+        let certificate = ParsedCertificate::from_der(&chain[0]).unwrap();
+
+        local_policy.check_certificate(&certificate, time).unwrap()
     };
 
     assert_eq!(profile_valid.certificate_der(), chain[0]);
@@ -135,9 +138,11 @@ fn signature_profile_and_anchor_association_are_independent() {
         .timestamp()
         + 1;
 
+    let certificate = ParsedCertificate::from_der(&chain[0]).unwrap();
+
     assert_eq!(
         policy
-            .check_certificate(&chain[0], expired)
+            .check_certificate(&certificate, expired)
             .unwrap_err()
             .kind,
         CertificateProfileError::CertificateNotValidAtTime,
@@ -146,7 +151,9 @@ fn signature_profile_and_anchor_association_are_independent() {
     assert!(verify_chain_signatures(&chain).is_ok());
 
     *chain[0].last_mut().unwrap() ^= 1;
-    assert!(policy.check_certificate(&chain[0], time).is_ok());
+    let certificate = ParsedCertificate::from_der(&chain[0]).unwrap();
+
+    assert!(policy.check_certificate(&certificate, time).is_ok());
 
     assert_eq!(
         verify_chain_signatures(&chain).unwrap_err(),
@@ -170,6 +177,7 @@ fn explicit_role_constraints_do_not_redefine_identity_compatibility() {
         (&[1, 3, 6, 1, 5, 5, 7, 3, 9][..], ocsp),
     ] {
         let certificate = with_ekus(&chain[0], &[oid]);
+        let certificate = ParsedCertificate::from_der(&certificate).unwrap();
         let required = HashSet::from([purpose.to_string()]);
         let specialty = policy(&empty, &required);
 
@@ -186,7 +194,7 @@ fn explicit_role_constraints_do_not_redefine_identity_compatibility() {
         );
 
         assert_eq!(
-            check_disallowed_ekus(&certificate, &[timestamp, ocsp]),
+            certificate.check_disallowed_ekus(&[timestamp, ocsp]),
             Err(CertificateProfileError::InvalidEku),
         );
 
@@ -203,6 +211,7 @@ fn host_eku_inputs_preserve_empty_explicit_alternate_and_mixed_rules() {
     let time = signing_time(&chain[0]);
     let empty = HashSet::new();
     let email = with_ekus(&chain[0], &[&[1, 3, 6, 1, 5, 5, 7, 3, 4]]);
+    let email = ParsedCertificate::from_der(&email).unwrap();
 
     assert!(policy(&empty, &empty)
         .check_certificate(&email, time)
@@ -216,6 +225,7 @@ fn host_eku_inputs_preserve_empty_explicit_alternate_and_mixed_rules() {
         .is_err());
 
     let alternate = with_ekus(&chain[0], &[&[1, 3, 6, 1, 4, 1, 62558, 2, 1]]);
+    let alternate = ParsedCertificate::from_der(&alternate).unwrap();
 
     assert!(policy(&explicit, &empty)
         .check_certificate(&alternate, time)
@@ -252,6 +262,8 @@ fn host_eku_inputs_preserve_empty_explicit_alternate_and_mixed_rules() {
         ],
     );
 
+    let both = ParsedCertificate::from_der(&both).unwrap();
+
     assert!(policy(&additive, &all_required)
         .check_certificate(&both, time)
         .is_ok());
@@ -268,9 +280,37 @@ fn host_eku_inputs_preserve_empty_explicit_alternate_and_mixed_rules() {
         ],
     ] {
         let certificate = with_ekus(&chain[0], &purposes);
+        let certificate = ParsedCertificate::from_der(&certificate).unwrap();
 
         assert!(policy(&additive, &empty)
             .check_certificate(&certificate, time)
             .is_err());
     }
+}
+
+#[test]
+fn parsed_certificate_preserves_parse_diagnostics_and_trailing_der() {
+    let error = ParsedCertificate::from_der(&[0x30, 0x00]).err().unwrap();
+
+    assert_eq!(error.kind, CertificateProfileError::InvalidCertificate);
+    assert_eq!(error.diagnostic, Some("certificate could not be parsed"));
+
+    let chain = certificates();
+    let mut der = chain[0].clone();
+    der.extend_from_slice(&[0xff, 0x00]);
+
+    let certificate = ParsedCertificate::from_der(&der).unwrap();
+    let empty = HashSet::new();
+    let policy = policy(&empty, &empty);
+
+    assert_eq!(certificate.certificate_der(), der);
+    assert!(certificate
+        .check_disallowed_ekus(&["1.3.6.1.5.5.7.3.8", "1.3.6.1.5.5.7.3.9"])
+        .is_ok());
+
+    let valid = policy
+        .check_certificate(&certificate, signing_time(&der))
+        .unwrap();
+
+    assert_eq!(valid.certificate_der(), der);
 }
