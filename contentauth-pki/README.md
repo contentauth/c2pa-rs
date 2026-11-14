@@ -3,9 +3,10 @@
 `contentauth-pki` is an **unpublished, provisional**
 workspace crate. The acquisition foundation implements host-driven RFC 3161
 timestamp acquisition. Subsequent layers add deterministic timestamp
-cryptographic verification and X.509 certificate/profile/chain mechanics.
-Application roles, profile policy selection, trust, OCSP, and COSE orchestration
-remain in the C2PA SDK.
+cryptographic verification, X.509 certificate/profile/chain mechanics, and
+deterministic OCSP parsing and signature/CertID verification. Application roles,
+profile policy selection, trust, OCSP acquisition and acceptance, and COSE
+orchestration remain in the C2PA SDK.
 
 The scope is public key infrastructure (PKI) workflows for content authenticity.
 COSE is supporting machinery, not a general-purpose COSE environment.
@@ -66,12 +67,66 @@ remains host-side; it is not a new success or fallback in this crate.
 | Certificate-signature-verified | `SignatureVerifiedChain`: each certificate signature checked against the next key; not CA authorization or trust. |
 | Profile-valid | `ProfileValidCertificate`: supplied profile constraints and host time satisfied; no signature or trust check. |
 | Anchor-associated | `AnchorAssociation`: valid path to one explicitly supplied anchor set at the supplied time; not role authorization or host trust. |
+| OCSP signature-verified | `SignatureVerifiedOcspResponse`: responder ID and signature checked; candidate path is not trusted or profile-valid. |
+| OCSP certificate-bound | `CertificateBoundResponse`: authenticated claim matches the supplied leaf serial and both issuer hashes; not a revocation verdict. |
 | Trusted | Not produced here. SDK trust policy and C2PA/CAWG reporting remain authoritative. |
 
 These are distinct claims, not interchangeable booleans. The crate accepts
 explicit facts and policy inputs chosen by the host, rather than inferring
 SDK policy, configuring resolvers, consulting settings, or emitting C2PA status
 codes.
+
+## OCSP boundary
+
+`ocsp::ParsedOcspResponse::from_der` decodes claims without authenticating them.
+`verify_signature` returns a distinct `SignatureVerifiedOcspResponse`, selecting
+an embedded responder by ID and signature rather than certificate order. An
+issuing CA can sign without embedded certificates; its direct issuance of the
+host's leaf, signature, and CA authority are checked with
+`x509::ParsedCertificate::is_issued_by`. That check is reusable for delegated
+issuance, but establishes no profile, validity time, path trust, or role policy.
+
+`responses_for_certificate` returns `CertificateBoundResponse` values only for
+matching serial numbers, issuer-name hashes, and issuer-key hashes (the existing
+SHA-1/SHA-256 support). Unverified `SingleResponse` claims cannot construct that
+evidence. Neither evidence type means Good is accepted, fresh, trusted, or valid
+for a host-selected role. ASN.1 codecs remain private; no new `sdk-compat` bridge
+or deprecation is needed for this extraction.
+
+```rust
+use contentauth_pki::ocsp::ParsedOcspResponse;
+
+fn inspect(response: &[u8], signing_chain: &[Vec<u8>])
+    -> Result<(), Box<dyn std::error::Error>>
+{
+    let parsed = ParsedOcspResponse::from_der(response)?;
+    let signed = parsed.verify_signature(signing_chain)?;
+
+    for bound in signed.responses_for_certificate(signing_chain) {
+        let claim = bound.claims();
+        let _status = claim.status()?;
+        let _this_update = claim.this_update()?;
+        let _next_update = claim.next_update()?;
+
+        // Apply host responder/profile/trust and temporal policy before acceptance.
+    }
+
+    Ok(())
+}
+```
+
+Status times are decoded lazily, preserving the SDK's error precedence and
+whole-second status-time compatibility. The SDK filters future responses before
+interpreting status and retains stale-Good/inconclusive, missing-nextUpdate
+(`producedAt + 24 hours`), revocation-reason, and signing-time rules. Its isolated
+diagnostics, source precedence, and issuer/delegated authorization paths are
+unchanged. Authentication does not add revocation or resource-budget rules;
+verification budgets remain the separate unresolved #3026 scope.
+
+`Settings`/`Context`, HTTP resolvers, allocation-bounded response reads, fallback,
+retries, timeouts, cancellation, evidence collection, trust-list composition,
+and C2PA/CAWG status reporting remain SDK-side. There is no OCSP acquisition
+workflow or general-purpose COSE API in this layer.
 
 ## X.509 boundary
 

@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 jobs:
-  timestamp:
+  pki:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,8 +56,8 @@ jobs:
           cargo check -p c2pa --no-default-features --features rust_native_crypto --target wasm32-unknown-unknown
       - name: Test SDK crypto compatibility
         run: |
-          cargo test -p c2pa --lib -- crypto:: cose_ identity::x509 test_from_context claim::
+          cargo test -p c2pa --lib -- crypto:: cose_ identity::x509 test_from_context claim:: issuer_signed_ocsp
       - name: Test SDK crypto with Rust-native cryptography
         run: |
           cargo clippy -p c2pa --all-targets --no-default-features --features rust_native_crypto,default_http -- -D warnings
-          cargo test -p c2pa --no-default-features --features rust_native_crypto,default_http --lib -- crypto:: cose_ identity::x509 test_from_context claim::
+          cargo test -p c2pa --no-default-features --features rust_native_crypto,default_http --lib -- crypto:: cose_ identity::x509 test_from_context claim:: issuer_signed_ocsp

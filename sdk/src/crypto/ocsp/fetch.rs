@@ -297,6 +297,8 @@ mod tests {
     #[test]
     fn request_encodes_subject_serial_issuer_hashes_and_null_sha1_parameters() {
         let certs = ca_chain();
+        let responder = super::super::test_responder::IssuerResponder::new();
+
         for index in [0, 1] {
             let requests = process_ocsp_responders(&certs, index).unwrap();
             let der = base64::decode(&requests[0].request_str).unwrap();
@@ -312,7 +314,19 @@ mod tests {
                 id.hash_algorithm.parameters.as_ref().unwrap().as_bytes(),
                 &[0x05, 0x00]
             );
-            assert!(super::super::cert_id_matches_signer(id, &certs[index..]));
+
+            let mut basic = responder.basic_response(false);
+            basic.tbs_response_data.responses[0].cert_id = id.clone();
+            let response_der = responder.delegated_response(basic);
+            let verified = contentauth_pki::ocsp::ParsedOcspResponse::from_der(&response_der)
+                .unwrap()
+                .verify_signature(&certs[index..])
+                .unwrap();
+
+            assert_eq!(
+                verified.responses_for_certificate(&certs[index..]).count(),
+                1
+            );
         }
     }
 
