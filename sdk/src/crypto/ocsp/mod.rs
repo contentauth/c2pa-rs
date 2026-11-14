@@ -13,12 +13,8 @@
 
 //! Tools for working with OCSP responses.
 
-use std::str::FromStr;
-
-use c2pa_raw_crypto::RawSignatureValidationError;
-use chrono::{DateTime, NaiveDateTime, Utc};
-use rasn_ocsp::{BasicOcspResponse, CertId, CertStatus, OcspResponseStatus, ResponderId};
-use rasn_pkix::{Certificate, CrlReason};
+use chrono::{DateTime, Utc};
+use contentauth_pki::ocsp::{ClaimedStatus, ParsedOcspResponse, VerificationError};
 use thiserror::Error;
 
 use crate::{
@@ -107,148 +103,65 @@ impl OcspResponse {
 
         // Per spec if we cannot interpret the OCSP data, we must treat it as if it did
         // not exist.
-        let Ok(ocsp_response) = rasn::der::decode::<rasn_ocsp::OcspResponse>(der) else {
+        let Ok(parsed) = ParsedOcspResponse::from_der(der) else {
             return Ok(output);
         };
 
-        if ocsp_response.status != OcspResponseStatus::Successful {
-            return Ok(output);
-        }
-
-        let Some(response_bytes) = ocsp_response.bytes else {
-            return Ok(output);
-        };
-
-        let Ok(basic_response) = rasn::der::decode::<BasicOcspResponse>(&response_bytes.response)
-        else {
-            return Ok(output);
+        let verified = match parsed.verify_signature(signing_cert_chain) {
+            Ok(verified) => verified,
+            Err(VerificationError::MissingIssuer) => return Ok(output),
+            Err(VerificationError::InvalidCertificate) => {
+                return Err(OcspError::InvalidCertificate);
+            }
+            Err(VerificationError::UnauthenticatedResponse) => {
+                return Ok(OcspResponse::default());
+            }
         };
 
         let mut internal_validation_log = StatusTracker::default();
-        let response_data = &basic_response.tbs_response_data;
+        output.ocsp_certs = Some(verified.responder_certificates().to_vec());
 
-        let Ok(sig_alg) =
-            bcder::Oid::from_str(&basic_response.signature_algorithm.algorithm.to_string())
-        else {
-            return Ok(output);
-        };
+        for single_response in verified.responses_for_certificate(signing_cert_chain) {
+            let single_response = single_response.claims();
 
-        let Some(hash_alg) = hash_alg_for_sig_alg(&basic_response.signature_algorithm.algorithm)
-        else {
-            return Ok(output);
-        };
-
-        let sig_val = bcder::OctetString::new(bytes::Bytes::copy_from_slice(
-            basic_response.signature.as_raw_slice(),
-        ));
-        let Ok(tbs) = rasn::der::encode(response_data) else {
-            return Ok(output);
-        };
-
-        let mut cert_der_vec = basic_response
-            .certs
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .map(|cert| rasn::der::encode(cert).map_err(|_| OcspError::InvalidCertificate))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Embedded certificates are unordered. Only a certificate identifying
-        // the responder and verifying the signature can become the path's leaf.
-        let responder_index = cert_der_vec.iter().position(|der| {
-            let Ok(cert) = rasn::der::decode::<Certificate>(der) else {
-                return false;
-            };
-
-            responder_id_matches(&response_data.responder_id, &cert)
-                && rasn::der::encode(&cert.tbs_certificate.subject_public_key_info).is_ok_and(
-                    |key| validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &key).is_ok(),
-                )
-        });
-
-        if let Some(index) = responder_index {
-            let responder = cert_der_vec.remove(index);
-            cert_der_vec.insert(0, responder);
-        } else {
-            // RFC 6960 section 4.2.2.2 permits the issuing CA to sign without
-            // embedding its certificate. x5chain is only candidate input:
-            // authenticate issuance as well as the responder ID and signature.
-            let Some(issuer_der) = signing_cert_chain.get(1) else {
-                return Ok(output);
-            };
-            let issuer = rasn::der::decode::<Certificate>(issuer_der)
-                .map_err(|_| OcspError::InvalidCertificate)?;
-
-            if !signing_cert_chain
-                .first()
-                .is_some_and(|leaf| certificate_issued_by(leaf, issuer_der))
-                || !responder_id_matches(&response_data.responder_id, &issuer)
-            {
-                return Ok(OcspResponse::default());
-            }
-
-            let key = rasn::der::encode(&issuer.tbs_certificate.subject_public_key_info)
-                .map_err(|_| OcspError::InvalidCertificate)?;
-            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &key).is_err() {
-                return Ok(OcspResponse::default());
-            }
-
-            cert_der_vec = signing_cert_chain[1..].to_vec();
-        }
-
-        // The embedded issuer case must obey the same issuance checks as the
-        // certificate-less case; neither CertID hashes nor names prove issuance.
-        if signing_cert_chain.get(1) == cert_der_vec.first()
-            && !signing_cert_chain
-                .first()
-                .is_some_and(|leaf| certificate_issued_by(leaf, &cert_der_vec[0]))
-        {
-            return Ok(OcspResponse::default());
-        }
-
-        output.ocsp_certs = Some(cert_der_vec);
-
-        for single_response in &response_data.responses {
             // RFC 6960 §4.1.1/§4.2.1: only a single response whose `certId`
             // identifies the signing certificate tells us anything about that
             // certificate. Skip any response for a different certificate;
             // otherwise an attacker could staple a validly-signed "good"
             // response issued for an unrelated certificate and obtain a false
             // "not revoked" attestation for a revoked signing certificate.
-            if !cert_id_matches_signer(&single_response.cert_id, signing_cert_chain) {
-                continue;
-            }
-
             // C2PA only accepts a response whose thisUpdate is not in the future
             // ("The current time is no earlier than thisUpdate"). Such a response
             // says nothing about the certificate, whatever its status.
-            let this_update =
-                NaiveDateTime::parse_from_str(&single_response.this_update.to_string(), DATE_FMT)
-                    .map_err(|_e| OcspError::InvalidCertificate)?
-                    .and_utc()
-                    .timestamp();
+            let this_update = single_response
+                .this_update()
+                .map_err(|_| OcspError::InvalidCertificate)?
+                .timestamp();
             if now < this_update {
                 continue;
             }
 
-            let cert_status = &single_response.cert_status;
+            let cert_status = single_response
+                .status()
+                .map_err(|_| OcspError::InvalidCertificate)?;
 
             // Extract certificate serial number from cert_id
             if output.certificate_serial_num.is_empty() {
-                output.certificate_serial_num = single_response.cert_id.serial_number.to_string();
+                output.certificate_serial_num = single_response.certificate_serial_number();
             }
 
             match cert_status {
-                CertStatus::Good => {
+                ClaimedStatus::Good => {
                     // check cert range against signing time
-                    let next_update = if let Some(nu) = &single_response.next_update {
-                        NaiveDateTime::parse_from_str(&nu.to_string(), DATE_FMT)
-                            .map_err(|_e| OcspError::InvalidCertificate)?
-                            .and_utc()
-                            .timestamp()
+                    let claimed_next_update = single_response
+                        .next_update()
+                        .map_err(|_| OcspError::InvalidCertificate)?;
+
+                    let next_update = if let Some(nu) = claimed_next_update {
+                        nu.timestamp()
                     } else {
                         // use producedAt + 24hr when there is no nextUpdate
-                        response_data.produced_at.to_utc().timestamp() + (24 * 60 * 60)
+                        verified.produced_at().timestamp() + (24 * 60 * 60)
                     };
 
                     // Was signing time within the acceptable range?
@@ -260,9 +173,8 @@ impl OcspResponse {
                         now >= this_update && now <= next_update
                     };
 
-                    if let Some(nu) = &single_response.next_update {
-                        let nu_utc = nu.naive_utc();
-                        output.next_update = DateTime::from_naive_utc_and_offset(nu_utc, Utc);
+                    if let Some(nu) = claimed_next_update {
+                        output.next_update = nu;
                     }
 
                     // A good response outside its validity window cannot be
@@ -277,21 +189,15 @@ impl OcspResponse {
                     }
                 }
 
-                CertStatus::Revoked(revoked_info) => {
-                    let revocation_time = &revoked_info.revocation_time;
+                ClaimedStatus::Revoked {
+                    revocation_time,
+                    reason,
+                } => {
+                    let revoked_at = revocation_time.timestamp();
+                    let revoked_at_native = revocation_time.naive_utc();
 
-                    let revoked_at =
-                        NaiveDateTime::parse_from_str(&revocation_time.to_string(), DATE_FMT)
-                            .map_err(|_e| OcspError::InvalidCertificate)?
-                            .and_utc()
-                            .timestamp();
-
-                    let revoked_at_native =
-                        NaiveDateTime::parse_from_str(&revocation_time.to_string(), DATE_FMT)
-                            .map_err(|_e| OcspError::InvalidCertificate)?;
-
-                    if let Some(reason) = revoked_info.revocation_reason {
-                        if reason == CrlReason::RemoveFromCRL {
+                    if let Some(reason) = reason {
+                        if reason == 8 {
                             // Was signing time prior to revocation?
                             let in_range = if let Some(st) = signing_time {
                                 revoked_at > st.timestamp()
@@ -319,13 +225,6 @@ impl OcspResponse {
                                 ));
                             }
                         } else {
-                            let Ok(revoked_at_native) = NaiveDateTime::parse_from_str(
-                                &revoked_info.revocation_time.to_string(),
-                                DATE_FMT,
-                            ) else {
-                                return Err(OcspError::InvalidCertificate);
-                            };
-
                             let utc_with_offset: DateTime<Utc> =
                                 DateTime::from_naive_utc_and_offset(revoked_at_native, Utc);
 
@@ -370,7 +269,7 @@ impl OcspResponse {
                     }
                 }
 
-                CertStatus::Unknown(_) => {
+                ClaimedStatus::Unknown => {
                     log_item!("", "unknown certStatus", "check_ocsp_response")
                         .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
                         .informational(&mut internal_validation_log);
@@ -385,200 +284,18 @@ impl OcspResponse {
     }
 }
 
-fn validate_ocsp_sig(
-    sig_alg: &bcder::Oid,
-    hash_alg: &bcder::Oid,
-    sig_val: &bcder::OctetString,
-    tbs: &[u8],
-    signing_key_der: &[u8],
-) -> Result<(), RawSignatureValidationError> {
-    if let Some(validator) = c2pa_raw_crypto::validator_for_sig_and_hash_algs(
-        &c2pa_raw_crypto::Oid::new(sig_alg.as_ref()),
-        &c2pa_raw_crypto::Oid::new(hash_alg.as_ref()),
-    ) {
-        validator
-            .validate(&sig_val.to_bytes(), tbs, signing_key_der)
-            .map_err(|e| RawSignatureValidationError::CryptoLibraryError(e.to_string()))
-    } else {
-        Err(RawSignatureValidationError::UnsupportedAlgorithm)
-    }
-}
-
-fn responder_id_matches(id: &ResponderId, cert: &Certificate) -> bool {
-    match id {
-        ResponderId::ByName(name) => name == &cert.tbs_certificate.subject,
-        ResponderId::ByKey(hash) => {
-            hash.as_ref()
-                == crate::crypto::hash::sha1(
-                    cert.tbs_certificate
-                        .subject_public_key_info
-                        .subject_public_key
-                        .as_raw_slice(),
-                )
-        }
-    }
-}
-
 /// Checks direct issuance and CA authority, not path trust or validity times.
 pub(crate) fn certificate_issued_by(cert_der: &[u8], issuer_der: &[u8]) -> bool {
-    use x509_parser::{certificate::X509Certificate, prelude::FromDer};
+    use contentauth_pki::x509::ParsedCertificate;
 
-    let (Ok((_, cert)), Ok((_, issuer))) = (
-        X509Certificate::from_der(cert_der),
-        X509Certificate::from_der(issuer_der),
+    let (Ok(cert), Ok(issuer)) = (
+        ParsedCertificate::from_der(cert_der),
+        ParsedCertificate::from_der(issuer_der),
     ) else {
         return false;
     };
 
-    if cert.issuer() != issuer.subject()
-        || cert.tbs_certificate.signature != cert.signature_algorithm
-        || !issuer
-            .basic_constraints()
-            .is_ok_and(|bc| bc.is_some_and(|bc| bc.value.ca))
-        || !issuer
-            .key_usage()
-            .is_ok_and(|ku| ku.is_none_or(|ku| ku.value.key_cert_sign()))
-    {
-        return false;
-    }
-
-    let Ok(cert_asn1) = rasn::der::decode::<Certificate>(cert_der) else {
-        return false;
-    };
-    let Ok(sig_alg) = bcder::Oid::from_str(&cert.signature_algorithm.algorithm.to_id_string())
-    else {
-        return false;
-    };
-
-    let hash_alg = if cert.signature_algorithm.algorithm.to_id_string() == "1.2.840.113549.1.1.10" {
-        use x509_parser::signature_algorithm::SignatureAlgorithm;
-
-        let Ok(SignatureAlgorithm::RSASSA_PSS(params)) =
-            SignatureAlgorithm::try_from(&cert.signature_algorithm)
-        else {
-            return false;
-        };
-        let hash_oid = params.hash_algorithm_oid().to_id_string();
-        let digest_len = match hash_oid.as_str() {
-            "2.16.840.1.101.3.4.2.1" => 32,
-            "2.16.840.1.101.3.4.2.2" => 48,
-            "2.16.840.1.101.3.4.2.3" => 64,
-            _ => return false,
-        };
-
-        let Ok(mgf) = params.mask_gen_algorithm() else {
-            return false;
-        };
-
-        if mgf.mgf.to_id_string() != "1.2.840.113549.1.1.8"
-            || mgf.hash.to_id_string() != hash_oid
-            || params.salt_length() != digest_len
-            || params.trailer_field() != 1
-        {
-            return false;
-        }
-
-        let Ok(hash_alg) = bcder::Oid::from_str(&hash_oid) else {
-            return false;
-        };
-
-        hash_alg
-    } else {
-        let Some(hash_alg) = hash_alg_for_sig_alg(&cert_asn1.signature_algorithm.algorithm) else {
-            return false;
-        };
-
-        hash_alg
-    };
-
-    validate_ocsp_sig(
-        &sig_alg,
-        &hash_alg,
-        &bcder::OctetString::new(bytes::Bytes::copy_from_slice(cert.signature_value.as_ref())),
-        cert.tbs_certificate.as_ref(),
-        issuer.public_key().raw,
-    )
-    .is_ok()
-}
-
-/// Returns `true` only if `cert_id` identifies the end-entity certificate
-/// described by `signing_cert_chain` (`chain[0]` = end-entity certificate,
-/// `chain[1]` = its issuer), per RFC 6960 §4.1.1.
-///
-/// The `serialNumber`, `issuerNameHash`, and `issuerKeyHash` must all match.
-/// Fails closed (returns `false`) if the chain, the issuer certificate, or the
-/// `certId` hash algorithm is missing or cannot be reconstructed.
-fn cert_id_matches_signer(cert_id: &CertId, signing_cert_chain: &[Vec<u8>]) -> bool {
-    // Both the end-entity certificate and its issuer are required to
-    // reconstruct the certId: the serial number comes from the end-entity
-    // certificate, and the issuer hashes come from the issuer certificate.
-    let (Some(subject_der), Some(issuer_der)) =
-        (signing_cert_chain.first(), signing_cert_chain.get(1))
-    else {
-        return false;
-    };
-
-    let Ok(subject) = rasn::der::decode::<Certificate>(subject_der) else {
-        return false;
-    };
-    let Ok(issuer) = rasn::der::decode::<Certificate>(issuer_der) else {
-        return false;
-    };
-
-    // serialNumber identifies the end-entity certificate.
-    if cert_id.serial_number != subject.tbs_certificate.serial_number {
-        return false;
-    }
-
-    // issuerNameHash and issuerKeyHash are computed over the issuer using the
-    // hash algorithm named in the response's certId (this matches how the OCSP
-    // request is constructed in `ocsp/fetch.rs`).
-    let Ok(issuer_name_raw) = rasn::der::encode(&issuer.tbs_certificate.subject) else {
-        return false;
-    };
-    let issuer_key_raw = issuer
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .as_raw_slice();
-
-    let Some(expected_name_hash) = hash_by_oid(&cert_id.hash_algorithm.algorithm, &issuer_name_raw)
-    else {
-        return false;
-    };
-    let Some(expected_key_hash) = hash_by_oid(&cert_id.hash_algorithm.algorithm, issuer_key_raw)
-    else {
-        return false;
-    };
-
-    cert_id.issuer_name_hash.as_ref() == expected_name_hash.as_slice()
-        && cert_id.issuer_key_hash.as_ref() == expected_key_hash.as_slice()
-}
-
-/// Hashes `data` with the digest algorithm identified by `alg`, or returns
-/// `None` if it is not an OCSP `certId` digest algorithm we support.
-fn hash_by_oid(alg: &rasn::types::ObjectIdentifier, data: &[u8]) -> Option<Vec<u8>> {
-    match alg.to_string().as_str() {
-        // SHA-1 (the default OCSP certId digest per RFC 6960)
-        "1.3.14.3.2.26" => Some(crate::crypto::hash::sha1(data)),
-        // SHA-256
-        "2.16.840.1.101.3.4.2.1" => Some(crate::crypto::hash::sha256(data)),
-        _ => None,
-    }
-}
-
-/// Return the hash algorithm oid for the given signature algorithm.
-fn hash_alg_for_sig_alg(sig_alg: &rasn::types::ObjectIdentifier) -> Option<bcder::Oid> {
-    match sig_alg.to_string().as_ref() {
-        "1.2.840.10045.4.3.2" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.1").ok()?),
-        "1.2.840.10045.4.3.3" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.2").ok()?),
-        "1.2.840.10045.4.3.4" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
-        "1.2.840.113549.1.1.11" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.1").ok()?),
-        "1.2.840.113549.1.1.12" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.2").ok()?),
-        "1.2.840.113549.1.1.13" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
-        "1.3.101.112" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
-        _ => None,
-    }
+    cert.is_issued_by(&issuer)
 }
 
 /// Describes errors that can be identified when parsing an OCSP response.
@@ -601,8 +318,6 @@ pub(crate) enum OcspError {
     #[error("Unknown certificate status")]
     CertificateStatusUnknown,
 }
-
-const DATE_FMT: &str = "%Y-%m-%d %H:%M:%S %Z";
 
 mod fetch;
 
@@ -1015,6 +730,23 @@ mod tests {
                 let mut basic = responder.basic_response(by_name);
                 basic.certs = certs;
                 let der = responder.sign(basic);
+                let verified = contentauth_pki::ocsp::ParsedOcspResponse::from_der(&der)
+                    .unwrap()
+                    .verify_signature(&responder.chain)
+                    .unwrap();
+
+                assert_eq!(verified.responder_certificates()[0], responder.chain[1]);
+                assert_eq!(
+                    verified
+                        .responses_for_certificate(&responder.chain)
+                        .next()
+                        .unwrap()
+                        .claims()
+                        .status()
+                        .unwrap(),
+                    contentauth_pki::ocsp::ClaimedStatus::Good
+                );
+
                 let mut log = StatusTracker::default();
                 let parsed =
                     OcspResponse::from_der_checked_at(&der, &responder.chain, None, now, &mut log)
@@ -1401,92 +1133,6 @@ mod tests {
 
         assert!(parsed.ocsp_certs.is_none());
         assert!(log.logged_items().is_empty());
-    }
-
-    #[test]
-    fn cert_id_requires_serial_both_issuer_hashes_and_supported_algorithm() {
-        let chain = signing_cert_chain();
-        let original = basic_response().tbs_response_data.responses[0]
-            .cert_id
-            .clone();
-        assert!(super::cert_id_matches_signer(&original, &chain));
-        for invalid_chain in [
-            vec![],
-            chain[..1].to_vec(),
-            vec![vec![0], chain[1].clone()],
-            vec![chain[0].clone(), vec![0]],
-        ] {
-            assert!(!super::cert_id_matches_signer(&original, &invalid_chain));
-        }
-
-        let mut wrong_serial = original.clone();
-        wrong_serial.serial_number = 0.into();
-        let mut wrong_name = original.clone();
-        wrong_name.issuer_name_hash = vec![0; 20].into();
-        let mut wrong_key = original.clone();
-        wrong_key.issuer_key_hash = vec![0; 20].into();
-        let mut unsupported = original.clone();
-        unsupported.hash_algorithm.algorithm =
-            rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
-        for invalid in [wrong_serial, wrong_name, wrong_key, unsupported] {
-            assert!(!super::cert_id_matches_signer(&invalid, &chain));
-        }
-
-        let issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
-        let mut sha256 = original;
-        sha256.hash_algorithm.algorithm = rasn::types::ObjectIdentifier::new_unchecked(
-            vec![2, 16, 840, 1, 101, 3, 4, 2, 1].into(),
-        );
-        sha256.issuer_name_hash = crate::crypto::hash::sha256(
-            &rasn::der::encode(&issuer.tbs_certificate.subject).unwrap(),
-        )
-        .into();
-        sha256.issuer_key_hash = crate::crypto::hash::sha256(
-            issuer
-                .tbs_certificate
-                .subject_public_key_info
-                .subject_public_key
-                .as_raw_slice(),
-        )
-        .into();
-        assert!(super::cert_id_matches_signer(&sha256, &chain));
-    }
-
-    #[test]
-    fn signature_algorithm_hash_mapping_and_unsupported_validator() {
-        for (signature, digest) in [
-            ("1.2.840.10045.4.3.2", "2.16.840.1.101.3.4.2.1"),
-            ("1.2.840.10045.4.3.3", "2.16.840.1.101.3.4.2.2"),
-            ("1.2.840.10045.4.3.4", "2.16.840.1.101.3.4.2.3"),
-            ("1.2.840.113549.1.1.11", "2.16.840.1.101.3.4.2.1"),
-            ("1.2.840.113549.1.1.12", "2.16.840.1.101.3.4.2.2"),
-            ("1.2.840.113549.1.1.13", "2.16.840.1.101.3.4.2.3"),
-            ("1.3.101.112", "2.16.840.1.101.3.4.2.3"),
-        ] {
-            let oid = rasn::types::ObjectIdentifier::new_unchecked(
-                signature
-                    .split('.')
-                    .map(|n| n.parse().unwrap())
-                    .collect::<Vec<u32>>()
-                    .into(),
-            );
-            assert_eq!(
-                super::hash_alg_for_sig_alg(&oid).unwrap().to_string(),
-                digest
-            );
-        }
-
-        let unsupported = "1.2.3.4".parse::<bcder::Oid>().unwrap();
-        assert_eq!(
-            super::validate_ocsp_sig(
-                &unsupported,
-                &unsupported,
-                &bcder::OctetString::new(bytes::Bytes::new()),
-                b"data",
-                b"key",
-            ),
-            Err(c2pa_raw_crypto::RawSignatureValidationError::UnsupportedAlgorithm)
-        );
     }
 
     // Re-sign mutated response data so the tests exercise status interpretation,
