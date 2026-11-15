@@ -22,6 +22,9 @@ use crate::{
     validation_results::validation_codes,
 };
 
+/// RFC 5280 CRL reason code for removing a certificate from the CRL.
+const REMOVE_FROM_CRL_REASON: u8 = rasn_pkix::CrlReason::RemoveFromCRL as u8;
+
 /// OcspResponse - struct to contain the OCSPResponse DER and the time
 /// for the next OCSP check
 pub struct OcspResponse {
@@ -197,7 +200,7 @@ impl OcspResponse {
                     let revoked_at_native = revocation_time.naive_utc();
 
                     if let Some(reason) = reason {
-                        if reason == 8 {
+                        if reason == REMOVE_FROM_CRL_REASON {
                             // Was signing time prior to revocation?
                             let in_range = if let Some(st) = signing_time {
                                 revoked_at > st.timestamp()
@@ -711,6 +714,53 @@ mod tests {
             assert!(parsed.ocsp_certs.is_none());
             assert!(log.logged_items().is_empty());
         }
+    }
+
+    #[test]
+    fn invalid_issuer_is_a_typed_error_without_status_diagnostics() {
+        let responder = crate::crypto::ocsp::test_responder::IssuerResponder::new();
+        let der = responder.sign(responder.basic_response(false));
+        let mut log = StatusTracker::default();
+
+        let result = OcspResponse::from_der_checked(
+            &der,
+            &[responder.chain[0].clone(), vec![0xde, 0xad]],
+            None,
+            &mut log,
+        );
+
+        assert!(matches!(
+            result,
+            Err(crate::crypto::ocsp::OcspError::InvalidCertificate)
+        ));
+        assert!(log.logged_items().is_empty());
+    }
+
+    #[test]
+    fn embedded_issuer_signature_does_not_authenticate_an_unissued_leaf() {
+        let responder = crate::crypto::ocsp::test_responder::IssuerResponder::new();
+        let mut basic = responder.basic_response(false);
+        basic.certs = Some(vec![rasn::der::decode(&responder.chain[1]).unwrap()]);
+        let der = responder.sign(basic);
+        let mut leaf: rasn_pkix::Certificate = rasn::der::decode(&responder.chain[0]).unwrap();
+        leaf.signature_value = rasn::types::BitString::from_vec(vec![0; 64]);
+        let chain = vec![
+            rasn::der::encode(&leaf).unwrap(),
+            responder.chain[1].clone(),
+        ];
+
+        assert!(matches!(
+            contentauth_pki::ocsp::ParsedOcspResponse::from_der(&der)
+                .unwrap()
+                .verify_signature(&chain),
+            Err(contentauth_pki::ocsp::VerificationError::UnauthenticatedResponse)
+        ));
+
+        let mut log = StatusTracker::default();
+        let output = OcspResponse::from_der_checked(&der, &chain, None, &mut log).unwrap();
+        assert!(output.ocsp_der.is_empty());
+        assert!(output.ocsp_certs.is_none());
+        assert!(log.logged_items().is_empty());
     }
 
     #[test]
