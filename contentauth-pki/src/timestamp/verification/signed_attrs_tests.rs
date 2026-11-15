@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use super::*;
+use crate::timestamp::verification::*;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

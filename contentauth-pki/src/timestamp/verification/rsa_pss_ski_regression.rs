@@ -13,7 +13,7 @@
 
 //! Regression coverage for timestamp RSA-PSS profiles and strict SKI lookup.
 
-use super::*;
+use crate::timestamp::verification::*;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
