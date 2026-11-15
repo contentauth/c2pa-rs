@@ -58,9 +58,11 @@ pub trait TimeStampProvider {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
 
-                return Some(super::http_request::default_rfc3161_request(
-                    &url, headers, &body, message, context,
-                ));
+                return Some(
+                    crate::crypto::time_stamp::http_request::default_rfc3161_request(
+                        &url, headers, &body, message, context,
+                    ),
+                );
             }
         }
 
@@ -115,7 +117,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
 
                 return Some(
-                    super::http_request::default_rfc3161_request_async(
+                    crate::crypto::time_stamp::http_request::default_rfc3161_request_async(
                         &url, headers, &body, message, context,
                     )
                     .await,

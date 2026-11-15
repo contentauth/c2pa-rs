@@ -30,10 +30,9 @@ use bcder::{
 #[cfg(test)]
 use der::Decode;
 
-use super::ContentType;
 #[cfg(test)]
 use crate::asn1::GeneralizedTime;
-use crate::asn1::{rfc3281::AttributeCertificate, AlgorithmIdentifier};
+use crate::asn1::{rfc3281::AttributeCertificate, rfc5652::ContentType, AlgorithmIdentifier};
 
 // Retain local bcder-compatible types from the SDK's legacy CMS codec.
 

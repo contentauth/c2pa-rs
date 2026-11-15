@@ -93,8 +93,7 @@ use http::{header, Request as HttpRequest, Response as HttpResponse};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use super::response;
-use crate::{asn1, asn1::rfc3161::TimeStampReq};
+use crate::{asn1, asn1::rfc3161::TimeStampReq, timestamp::response};
 
 /// Maximum accepted response size. Hosts must read at most this limit plus one
 /// byte to detect overflow, without trusting `Content-Length`.
