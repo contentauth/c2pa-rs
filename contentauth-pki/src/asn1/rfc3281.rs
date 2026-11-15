@@ -33,7 +33,7 @@ mod tests {
         let error = bcder::decode::Constructed::decode(
             [0x30, 0].as_slice(),
             bcder::Mode::Der,
-            super::AttributeCertificate::take_from,
+            crate::asn1::rfc3281::AttributeCertificate::take_from,
         )
         .unwrap_err();
 
@@ -48,7 +48,7 @@ mod tests {
             assert!(bcder::decode::Constructed::decode(
                 bytes,
                 bcder::Mode::Der,
-                super::AttributeCertificate::take_from,
+                crate::asn1::rfc3281::AttributeCertificate::take_from,
             )
             .is_err());
         }

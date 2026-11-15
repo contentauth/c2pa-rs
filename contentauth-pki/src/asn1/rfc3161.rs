@@ -17,8 +17,10 @@ use bcder::{
     Integer, OctetString, Oid, Tag,
 };
 
-use super::{AlgorithmIdentifier, Extensions, GeneralName, GeneralizedTime};
-use crate::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
+use crate::asn1::{
+    rfc4210::PkiFreeText, rfc5652::ContentInfo, AlgorithmIdentifier, Extensions, GeneralName,
+    GeneralizedTime,
+};
 
 /// A time-stamp request.
 ///
