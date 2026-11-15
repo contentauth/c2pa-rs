@@ -595,7 +595,11 @@ pub(crate) mod message_imprint_regression {
         let purpose = if options.omit_eku {
             None
         } else {
-            Some(options.signer_eku.unwrap_or(super::TIMESTAMP_OID_STR))
+            Some(
+                options
+                    .signer_eku
+                    .unwrap_or(crate::crypto::time_stamp::verify::TIMESTAMP_OID_STR),
+            )
         };
 
         let (key, cert) = test_certificate(
@@ -1154,9 +1158,11 @@ pub(crate) mod message_imprint_regression {
         ));
 
         assert!(
-            super::tsa_signer_cert_der_from_token(&encode_token(&missing))
-                .unwrap()
-                .is_none()
+            crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&encode_token(
+                &missing
+            ))
+            .unwrap()
+            .is_none()
         );
 
         for content in [None, Some(vec![0x30, 0].into())] {
@@ -1195,9 +1201,11 @@ pub(crate) mod message_imprint_regression {
         ));
 
         assert!(
-            super::tsa_signer_cert_der_from_token(&encode_token(&no_signers))
-                .unwrap()
-                .is_none()
+            crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&encode_token(
+                &no_signers
+            ))
+            .unwrap()
+            .is_none()
         );
     }
 
@@ -1276,7 +1284,7 @@ pub(crate) mod message_imprint_regression {
             },
         );
 
-        let expected = super::tsa_signer_cert_der_from_token(&token)
+        let expected = crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&token)
             .unwrap()
             .unwrap();
 
@@ -1307,7 +1315,7 @@ pub(crate) mod message_imprint_regression {
             let token = encode_token(&sd);
 
             assert_eq!(
-                super::tsa_signer_cert_der_from_token(&token).unwrap(),
+                crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&token).unwrap(),
                 if raw_extension {
                     None
                 } else {
@@ -1336,7 +1344,7 @@ pub(crate) mod message_imprint_regression {
             Some("1.3.6.1.5.5.7.3.1"),
             Some("1.3.6.1.5.5.7.3.4"),
             Some("1.3.6.1.5.5.7.3.9"),
-            Some(super::TIMESTAMP_OID_STR),
+            Some(crate::crypto::time_stamp::verify::TIMESTAMP_OID_STR),
             None,
         ] {
             let token = build_token_with(
@@ -1351,7 +1359,7 @@ pub(crate) mod message_imprint_regression {
                 },
             );
 
-            let cert = super::tsa_signer_cert_der_from_token(&token)
+            let cert = crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&token)
                 .unwrap()
                 .unwrap();
 
@@ -1372,7 +1380,7 @@ pub(crate) mod message_imprint_regression {
 
             assert!(log.has_status(TIMESTAMP_VALIDATED));
 
-            if purpose == Some(super::TIMESTAMP_OID_STR) {
+            if purpose == Some(crate::crypto::time_stamp::verify::TIMESTAMP_OID_STR) {
                 assert!(result.is_ok(), "{result:?}: {log:?}");
                 assert!(log.has_status(TIMESTAMP_TRUSTED));
                 assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
@@ -1393,7 +1401,7 @@ pub(crate) mod message_imprint_regression {
                     &mut assertion_log,
                 )
                 .is_some(),
-                purpose == Some(super::TIMESTAMP_OID_STR),
+                purpose == Some(crate::crypto::time_stamp::verify::TIMESTAMP_OID_STR),
             );
 
             assert!(!assertion_log.has_status(SIGNING_CREDENTIAL_INVALID));
@@ -1523,7 +1531,7 @@ pub(crate) mod message_imprint_regression {
                     },
                 );
 
-                let tsa = super::tsa_signer_cert_der_from_token(&token)
+                let tsa = crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&token)
                     .unwrap()
                     .unwrap();
 
@@ -1721,7 +1729,7 @@ pub(crate) mod message_imprint_regression {
             },
         );
 
-        let cert = super::tsa_signer_cert_der_from_token(&token)
+        let cert = crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&token)
             .unwrap()
             .unwrap();
 
@@ -1808,7 +1816,8 @@ pub(crate) mod message_imprint_regression {
                 },
             );
 
-            let parsed = super::ParsedTimestamp::parse(&token).unwrap();
+            let parsed =
+                contentauth_pki::timestamp::verification::ParsedTimestamp::parse(&token).unwrap();
 
             parsed
                 .verify_signatures()
@@ -1834,9 +1843,10 @@ pub(crate) mod message_imprint_regression {
             assert!(log.has_status(TIMESTAMP_UNTRUSTED));
 
             if valid_profile {
-                let cert = super::tsa_signer_cert_der_from_token(&token)
-                    .unwrap()
-                    .unwrap();
+                let cert =
+                    crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&token)
+                        .unwrap()
+                        .unwrap();
 
                 let pem = openssl::x509::X509::from_der(&cert)
                     .unwrap()
@@ -1876,9 +1886,11 @@ pub(crate) mod message_imprint_regression {
             sd.signer_infos = vec![signer].into();
             let token = encode_token(&sd);
 
-            assert!(super::tsa_signer_cert_der_from_token(&token)
-                .unwrap()
-                .is_none());
+            assert!(
+                crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&token)
+                    .unwrap()
+                    .is_none()
+            );
 
             assert!(matches!(
                 verify_time_stamp(
@@ -1901,7 +1913,7 @@ pub(crate) mod message_imprint_regression {
 
         let token = encode_token(&sd);
 
-        assert!(super::tsa_signer_cert_der_from_token(&token).is_err());
+        assert!(crate::crypto::time_stamp::verify::tsa_signer_cert_der_from_token(&token).is_err());
 
         assert!(matches!(
             check_error(&token, TIMESTAMP_UNTRUSTED),
@@ -1952,12 +1964,17 @@ pub(crate) mod message_imprint_regression {
         let shuffled = vec![root.clone(), unrelated, leaf.clone(), intermediate.clone()];
 
         assert_eq!(
-            super::order_certificates_leaf_to_root(&shuffled, 2).unwrap(),
+            crate::crypto::time_stamp::verify::order_certificates_leaf_to_root(&shuffled, 2)
+                .unwrap(),
             vec![leaf.clone(), intermediate, root]
         );
 
         assert_eq!(
-            super::order_certificates_leaf_to_root(std::slice::from_ref(&leaf), 0).unwrap(),
+            crate::crypto::time_stamp::verify::order_certificates_leaf_to_root(
+                std::slice::from_ref(&leaf),
+                0
+            )
+            .unwrap(),
             vec![leaf]
         );
 
@@ -1965,7 +1982,11 @@ pub(crate) mod message_imprint_regression {
         let cycle_b = cert("b", "a", 6);
 
         assert_eq!(
-            super::order_certificates_leaf_to_root(&[cycle_a.clone(), cycle_b.clone()], 0).unwrap(),
+            crate::crypto::time_stamp::verify::order_certificates_leaf_to_root(
+                &[cycle_a.clone(), cycle_b.clone()],
+                0
+            )
+            .unwrap(),
             vec![cycle_a, cycle_b]
         );
     }

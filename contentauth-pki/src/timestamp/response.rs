@@ -274,7 +274,7 @@ mod tests {
         );
 
         assert_eq!(
-            super::super::verification::token_from_response(&response)?,
+            crate::timestamp::verification::token_from_response(&response)?,
             token.as_slice()
         );
 
@@ -298,7 +298,7 @@ mod tests {
         assert!(tst_info_from_signed_data(&malformed).is_err());
 
         for oid in [vec![1, 2, 3], vec![1, 2, 840, 113549, 1, 7, 2]] {
-            let invalid = super::ContentInfo {
+            let invalid = crate::timestamp::response::ContentInfo {
                 content_type: ObjectIdentifier::new(oid).ok_or("invalid test OID")?,
                 content: Any::new(vec![0x30, 0]),
             };
@@ -310,8 +310,7 @@ mod tests {
     }
 }
 
-use super::verification::VerificationErrorKind;
-use crate::asn1::rfc3161::TimeStampToken;
+use crate::{asn1::rfc3161::TimeStampToken, timestamp::verification::VerificationErrorKind};
 
 #[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ContentInfo {

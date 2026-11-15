@@ -58,11 +58,13 @@ use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use thiserror::Error;
 
-use super::response::{
-    signed_data_and_bytes_from_time_stamp_response, signed_data_from_time_stamp_response,
-    tst_info_from_signed_data, ContentInfo,
+use crate::{
+    asn1::rfc3161::{Accuracy, TimeStampResp, TstInfo},
+    timestamp::response::{
+        signed_data_and_bytes_from_time_stamp_response, signed_data_from_time_stamp_response,
+        tst_info_from_signed_data, ContentInfo,
+    },
 };
-use crate::asn1::rfc3161::{Accuracy, TimeStampResp, TstInfo};
 
 #[cfg(test)]
 mod rsa_pss_ski_regression;
