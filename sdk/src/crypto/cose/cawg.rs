@@ -284,7 +284,7 @@ impl Verifier<'_> {
 
         let info = if _sync {
             self.verify_signature_for_role(
-                super::CertificateRole::CawgIdentity,
+                crate::crypto::cose::CertificateRole::CawgIdentity,
                 signature,
                 data,
                 &[],
@@ -293,7 +293,7 @@ impl Verifier<'_> {
             )?
         } else {
             self.verify_signature_for_role_async(
-                super::CertificateRole::CawgIdentity,
+                crate::crypto::cose::CertificateRole::CawgIdentity,
                 signature,
                 data,
                 &[],

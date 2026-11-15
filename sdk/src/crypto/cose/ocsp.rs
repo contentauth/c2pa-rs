@@ -512,7 +512,7 @@ fn check_stapled_ocsp_response(
             }
         } else {
             // Only delegated responders require the OCSP signing EKU.
-            if super::CertificateRole::DelegatedOcspResponder
+            if crate::crypto::cose::CertificateRole::DelegatedOcspResponder
                 .check_profile(
                     first_cert,
                     &CertificateTrustPolicy::new(),
@@ -819,7 +819,7 @@ fn validate_fetched_ocsp(
                 return OcspResponse::default();
             }
         } else {
-            if super::CertificateRole::DelegatedOcspResponder
+            if crate::crypto::cose::CertificateRole::DelegatedOcspResponder
                 .check_profile(
                     first_cert,
                     &CertificateTrustPolicy::new(),

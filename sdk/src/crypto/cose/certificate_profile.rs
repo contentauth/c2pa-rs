@@ -1357,7 +1357,7 @@ mod tests {
 
                     let mut log = StatusTracker::default();
 
-                    let result = super::CertificateRole::ClaimSigner
+                    let result = crate::crypto::cose::CertificateRole::ClaimSigner
                         .check_profile(&der, &policy, &mut log, None);
 
                     let specialty = purposes.contains(&timestamp) || purposes.contains(&ocsp);
@@ -1380,17 +1380,16 @@ mod tests {
                     assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);
 
                     if specialty {
-                        assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
+                        assert_eq!(
+                            result,
+                            Err(crate::crypto::cose::CertificateProfileError::InvalidEku)
+                        );
                     }
 
                     let mut identity_log = StatusTracker::default();
 
-                    let identity_result = super::CertificateRole::CawgIdentity.check_profile(
-                        &der,
-                        &policy,
-                        &mut identity_log,
-                        None,
-                    );
+                    let identity_result = crate::crypto::cose::CertificateRole::CawgIdentity
+                        .check_profile(&der, &policy, &mut identity_log, None);
 
                     let mut generic_log = StatusTracker::default();
 
@@ -1405,8 +1404,14 @@ mod tests {
                     );
 
                     for (role, required) in [
-                        (super::CertificateRole::TimestampSigner, &timestamp),
-                        (super::CertificateRole::DelegatedOcspResponder, &ocsp),
+                        (
+                            crate::crypto::cose::CertificateRole::TimestampSigner,
+                            &timestamp,
+                        ),
+                        (
+                            crate::crypto::cose::CertificateRole::DelegatedOcspResponder,
+                            &ocsp,
+                        ),
                     ] {
                         let mut log = StatusTracker::default();
                         let result = role.check_profile(&der, &policy, &mut log, None);
@@ -1416,7 +1421,10 @@ mod tests {
                         assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !allowed);
 
                         if purposes.len() == 1 && purposes[0] == email {
-                            assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
+                            assert_eq!(
+                                result,
+                                Err(crate::crypto::cose::CertificateProfileError::InvalidEku)
+                            );
                         }
                     }
                 }
