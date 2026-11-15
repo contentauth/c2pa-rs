@@ -130,6 +130,18 @@ fn malformed_and_unsupported_inputs_remain_typed() -> TestResult {
         Err(ParseError::MalformedResponse)
     ));
 
+    let mut malformed: rasn_ocsp::OcspResponse = rasn::der::decode(GOOD)?;
+    malformed
+        .bytes
+        .as_mut()
+        .ok_or("missing basic response")?
+        .response = vec![0xde, 0xad].into();
+
+    assert!(matches!(
+        ParsedOcspResponse::from_der(&rasn::der::encode(&malformed)?),
+        Err(ParseError::MalformedResponse)
+    ));
+
     let mut response: rasn_ocsp::OcspResponse = rasn::der::decode(GOOD)?;
     response.status = OcspResponseStatus::Unauthorized;
     assert!(matches!(
@@ -166,6 +178,33 @@ fn malformed_and_unsupported_inputs_remain_typed() -> TestResult {
         ),
         Err(RawSignatureValidationError::UnsupportedAlgorithm)
     );
+
+    Ok(())
+}
+
+#[test]
+fn missing_and_malformed_issuer_inputs_do_not_authenticate_claims() -> TestResult {
+    let mut envelope: rasn_ocsp::OcspResponse = rasn::der::decode(GOOD)?;
+    let bytes = envelope.bytes.as_mut().ok_or("missing basic response")?;
+    let mut basic: BasicOcspResponse = rasn::der::decode(&bytes.response)?;
+    basic.certs = None;
+    bytes.response = rasn::der::encode(&basic)?.into();
+    let der = rasn::der::encode(&envelope)?;
+    let chain = chain()?;
+
+    for missing_issuer in [vec![], chain[..1].to_vec()] {
+        assert!(matches!(
+            ParsedOcspResponse::from_der(&der)?.verify_signature(&missing_issuer),
+            Err(VerificationError::MissingIssuer)
+        ));
+    }
+
+    assert!(matches!(
+        ParsedOcspResponse::from_der(&der)?.verify_signature(&[chain[0].clone(), vec![0xde, 0xad]]),
+        Err(VerificationError::InvalidCertificate)
+    ));
+    assert!(!certificate_issued_by(&[0xde, 0xad], &chain[1]));
+    assert!(!certificate_issued_by(&chain[0], &[0xde, 0xad]));
 
     Ok(())
 }
