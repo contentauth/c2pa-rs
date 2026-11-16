@@ -24,14 +24,20 @@ mod asset_io_equivalence_test;
 mod asset_io_perf_test;
 #[cfg(all(test, feature = "asset_io"))]
 mod asset_io_riff_test;
+// The BMFF hash still reads boxes and samples through the legacy BMFF parser.
 pub mod bmff_io;
+#[cfg(any(not(feature = "asset_io"), test))]
 pub mod c2pa_io;
+#[cfg(any(not(feature = "asset_io"), test))]
 pub mod flac_io;
+#[cfg(any(not(feature = "asset_io"), test))]
 pub mod gif_io;
+#[cfg(any(not(feature = "asset_io"), test))]
 pub(crate) mod id3_helper;
 #[cfg(any(not(feature = "asset_io"), test))]
 pub mod jpeg_io;
 pub mod jpegxl_io;
+#[cfg(any(not(feature = "asset_io"), test))]
 pub mod mp3_io;
 #[cfg(feature = "unstable_plain_text")]
 pub mod plain_text_io;

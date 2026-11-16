@@ -662,13 +662,6 @@ mod tests {
         }
     }
 
-    /// The test context with asset-io's BMFF container registered, as a caller
-    /// would, so BMFF assets are saved directly instead of through the legacy
-    /// BMFF handler.
-    fn direct_context() -> Context {
-        test_context().with_io_handler(::asset_io::containers::bmff::BmffHandler)
-    }
-
     fn unsigned_store(context: &Context) -> Store {
         let mut store = Store::from_context(context);
         let mut claim = Claim::new("direct asset-io", Some("direct_asset_io"), 1);
@@ -763,7 +756,7 @@ mod tests {
     fn direct_asset_io_requested_data_hash_and_bmff_are_single_pass() {
         let bmff = bmff_fixture();
         for (format, source) in FIXTURES.into_iter().chain([("video/mp4", bmff.as_slice())]) {
-            let context = direct_context()
+            let context = test_context()
                 .with_settings(r#"{"verify":{"verify_after_sign":false}}"#)
                 .unwrap()
                 .with_signer(test_signer(SigningAlg::Ed25519));
@@ -803,7 +796,7 @@ mod tests {
         };
         let bmff = bmff_fixture();
         for (format, source) in FIXTURES.into_iter().chain([("video/mp4", bmff.as_slice())]) {
-            let context = direct_context()
+            let context = test_context()
                 .with_settings(r#"{"verify":{"verify_after_sign":false}}"#)
                 .unwrap()
                 .with_signer(test_signer(SigningAlg::Ed25519));
@@ -890,7 +883,7 @@ mod tests {
     fn direct_asset_io_bmff_preserves_selectors_and_versions() {
         use crate::assertions::{DataMap, ExclusionsMap, SubsetMap};
         for version in [1, 2, 3] {
-            let context = direct_context()
+            let context = test_context()
                 .with_settings(r#"{"verify":{"verify_after_sign":false}}"#)
                 .unwrap()
                 .with_signer(test_signer(SigningAlg::Ed25519));
@@ -942,7 +935,7 @@ mod tests {
     #[test]
     fn direct_asset_io_unhandled_sidecar_and_capability_errors() {
         use crate::assertions::CollectionHash;
-        let context = direct_context()
+        let context = test_context()
             .with_settings(r#"{"verify":{"verify_after_sign":false}}"#)
             .unwrap()
             .with_signer(test_signer(SigningAlg::Ed25519));
@@ -974,7 +967,7 @@ mod tests {
             "update_with_binding",
             "pdf",
         ] {
-            let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+            let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
             let mut store = unsigned_store(&context);
             let claim = store.provenance_claim_mut().unwrap();
             match kind {
@@ -1074,7 +1067,7 @@ mod tests {
     /// size (a box hash); with any other binding it is saved uncompressed.
     #[test]
     fn direct_asset_io_saves_compressed_manifests() {
-        let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         let bmff = bmff_fixture();
         let cases: [(&str, &[u8], bool, bool); 6] = [
             (FIXTURES[0].0, FIXTURES[0].1, true, true),
@@ -1114,7 +1107,7 @@ mod tests {
     /// The box-hash default can be turned off to compare with `save_to_stream`.
     #[test]
     fn direct_asset_io_box_hash_default_can_be_turned_off() {
-        let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         for (named_boxes, box_hash) in [(true, true), (false, false)] {
             let options = DirectSaveOptions {
                 defaults: BindingDefaults { named_boxes },
@@ -1132,7 +1125,7 @@ mod tests {
     /// existing store; ISO BMFF keeps the original store in place.
     #[test]
     fn direct_asset_io_saves_update_manifests() {
-        let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         let bmff = bmff_fixture();
         for (format, source) in [FIXTURES[0], FIXTURES[1], ("video/mp4", bmff.as_slice())] {
             let (signed_store, signed, _) = save_and_read(
@@ -1252,7 +1245,7 @@ mod tests {
             }
         }
 
-        let context = direct_context().with_signer(DynamicSigner(test_signer(SigningAlg::Ed25519)));
+        let context = test_context().with_signer(DynamicSigner(test_signer(SigningAlg::Ed25519)));
         let bmff = bmff_fixture();
         for (format, source) in FIXTURES.into_iter().chain([("video/mp4", bmff.as_slice())]) {
             for named_boxes in [true, false] {
@@ -1274,7 +1267,7 @@ mod tests {
 
     #[test]
     fn direct_asset_io_preserves_unrelated_jumbf() {
-        let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         let mut other = super::MANIFEST_PLACEHOLDER.to_vec();
         other[16..20].copy_from_slice(b"test");
         let handler = ::asset_io::HandlerRegistry::builtin()
@@ -1331,7 +1324,7 @@ mod tests {
     #[test]
     fn direct_asset_io_bmff_default_exclusion_setting_is_honored() {
         for exclude in [true, false] {
-            let context = direct_context()
+            let context = test_context()
                 .with_settings(format!(
                     r#"{{"builder":{{"bmff_hash_exclude_free_and_skip_boxes":{exclude}}}}}"#
                 ))
@@ -1385,7 +1378,7 @@ mod tests {
     fn direct_asset_io_rejects_unsupported_bmff_requests_before_writing() {
         use crate::assertions::ExclusionsMap;
         for kind in ["merkle", "indexed"] {
-            let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+            let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
             let mut store = unsigned_store(&context);
             let mut hash = BmffHash::new("requested", "sha256", None);
             hash.set_default_exclusions_with_options(context.settings());
@@ -1438,7 +1431,7 @@ mod tests {
             (at, bytes[at..at + 4].to_vec())
         };
         let save = |value: Vec<u8>| {
-            let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+            let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
             let mut store = unsigned_store(&context);
             let mut hash = BmffHash::new("requested", "sha256", None);
             hash.set_default_exclusions_with_options(context.settings());
@@ -1487,7 +1480,7 @@ mod tests {
 
     #[test]
     fn direct_asset_io_requested_box_algorithms_and_excluded_boxes_are_preserved() {
-        let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         let (format, source) = FIXTURES[0];
         let mut first = unsigned_store(&context);
         first
@@ -1558,7 +1551,7 @@ mod tests {
         ];
         for (format, source) in fixtures {
             for mode in ["embed", "sidecar", "remote", "embed_remote"] {
-                let context = direct_context()
+                let context = test_context()
                     .with_settings(r#"{"verify":{"verify_after_sign":false}}"#)
                     .unwrap()
                     .with_signer(test_signer(SigningAlg::Ed25519));
@@ -1603,7 +1596,7 @@ mod tests {
     #[test]
     fn direct_asset_io_save_embeds_valid_manifests() {
         for (format, source) in FIXTURES {
-            let context = direct_context()
+            let context = test_context()
                 .with_settings(r#"{"verify":{"verify_after_sign":true}}"#)
                 .unwrap()
                 .with_signer(test_signer(SigningAlg::Ed25519));
@@ -1638,7 +1631,7 @@ mod tests {
     #[test]
     fn direct_asset_io_save_writes_once_then_patches_only_the_manifest() {
         for (format, source) in FIXTURES {
-            let context = direct_context()
+            let context = test_context()
                 .with_settings(r#"{"verify":{"verify_after_sign":false}}"#)
                 .unwrap()
                 .with_signer(test_signer(SigningAlg::Ps256));
@@ -1710,7 +1703,7 @@ mod tests {
     #[test]
     fn direct_asset_io_save_propagates_write_cancellation_and_io_errors() {
         for cancel in [true, false] {
-            let context = direct_context()
+            let context = test_context()
                 .with_signer(test_signer(SigningAlg::Ps256))
                 .with_progress_callback(move |phase, step, _| {
                     !cancel || phase != ProgressPhase::Hashing || step < 2
@@ -1786,7 +1779,7 @@ mod tests {
         };
 
         // Without a handler the format is unknown, so it cannot be embedded.
-        let context = direct_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         assert!(matches!(save(&context), Err(Error::UnsupportedType)));
 
         // The context's handler is used for the direct save.
@@ -1794,7 +1787,7 @@ mod tests {
             .handler("image/jpeg")
             .unwrap()
             .clone();
-        let context = direct_context()
+        let context = test_context()
             .with_signer(test_signer(SigningAlg::Ed25519))
             .with_io_handler(DirectOnlyJpeg(jpeg));
         let (manifest, mut output) = save(&context).unwrap();
@@ -1803,20 +1796,23 @@ mod tests {
 
         // A format the context serves with a legacy handler is saved through it.
         let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
-        assert!(context.io().container_handler("video/mp4").is_none());
-        assert!(context.io().handler("video/mp4").is_some());
+        assert!(context.io().container_handler("zip").is_none());
+        assert!(context.io().handler("zip").is_some());
         let mut store = unsigned_store(&context);
         let mut output = Cursor::new(Vec::new());
         let manifest = store
             .save_to_stream_asset_io(
-                "video/mp4",
-                &mut Cursor::new(bmff_fixture()),
+                "zip",
+                &mut Cursor::new(include_bytes!("../../tests/fixtures/sample1.zip")),
                 &mut output,
                 context.signer().unwrap(),
                 &context,
             )
             .unwrap();
-        assert_valid_manifest("video/mp4", &manifest, &mut output);
+        assert_valid_manifest("zip", &manifest, &mut output);
+
+        // ISO BMFF is served by asset-io by default.
+        assert!(context.io().container_handler("video/mp4").is_some());
     }
 
     #[test]
@@ -1853,7 +1849,7 @@ mod tests {
         for (format, source) in FIXTURES.into_iter().chain([("video/mp4", bmff.as_slice())]) {
             for binding in ["default", "data", "boxes", "bmff"] {
                 for mode in ["embed", "sidecar", "remote", "embed_remote"] {
-                    let context = direct_context()
+                    let context = test_context()
                         .with_settings(r#"{"verify":{"verify_after_sign":false}}"#)
                         .unwrap()
                         .with_signer(test_signer(SigningAlg::Ed25519));

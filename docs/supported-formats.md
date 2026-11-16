@@ -9,10 +9,12 @@ The following table summarizes the supported media (asset) file formats. This in
 
 `txt` requires the non-default `unstable_plain_text` feature.
 
-The experimental, non-default `asset_io` feature routes JPEG, PNG, SVG, RIFF,
-TIFF/DNG, MP3, FLAC, and GIF through `asset-io` 0.4. PDF uses it when the `pdf`
-feature is also enabled. Without `asset_io`, these formats retain their legacy
-handlers.
+The experimental, non-default `asset_io` feature routes every container that
+`asset-io` 0.5 supports through it: JPEG, PNG, SVG, RIFF (WAV, WebP, AVI),
+TIFF/DNG (ARW and NEF read only), MP3, FLAC, GIF, ISO BMFF (MP4, MOV, M4A, HEIC,
+HEIF, AVIF), and `.c2pa` sidecars. PDF uses it when the `pdf` feature is also
+enabled. JPEG XL, ZIP-based formats and text keep their legacy handlers, as do
+all formats without `asset_io`.
 
 Public handler registration and registry access, differential tests, and their
 additional dependencies also require `asset_io`. Standard Makefile targets do

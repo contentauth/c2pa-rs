@@ -27,63 +27,52 @@ use crate::asset_handlers::structured_text_io::StructuredTextIO;
 use crate::asset_handlers::tiff_io::TiffIO;
 #[cfg(not(feature = "asset_io"))]
 use crate::asset_handlers::{
-    flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO,
-    svg_io::SvgIO,
+    bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
+    mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
 };
 use crate::{
-    asset_handlers::{bmff_io::BmffIO, c2pa_io::C2paIO, jpegxl_io::JpegXlIO, zip_io::ZipIO},
+    asset_handlers::{jpegxl_io::JpegXlIO, zip_io::ZipIO},
     asset_io::{AssetIO, C2paReader, C2paWriter, HandlerRegistry, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
     utils::mime::normalize_format,
 };
 
-// One prototype instance per handler family. All three lookup maps are derived from
-// this single list so handlers only need to be enumerated here.
-lazy_static! {
-    static ref HANDLER_PROTOTYPES: Vec<Box<dyn AssetIO>> = vec![
-        #[cfg(all(feature = "pdf", not(feature = "asset_io")))]
+/// One prototype instance per handler family. All three lookup maps are derived from
+/// this single list so handlers only need to be enumerated here.
+///
+/// With `asset_io`, every container asset-io supports is served through it; the
+/// legacy handlers remain only for formats it does not cover.
+fn handler_prototypes() -> Vec<Box<dyn AssetIO>> {
+    #[cfg(feature = "asset_io")]
+    let mut handlers = crate::asset_handlers::asset_io_adapter::builtin_adapters();
+    #[cfg(not(feature = "asset_io"))]
+    let mut handlers: Vec<Box<dyn AssetIO>> = vec![
+        #[cfg(feature = "pdf")]
         Box::new(PdfIO::new("")),
-        #[cfg(all(feature = "pdf", feature = "asset_io"))]
-        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("pdf")),
         Box::new(BmffIO::new("")),
         Box::new(C2paIO::new("")),
-        #[cfg(not(feature = "asset_io"))]
         Box::new(JpegIO::new("")),
-        #[cfg(feature = "asset_io")]
-        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("jpg")),
-        Box::new(JpegXlIO::new("")),
-        #[cfg(not(feature = "asset_io"))]
         Box::new(PngIO::new("")),
-        #[cfg(feature = "asset_io")]
-        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("png")),
-        #[cfg(not(feature = "asset_io"))]
         Box::new(RiffIO::new("")),
-        #[cfg(feature = "asset_io")]
-        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("wav")),
-        #[cfg(not(feature = "asset_io"))]
         Box::new(SvgIO::new("")),
-        #[cfg(feature = "asset_io")]
-        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("svg")),
-        #[cfg(not(feature = "asset_io"))]
         Box::new(TiffIO::new("")),
-        #[cfg(feature = "asset_io")]
-        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("tif")),
-        #[cfg(not(feature = "asset_io"))]
         Box::new(Mp3IO::new("")),
-        #[cfg(feature = "asset_io")]
-        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("mp3")),
-        #[cfg(not(feature = "asset_io"))]
         Box::new(GifIO::new("")),
-        #[cfg(feature = "asset_io")]
-        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("gif")),
-        #[cfg(not(feature = "asset_io"))]
         Box::new(FlacIO::new("")),
+    ];
+    handlers.extend([
+        Box::new(JpegXlIO::new("")) as Box<dyn AssetIO>,
         #[cfg(feature = "unstable_structured_text")]
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
         Box::new(PlainTextIO::new("")),
         Box::new(ZipIO::new("")),
-    ];
+    ]);
+    handlers
+}
+
+lazy_static! {
+    static ref HANDLER_PROTOTYPES: Vec<Box<dyn AssetIO>> = handler_prototypes();
 
     static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
         let mut map = HashMap::new();
@@ -275,8 +264,8 @@ pub mod tests {
     use crate::asset_handlers::tiff_io::TiffIO;
     #[cfg(feature = "asset_io")]
     use crate::asset_handlers::{
-        flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO,
-        riff_io::RiffIO, svg_io::SvgIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
+        mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
     };
     use crate::{
         utils::{test::create_test_store, test_signer::test_signer},

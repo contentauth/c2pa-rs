@@ -138,6 +138,64 @@ impl AssetIoAdapter {
     }
 }
 
+/// ISO BMFF options for writing `store`, as the legacy BMFF writer applied them:
+/// an update manifest is added as an `update` beside the frozen `original`, and
+/// merkle boxes already in the file are carried over to the new layout.
+fn bmff_updates(
+    s: &Structure,
+    src: &mut dyn ReadSeek,
+    updates: Updates,
+    store: &[u8],
+) -> Result<Updates> {
+    use aio::containers::bmff::BmffUpdates;
+
+    if is_update_store(store) {
+        return Ok(updates.as_update());
+    }
+    let mut src = src;
+    let merkle = s
+        .items_labelled(ItemKind::Other, aio::labels::MERKLE)
+        .map(|item| s.read_item(&mut src, item).map_err(err))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(if merkle.is_empty() {
+        updates
+    } else {
+        updates.set_merkle(merkle)
+    })
+}
+
+/// Whether `store`'s provenance claim is an update manifest.
+fn is_update_store(store: &[u8]) -> bool {
+    let mut log = crate::status_tracker::StatusTracker::with_error_behavior(
+        crate::status_tracker::ErrorBehavior::StopOnFirstError,
+    );
+    crate::store::Store::from_jumbf_with_context(store, &mut log, &crate::Context::new())
+        .ok()
+        .and_then(|store| {
+            store
+                .provenance_claim()
+                .map(|claim| claim.update_manifest())
+        })
+        .unwrap_or(false)
+}
+
+/// One adapter per asset-io built-in container this build serves, for the
+/// default handler registry. The read-only camera raw handler is folded into the
+/// TIFF adapter, and PDF is served only with the `pdf` feature.
+pub(crate) fn builtin_adapters() -> Vec<Box<dyn AssetIO>> {
+    let mut seen = Vec::new();
+    HandlerRegistry::builtin()
+        .handlers()
+        .filter(|handler| cfg!(feature = "pdf") || handler.id() != aio::containers::pdf::ID)
+        .filter(|handler| {
+            let new = !seen.contains(&handler.id());
+            seen.push(handler.id());
+            new
+        })
+        .map(|handler| Box::new(AssetIoAdapter::from_handler(Arc::clone(handler))) as Box<_>)
+        .collect()
+}
+
 /// Whether `bytes` begin with a JUMBF superbox of the C2PA store type.
 fn is_c2pa_store(bytes: &[u8]) -> bool {
     aio::jumbf::superbox_type(bytes) == Some(aio::jumbf::C2PA_STORE_TYPE)
@@ -188,6 +246,18 @@ impl C2paReader for AssetIoAdapter {
             // A dedicated carrier may hold anything; only a C2PA store superbox is
             // a manifest store.
             Some(v) if is_c2pa_store(&v) => Ok(v),
+            // C2PA boxes that travel only with a store (ISO BMFF merkle boxes) mean
+            // the store was removed or retagged. Report tampering rather than an
+            // unsigned asset, which would allow a remote-manifest fallback.
+            None if s
+                .items_labelled(ItemKind::Other, aio::labels::MERKLE)
+                .next()
+                .is_some() =>
+            {
+                Err(Error::C2PAValidation(
+                    "C2PA box present without a readable manifest".to_string(),
+                ))
+            }
             _ => Err(Error::JumbfNotFound),
         }
     }
@@ -228,14 +298,13 @@ impl C2paWriter for AssetIoAdapter {
             }
         }
 
+        let mut updates = Updates::new().set_c2pa(store_bytes.to_vec());
+        if s.container_id() == aio::containers::bmff::ID {
+            updates = bmff_updates(&s, &mut *input, updates, store_bytes)?;
+        }
         output.rewind()?;
-        s.write(
-            &mut input,
-            &mut output,
-            &Updates::new().set_c2pa(store_bytes.to_vec()),
-            &mut aio::NullSink,
-        )
-        .map_err(err)?;
+        s.write(&mut input, &mut output, &updates, &mut aio::NullSink)
+            .map_err(err)?;
         Ok(())
     }
 
@@ -623,21 +692,25 @@ impl AssetIO for AssetIoAdapter {
         })
     }
 
+    // A C2PA sidecar is the store alone; it has nowhere to put XMP.
     fn remote_manifest_url_ref(&self) -> Option<&dyn crate::asset_io::RemoteManifestUrl> {
-        Some(self)
+        (self.container() != Some(aio::containers::c2pa::ID)).then_some(self as _)
     }
 
     fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
-        Some(self)
+        (self.container() != Some(aio::containers::c2pa::ID)).then_some(self as _)
     }
 
+    // ISO BMFF is bound by its own BMFF hash.
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
         self.handler
             .as_ref()
             .filter(|handler| {
                 !matches!(
                     handler.id(),
-                    aio::containers::tiff::ID | aio::containers::id3::ID
+                    aio::containers::tiff::ID
+                        | aio::containers::id3::ID
+                        | aio::containers::bmff::ID
                 )
             })
             .map(|_| self as &dyn AssetBoxHash)
@@ -750,5 +823,52 @@ mod tests {
     fn box_hash_is_unavailable_without_a_handler() {
         let adapter = AssetIoAdapter::new("unsupported-format");
         assert!(adapter.asset_box_hash_ref().is_none());
+    }
+
+    /// Every container asset-io supports is served through it by default, and
+    /// the legacy handlers only for formats it does not cover.
+    #[test]
+    fn default_registry_serves_asset_io_containers() {
+        let context = crate::Context::new();
+        for format in [
+            "jpg", "png", "gif", "svg", "webp", "wav", "avi", "tif", "dng", "mp3", "flac", "mp4",
+            "mov", "heic", "avif", "m4a", "c2pa",
+        ] {
+            assert!(
+                context.io().container_handler(format).is_some(),
+                "{format} is served by asset-io"
+            );
+        }
+        for format in ["jxl", "zip", "docx"] {
+            assert!(context.io().handler(format).is_some(), "{format} is served");
+            assert!(context.io().container_handler(format).is_none(), "{format}");
+        }
+        // Read-only camera raw formats are read through the TIFF container.
+        assert!(context.io().handler("arw").is_some());
+        assert!(context.io().writer("arw").is_none());
+        assert_eq!(context.io().handler("pdf").is_some(), cfg!(feature = "pdf"));
+    }
+
+    /// C2PA boxes that only travel with a store mean the store was removed or
+    /// retagged: tampering, not an unsigned asset that may use a remote manifest.
+    #[test]
+    fn bmff_merkle_box_without_store_is_tampering() {
+        use crate::asset_handlers::bmff_io::{write_c2pa_box, MERKLE};
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&20u32.to_be_bytes());
+        data.extend_from_slice(b"ftypisom\0\0\0\0isom");
+        let unsigned = data.clone();
+        write_c2pa_box(&mut data, &[], MERKLE, b"merkle map", 0).unwrap();
+
+        let reader = AssetIoAdapter::new("mp4");
+        assert!(matches!(
+            reader.read_c2pa(&mut std::io::Cursor::new(&data)),
+            Err(Error::C2PAValidation(_))
+        ));
+        assert!(matches!(
+            reader.read_c2pa(&mut std::io::Cursor::new(&unsigned)),
+            Err(Error::JumbfNotFound)
+        ));
     }
 }

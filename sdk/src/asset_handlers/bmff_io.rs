@@ -3666,8 +3666,10 @@ pub mod tests {
 
     #[test]
     fn test_load_jumbf_tampered_box_skips_remote_fallback() {
+        #[cfg(not(feature = "asset_io"))]
+        use crate::utils::xmp_inmemory_utils::XmpInfo;
         use crate::{
-            utils::xmp_inmemory_utils::{add_provenance, XmpInfo, MIN_XMP},
+            utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
             Context,
         };
 
@@ -3681,7 +3683,9 @@ pub mod tests {
         write_xmp_box(&mut data, xmp.as_bytes()).unwrap();
 
         // The remote reference is genuinely present, so the fallback would fire
-        // on JumbfNotFound.
+        // on JumbfNotFound. asset-io refuses to parse a C2PA box of unknown
+        // purpose at all, so it reads no XMP either.
+        #[cfg(not(feature = "asset_io"))]
         assert_eq!(
             XmpInfo::from_source(&mut Cursor::new(data.clone()), "mp4")
                 .provenance
@@ -3692,11 +3696,17 @@ pub mod tests {
         let context = Context::new();
         let mut source = Cursor::new(data);
         let result = crate::store::Store::load_jumbf_from_stream("mp4", &mut source, &context);
+        #[cfg(not(feature = "asset_io"))]
         assert!(
             matches!(
                 result,
                 Err(Error::C2PAValidation(ref m)) if m == "C2PA box present without a readable manifest"
             ),
+            "tampered C2PA box must be rejected, not fall back to the remote manifest; got {result:?}"
+        );
+        #[cfg(feature = "asset_io")]
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
             "tampered C2PA box must be rejected, not fall back to the remote manifest; got {result:?}"
         );
     }
