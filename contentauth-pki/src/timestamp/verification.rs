@@ -67,9 +67,1139 @@ use crate::{
 };
 
 #[cfg(test)]
-mod rsa_pss_ski_regression;
+mod rsa_pss_ski_regression {
+    // Copyright 2026 Adobe. All rights reserved.
+    // This file is licensed to you under the Apache License,
+    // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+    // or the MIT license (http://opensource.org/licenses/MIT),
+    // at your option.
+
+    // Unless required by applicable law or agreed to in writing,
+    // this software is distributed on an "AS IS" BASIS, WITHOUT
+    // WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+    // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+    // specific language governing permissions and limitations under
+    // each license.
+
+    //! Regression coverage for timestamp RSA-PSS profiles and strict SKI lookup.
+
+    use crate::timestamp::verification::*;
+
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+    trait Required<T> {
+        fn required(self) -> TestResult<T>;
+    }
+
+    impl<T, E: std::fmt::Debug> Required<T> for Result<T, E> {
+        fn required(self) -> TestResult<T> {
+            self.map_err(|error| std::io::Error::other(format!("{error:?}")).into())
+        }
+    }
+
+    impl<T> Required<T> for Option<T> {
+        fn required(self) -> TestResult<T> {
+            self.ok_or_else(|| std::io::Error::other("missing timestamp fixture value").into())
+        }
+    }
+
+    const DATA: &[u8] = b"RSA timestamp regression";
+    const SHA256: &str = "2.16.840.1.101.3.4.2.1";
+    const SHA384: &str = "2.16.840.1.101.3.4.2.2";
+    const SHA512: &str = "2.16.840.1.101.3.4.2.3";
+    const PS256: &[u8] = include_bytes!("../../tests/fixtures/time_stamp/ps256.tst");
+    const PS384: &[u8] = include_bytes!("../../tests/fixtures/time_stamp/ps384.tst");
+    const PS512: &[u8] = include_bytes!("../../tests/fixtures/time_stamp/ps512.tst");
+    const PKCS1: &[u8] = include_bytes!("../../tests/fixtures/time_stamp/rsa-pkcs1.tst");
+
+    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+        let mut output = vec![tag];
+        let length = body.len();
+
+        if length < 128 {
+            output.push(length as u8);
+        } else if length < 256 {
+            output.extend([0x81, length as u8]);
+        } else {
+            output.extend([0x82, (length >> 8) as u8, length as u8]);
+        }
+
+        output.extend(body);
+        output
+    }
+
+    fn algorithm(
+        oid: &str,
+        parameters: Option<Vec<u8>>,
+    ) -> TestResult<rasn_pkix::AlgorithmIdentifier> {
+        Ok(rasn_pkix::AlgorithmIdentifier {
+            algorithm: types::ObjectIdentifier::new_unchecked(
+                oid.split('.')
+                    .map(str::parse)
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into(),
+            ),
+            parameters: parameters.map(types::Any::new),
+        })
+    }
+
+    fn hash_algorithm(hash: &str) -> TestResult<Vec<u8>> {
+        Ok(rasn::der::encode(&algorithm(hash, Some(vec![5, 0]))?)?)
+    }
+
+    fn pss(hash: &str, mgf_hash: &str, salt: u8, trailer: Option<u8>) -> TestResult<Vec<u8>> {
+        let mut fields = tlv(0xa0, &hash_algorithm(hash)?);
+
+        fields.extend(tlv(
+            0xa1,
+            &rasn::der::encode(&algorithm(MGF1, Some(hash_algorithm(mgf_hash)?))?)?,
+        ));
+
+        fields.extend(tlv(0xa2, &tlv(2, &[salt])));
+
+        if let Some(trailer) = trailer {
+            fields.extend(tlv(0xa3, &tlv(2, &[trailer])));
+        }
+
+        Ok(tlv(0x30, &fields))
+    }
+
+    fn decode(token: &[u8]) -> TestResult<rasn_cms::SignedData> {
+        signed_data_from_time_stamp_response(token)?.required()
+    }
+
+    fn encode(sd: &rasn_cms::SignedData) -> TestResult<Vec<u8>> {
+        let mut content: rasn_cms::ContentInfo = rasn::der::decode(PS256)?;
+        content.content = types::Any::new(rasn::der::encode(sd)?);
+
+        Ok(rasn::der::encode(&content)?)
+    }
+
+    fn certificate(sd: &rasn_cms::SignedData) -> TestResult<&rasn_pkix::Certificate> {
+        sd.certificates
+            .as_ref()
+            .required()?
+            .to_vec()
+            .into_iter()
+            .find_map(|choice| match choice {
+                CertificateChoices::Certificate(cert) => Some(cert.as_ref()),
+                _ => None,
+            })
+            .required()
+    }
+
+    fn change_certificate(
+        sd: &mut rasn_cms::SignedData,
+        change: impl FnOnce(&mut rasn_pkix::Certificate) -> TestResult,
+    ) -> TestResult {
+        let mut cert = certificate(sd)?.clone();
+        change(&mut cert)?;
+        sd.certificates = Some(vec![CertificateChoices::Certificate(Box::new(cert))].into());
+
+        Ok(())
+    }
+
+    fn verify(token: &[u8]) -> Result<(), VerificationError> {
+        let parsed = ParsedTimestamp::parse(token)?;
+
+        let signed = parsed.verify_signatures().next().ok_or_else(|| {
+            VerificationError::new(
+                VerificationStage::SignerIdentifier,
+                VerificationErrorKind::NoMatchingCertificate,
+                "fixture has no signer",
+            )
+        })??;
+
+        signed.verify_message_imprint(DATA)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn rsa_pss_profiles_with_rsa_encryption_spki_and_legacy_pkcs1_verify() -> TestResult {
+        for token in [PS256, PS384, PS512, PKCS1] {
+            let sd = decode(token)?;
+
+            assert_eq!(
+                certificate(&sd)?
+                    .tbs_certificate
+                    .subject_public_key_info
+                    .algorithm
+                    .algorithm
+                    .to_string(),
+                RSA_ENCRYPTION
+            );
+
+            verify(token)?;
+
+            if token != PKCS1 {
+                let signer = sd.signer_infos.to_vec()[0];
+                let key = &certificate(&sd)?.tbs_certificate.subject_public_key_info;
+
+                let tbs = signed_attributes_digested_content(signer)
+                    .required()?
+                    .required()?;
+
+                let signature = OctetString::new(bytes::Bytes::copy_from_slice(&signer.signature));
+
+                assert!(
+                    validate_timestamp_sig(
+                        &bcder::Oid::from_str(RSA_ENCRYPTION).required()?,
+                        &bcder::Oid::from_str(&signer.digest_algorithm.algorithm.to_string())
+                            .required()?,
+                        &signature,
+                        &tbs,
+                        &rasn::der::encode(key).required()?,
+                    )
+                    .is_err(),
+                    "the previous SPKI-based selection must reproduce the failure"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_rsa_signature_oids_preserve_pkcs1_and_require_matching_digest() -> TestResult {
+        let mut sd = decode(PKCS1)?;
+        let mut signer = sd.signer_infos.to_vec()[0].clone();
+
+        let key = &certificate(&sd)?
+            .tbs_certificate
+            .subject_public_key_info
+            .algorithm;
+
+        for (signature, hash) in [
+            ("1.2.840.113549.1.1.5", "1.3.14.3.2.26"),
+            ("1.2.840.113549.1.1.11", SHA256),
+            ("1.2.840.113549.1.1.12", SHA384),
+            ("1.2.840.113549.1.1.13", SHA512),
+        ] {
+            signer.signature_algorithm = algorithm(signature, Some(vec![5, 0]))?;
+            signer.digest_algorithm = algorithm(hash, None)?;
+
+            assert_eq!(
+                timestamp_signature_algorithm(&signer, key)
+                    .required()?
+                    .to_string(),
+                RSA_ENCRYPTION
+            );
+
+            signer.digest_algorithm = algorithm("1.2.3.4", None)?;
+
+            assert!(timestamp_signature_algorithm(&signer, key).is_err());
+        }
+
+        signer.signature_algorithm = algorithm("1.2.840.113549.1.1.11", Some(vec![5, 0]))?;
+        signer.digest_algorithm = algorithm(SHA256, None)?;
+        sd.signer_infos = vec![signer].into();
+        verify(&encode(&sd)?)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn pss_signature_parameters_are_required_and_strictly_parsed() -> TestResult {
+        let sd = decode(PS256)?;
+        let mut signer = sd.signer_infos.to_vec()[0].clone();
+
+        let key = &certificate(&sd)?
+            .tbs_certificate
+            .subject_public_key_info
+            .algorithm;
+
+        signer.signature_algorithm.parameters = None;
+
+        assert!(matches!(
+            timestamp_signature_algorithm(&signer, key),
+            Err(VerificationErrorKind::DecodeError(_))
+        ));
+
+        for parameters in [
+            vec![5, 0],
+            vec![4, 0],
+            vec![0x30, 1, 0],
+            tlv(0x30, &tlv(0xa4, &tlv(2, &[1]))),
+            tlv(0x30, &tlv(0x82, &[32])),
+            tlv(0x30, &tlv(0xa2, &tlv(2, &[0xff]))),
+            tlv(0x30, &tlv(0xa2, &tlv(2, &[]))),
+            tlv(0x30, &tlv(0xa2, &tlv(2, &[0, 32]))),
+            tlv(0x30, &tlv(0xa2, &tlv(2, &[1, 0, 0, 0, 0, 0, 0, 0, 0]))),
+            tlv(
+                0x30,
+                &tlv(
+                    0xa0,
+                    &rasn::der::encode(&algorithm(SHA256, Some(vec![4, 0]))?).required()?,
+                ),
+            ),
+            tlv(0x30, &tlv(0xa2, &[2, 1, 32, 5, 0])),
+            tlv(
+                0x30,
+                &[
+                    tlv(0xa0, &hash_algorithm(SHA256)?),
+                    tlv(0xa0, &hash_algorithm(SHA256)?),
+                ]
+                .concat(),
+            ),
+            tlv(
+                0x30,
+                &[
+                    tlv(0xa2, &tlv(2, &[32])),
+                    tlv(0xa0, &hash_algorithm(SHA256)?),
+                ]
+                .concat(),
+            ),
+            [pss(SHA256, SHA256, 32, None)?, vec![5, 0]].concat(),
+            tlv(
+                0x30,
+                &tlv(
+                    0xa1,
+                    &rasn::der::encode(&algorithm(MGF1, None)?).required()?,
+                ),
+            ),
+        ] {
+            signer.signature_algorithm.parameters = Some(types::Any::new(parameters.clone()));
+
+            assert!(
+                matches!(
+                    timestamp_signature_algorithm(&signer, key),
+                    Err(VerificationErrorKind::DecodeError(_))
+                ),
+                "{parameters:02x?}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn pss_profiles_reject_unsupported_and_inconsistent_parameters() -> TestResult {
+        let mut sd = decode(PS256)?;
+        let mut signer = sd.signer_infos.to_vec()[0].clone();
+
+        for parameters in [
+            vec![0x30, 0],
+            pss("1.3.14.3.2.26", "1.3.14.3.2.26", 20, None)?,
+            pss("2.16.840.1.101.3.4.2.4", "2.16.840.1.101.3.4.2.4", 28, None)?,
+            pss(SHA384, SHA384, 48, None)?,
+            pss(SHA256, SHA384, 32, None)?,
+            pss(SHA256, SHA256, 0, None)?,
+            pss(SHA256, SHA256, 33, None)?,
+            pss(SHA256, SHA256, 32, Some(2))?,
+            tlv(0x30, &tlv(0xa0, &hash_algorithm(SHA256)?)),
+            tlv(
+                0x30,
+                &[
+                    tlv(0xa0, &hash_algorithm(SHA256)?),
+                    tlv(
+                        0xa1,
+                        &rasn::der::encode(&algorithm("1.2.3.4", Some(hash_algorithm(SHA256)?))?)
+                            .required()?,
+                    ),
+                    tlv(0xa2, &tlv(2, &[32])),
+                ]
+                .concat(),
+            ),
+        ] {
+            signer.signature_algorithm.parameters = Some(types::Any::new(parameters.clone()));
+
+            assert!(
+                matches!(
+                    timestamp_signature_algorithm(
+                        &signer,
+                        &certificate(&sd)?
+                            .tbs_certificate
+                            .subject_public_key_info
+                            .algorithm
+                    ),
+                    Err(VerificationErrorKind::UnsupportedAlgorithm)
+                ),
+                "{parameters:02x?}"
+            );
+
+            sd.signer_infos = vec![signer.clone()].into();
+            let error = verify(&encode(&sd)?).err().required()?;
+
+            assert_eq!(error.stage, VerificationStage::SignatureAlgorithm);
+            assert_eq!(error.kind, VerificationErrorKind::UnsupportedAlgorithm);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn pss_parameter_defaults_and_null_or_absent_hash_parameters() -> TestResult {
+        for (hash, salt) in [(SHA256, 32), (SHA384, 48), (SHA512, 64)] {
+            let sd = decode(PS256)?;
+
+            let key = &certificate(&sd)?
+                .tbs_certificate
+                .subject_public_key_info
+                .algorithm;
+
+            let mut signer = sd.signer_infos.to_vec()[0].clone();
+
+            signer.digest_algorithm = algorithm(hash, None)?;
+            signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(hash, hash, salt, None)?))?;
+
+            assert!(timestamp_signature_algorithm(&signer, key).is_ok());
+
+            let hash_der = rasn::der::encode(&algorithm(hash, None)?).required()?;
+
+            let fields = [
+                tlv(0xa0, &hash_der),
+                tlv(
+                    0xa1,
+                    &rasn::der::encode(&algorithm(MGF1, Some(hash_der))?).required()?,
+                ),
+                tlv(0xa2, &tlv(2, &[salt])),
+            ]
+            .concat();
+
+            signer.signature_algorithm.parameters = Some(types::Any::new(tlv(0x30, &fields)));
+
+            assert!(timestamp_signature_algorithm(&signer, key).is_ok());
+        }
+
+        let defaults = pss_parameters(&types::Any::new(vec![0x30, 0])).required()?;
+
+        assert_eq!(defaults.hash, "1.3.14.3.2.26");
+        assert_eq!(defaults.mgf_hash, "1.3.14.3.2.26");
+        assert_eq!(defaults.salt_length, 20);
+        assert_eq!(defaults.trailer, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn pss_actual_salt_must_match_the_declared_profile() -> TestResult {
+        for token in [
+            include_bytes!("../../tests/fixtures/time_stamp/ps256-salt0.tst").as_slice(),
+            include_bytes!("../../tests/fixtures/time_stamp/ps256-saltmax.tst").as_slice(),
+        ] {
+            let error = verify(token).err().required()?;
+
+            assert_eq!(error.stage, VerificationStage::SignatureAlgorithm);
+            assert_eq!(error.kind, VerificationErrorKind::UnsupportedAlgorithm);
+
+            let mut sd = decode(token)?;
+            let mut signer = sd.signer_infos.to_vec()[0].clone();
+            signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(SHA256, SHA256, 32, None)?))?;
+            sd.signer_infos = vec![signer].into();
+            let error = verify(&encode(&sd)?).err().required()?;
+
+            assert_eq!(error.stage, VerificationStage::Signature);
+            assert_eq!(error.kind, VerificationErrorKind::SignatureMismatch);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn pss_actual_hash_must_match_the_declared_profile() -> TestResult {
+        let sd = decode(PS384)?;
+        let mut signer = sd.signer_infos.to_vec()[0].clone();
+        signer.digest_algorithm = algorithm(SHA256, None)?;
+        signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(SHA256, SHA256, 32, None)?))?;
+        let key = &certificate(&sd)?.tbs_certificate.subject_public_key_info;
+        let signature_algorithm =
+            timestamp_signature_algorithm(&signer, &key.algorithm).required()?;
+
+        let tbs = signed_attributes_digested_content(&signer)
+            .required()?
+            .required()?;
+
+        let signature = OctetString::new(bytes::Bytes::copy_from_slice(&signer.signature));
+
+        assert!(validate_timestamp_sig(
+            &signature_algorithm,
+            &bcder::Oid::from_str(SHA256).required()?,
+            &signature,
+            &tbs,
+            &rasn::der::encode(key).required()?,
+        )
+        .is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn pss_spki_restrictions_and_key_compatibility() -> TestResult {
+        let sd = decode(PS256)?;
+        let signer = sd.signer_infos.to_vec()[0].clone();
+
+        for parameters in [
+            None,
+            Some(pss(SHA256, SHA256, 32, None)?),
+            Some(pss(SHA256, SHA256, 20, None)?),
+        ] {
+            let key = algorithm(RSA_PSS, parameters.clone())?;
+
+            assert!(timestamp_signature_algorithm(&signer, &key).is_ok());
+
+            let mut changed = sd.clone();
+
+            change_certificate(&mut changed, |cert| {
+                cert.tbs_certificate.subject_public_key_info.algorithm = key;
+
+                Ok(())
+            })?;
+
+            verify(&encode(&changed)?)?;
+        }
+
+        for parameters in [
+            vec![0x30, 0],
+            pss(SHA384, SHA384, 48, None)?,
+            pss(SHA256, SHA384, 32, None)?,
+            pss(SHA256, SHA256, 33, None)?,
+            pss(SHA256, SHA256, 32, Some(2))?,
+            vec![5, 0],
+        ] {
+            assert!(
+                timestamp_signature_algorithm(&signer, &algorithm(RSA_PSS, Some(parameters))?)
+                    .is_err()
+            );
+        }
+
+        for incompatible in [EC_PUBLIC_KEY, "1.3.101.112"] {
+            assert!(
+                timestamp_signature_algorithm(&signer, &algorithm(incompatible, None)?).is_err()
+            );
+        }
+
+        let legacy = decode(PKCS1)?;
+
+        assert!(timestamp_signature_algorithm(
+            legacy.signer_infos.to_vec()[0],
+            &algorithm(RSA_PSS, None)?,
+        )
+        .is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() -> TestResult {
+        let mut sd = decode(PS256)?;
+
+        let expected = signer_certificate_from_token(PS256)
+            .required()?
+            .required()?;
+
+        verify(PS256)?;
+
+        let extension = certificate(&sd)?
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .required()?
+            .iter()
+            .find(|extension| {
+                extension.extn_id
+                    == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
+            })
+            .required()?
+            .extn_value
+            .clone();
+
+        let identifier = rasn::der::decode::<types::OctetString>(&extension).required()?;
+
+        let mut signer = sd.signer_infos.to_vec()[0].clone();
+        signer.version = 3.into();
+        signer.sid = SignerIdentifier::SubjectKeyIdentifier(identifier.clone());
+        sd.signer_infos = vec![signer.clone()].into();
+        let token = encode(&sd)?;
+
+        assert_eq!(
+            signer_certificate_from_token(&token).required()?,
+            Some(expected)
+        );
+
+        verify(&token)?;
+
+        for value in [
+            None,
+            Some(vec![4, 1, 0]),
+            Some(identifier.to_vec()),
+            Some(vec![4, 20, 1]),
+            Some(vec![5, 0]),
+            Some([extension.to_vec(), vec![5, 0]].concat()),
+        ] {
+            let mut changed = sd.clone();
+
+            change_certificate(&mut changed, |cert| {
+                let extensions = cert.tbs_certificate.extensions.as_mut().required()?;
+
+                if let Some(value) = value {
+                    let extension = extensions
+                        .iter_mut()
+                        .find(|extension| {
+                            extension.extn_id
+                                == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
+                        })
+                        .required()?;
+
+                    extension.extn_value = value.into();
+                } else {
+                    extensions.retain(|extension| {
+                        extension.extn_id
+                            != Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
+                    });
+                }
+
+                Ok(())
+            })?;
+
+            let token = encode(&changed)?;
+
+            assert!(signer_certificate_from_token(&token).required()?.is_none());
+
+            let error = verify(&token).err().required()?;
+
+            assert_eq!(error.stage, VerificationStage::SignerIdentifier);
+            assert_eq!(error.kind, VerificationErrorKind::NoMatchingCertificate);
+        }
+
+        signer.sid = SignerIdentifier::SubjectKeyIdentifier(extension);
+        sd.signer_infos = vec![signer].into();
+        let token = encode(&sd)?;
+
+        assert!(signer_certificate_from_token(&token).required()?.is_none());
+
+        let error = verify(&token).err().required()?;
+
+        assert_eq!(error.stage, VerificationStage::SignerIdentifier);
+        assert_eq!(error.kind, VerificationErrorKind::NoMatchingCertificate);
+
+        Ok(())
+    }
+
+    #[test]
+    fn valid_signature_does_not_establish_message_imprint() -> TestResult {
+        let parsed = ParsedTimestamp::parse(PS256)?;
+        let signed = parsed.verify_signatures().next().required()??;
+
+        let error = signed
+            .verify_message_imprint(b"not the timestamped message")
+            .err()
+            .required()?;
+
+        assert_eq!(error.stage, VerificationStage::MessageImprint);
+
+        assert_eq!(error.kind, VerificationErrorKind::InvalidData);
+
+        Ok(())
+    }
+
+    #[test]
+    fn valid_timestamp_cryptography_does_not_validate_certificate_signature_or_profile(
+    ) -> TestResult {
+        let mut sd = decode(PS256)?;
+
+        change_certificate(&mut sd, |cert| {
+            cert.signature_value.fill(false);
+            cert.tbs_certificate.extensions = None;
+
+            Ok(())
+        })?;
+
+        // Issuer/serial lookup and CMS cryptography do not validate the certificate.
+        verify(&encode(&sd)?)?;
+
+        Ok(())
+    }
+}
 #[cfg(test)]
-mod signed_attrs_tests;
+mod signed_attrs_tests {
+    // Copyright 2026 Adobe. All rights reserved.
+    // This file is licensed to you under the Apache License,
+    // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+    // or the MIT license (http://opensource.org/licenses/MIT),
+    // at your option.
+
+    // Unless required by applicable law or agreed to in writing,
+    // this software is distributed on an "AS IS" BASIS, WITHOUT
+    // WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+    // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+    // specific language governing permissions and limitations under
+    // each license.
+
+    use crate::timestamp::verification::*;
+
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+    const DATA: &[u8] = b"some sample content to sign";
+    const FORGED_DATA: &[u8] = b"attacker-controlled content";
+    const TOKEN: &[u8] =
+        include_bytes!("../../tests/fixtures/time_stamp/unsorted_signed_attrs.tst");
+
+    // Fixed variant of TOKEN, signed once with the same fixture key over DER-sorted
+    // attributes. Tests need no signing provider, private key or runtime randomness.
+    const SORTED_TOKEN: &[u8] =
+        include_bytes!("../../tests/fixtures/time_stamp/sorted_signed_attrs.tst");
+
+    fn required<T>(value: Option<T>) -> TestResult<T> {
+        value.ok_or_else(|| std::io::Error::other("missing timestamp test fixture field").into())
+    }
+
+    fn any(bytes: &[u8]) -> TestResult<asn1_rs::Any<'_>> {
+        let (remaining, value) = asn1_rs::Any::from_der(bytes)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+
+        assert!(remaining.is_empty());
+
+        Ok(value)
+    }
+
+    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        let len = body.len();
+
+        if len < 0x80 {
+            out.push(len as u8);
+        } else {
+            let length: Vec<_> = len
+                .to_be_bytes()
+                .into_iter()
+                .skip_while(|byte| *byte == 0)
+                .collect();
+
+            out.push(0x80 | length.len() as u8);
+
+            out.extend_from_slice(&length);
+        }
+
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn tlv_of(item: &asn1_rs::Any<'_>) -> Vec<u8> {
+        let tag = item.header.raw_tag().map(|tag| tag[0]).unwrap_or_else(|| {
+            let class = (item.class() as u8) << 6;
+
+            let constructed = if item.header.is_constructed() {
+                0x20
+            } else {
+                0
+            };
+
+            class | constructed | item.tag().0 as u8
+        });
+
+        tlv(tag, item.data)
+    }
+
+    // Re-encoding SignedData through rasn would silently sort the signed attributes.
+    // Rebuild only the envelope, retaining the exact received SignerInfo encodings.
+    fn rebuild_token(
+        token: &[u8],
+        content: Option<&[u8]>,
+        signer_infos: &[Vec<u8>],
+    ) -> TestResult<Vec<u8>> {
+        let outer = any(token)?;
+        let ci = required(timestamp_asn1_children(outer.data))?;
+        let sd = any(ci[1].data)?;
+        let sd_items = required(timestamp_asn1_children(sd.data))?;
+        let (_, head) = required(sd_items.split_last())?;
+        let mut sd_body = Vec::new();
+
+        for (index, item) in head.iter().enumerate() {
+            if let (2, Some(content)) = (index, content) {
+                let eci = required(timestamp_asn1_children(item.data))?;
+                let mut body = tlv_of(&eci[0]);
+                body.extend(tlv(0xa0, &tlv(0x04, content)));
+                sd_body.extend(tlv(0x30, &body));
+            } else {
+                sd_body.extend(tlv_of(item));
+            }
+        }
+
+        sd_body.extend(tlv(0x31, &signer_infos.concat()));
+        let mut ci_body = tlv_of(&ci[0]);
+        ci_body.extend(tlv(0xa0, &tlv(0x30, &sd_body)));
+
+        Ok(tlv(0x30, &ci_body))
+    }
+
+    fn original_signer_info(token: &[u8]) -> TestResult<Vec<u8>> {
+        let (_, bytes) = required(signed_data_and_bytes_from_time_stamp_response(token)?)?;
+        let entries = required(received_signer_infos(&bytes))?;
+
+        Ok(tlv_of(required(entries.first())?))
+    }
+
+    fn replace_hash(bytes: &mut [u8], old: &[u8], new: &[u8]) {
+        let positions: Vec<_> = bytes
+            .windows(old.len())
+            .enumerate()
+            .filter_map(|(index, window)| (window == old).then_some(index))
+            .collect();
+
+        assert_eq!(positions.len(), 1);
+
+        assert_eq!(old.len(), new.len());
+
+        let start = positions[0];
+        bytes[start..start + old.len()].copy_from_slice(new);
+    }
+
+    // Modify the imprint and messageDigest without the TSA key, retaining the
+    // genuine signature. An optional original signer carries the same signature.
+    fn forged_token(
+        token: &[u8],
+        keep_original: bool,
+        original_first: bool,
+    ) -> TestResult<Vec<u8>> {
+        use sha2::Digest;
+
+        let sd = required(signed_data_from_time_stamp_response(token)?)?;
+        let original_content = required(sd.encap_content_info.content)?.to_vec();
+        let mut forged_content = original_content.clone();
+
+        replace_hash(
+            &mut forged_content,
+            &Sha256::digest(DATA),
+            &Sha256::digest(FORGED_DATA),
+        );
+
+        let original = original_signer_info(token)?;
+        let mut forged = original.clone();
+
+        replace_hash(
+            &mut forged,
+            &Sha256::digest(&original_content),
+            &Sha256::digest(&forged_content),
+        );
+
+        let mut signers = vec![forged];
+
+        if keep_original {
+            signers.push(original);
+
+            if original_first {
+                signers.reverse();
+            }
+        }
+
+        rebuild_token(token, Some(&forged_content), &signers)
+    }
+
+    fn assert_crypto_verified(token: &[u8]) -> TestResult {
+        let parsed = ParsedTimestamp::parse(token)?;
+        let mut candidates = parsed.verify_signatures();
+        let signed = required(candidates.next())??;
+        let verified = signed.verify_message_imprint(DATA)?;
+
+        assert!(!verified.signature().signer_certificate().is_empty());
+        assert!(candidates.next().is_none());
+
+        // Neither successful stage establishes certificate profile, chain or trust.
+        Ok(())
+    }
+
+    fn assert_duplicate_rejected(token: &[u8]) -> TestResult {
+        let error = required(ParsedTimestamp::parse(token).err())?;
+
+        assert_eq!(error.stage, VerificationStage::DuplicateSigners);
+        assert!(matches!(error.kind, VerificationErrorKind::DecodeError(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn verifies_signed_attributes_in_encoded_order() -> TestResult {
+        let (sd, bytes) = required(signed_data_and_bytes_from_time_stamp_response(TOKEN)?)?;
+        let signers = sd.signer_infos.to_vec();
+        let signer = required(signers.first())?;
+        let raw = required(received_signer_infos(&bytes))?;
+        let encoded = required(received_signed_attributes(&raw, signer))?;
+        let sorted = rasn::der::encode(required(signer.signed_attrs.as_ref())?)?;
+
+        assert_ne!(encoded, sorted);
+        assert_crypto_verified(TOKEN)
+    }
+
+    #[test]
+    fn verifies_signed_attributes_in_timestamp_response() -> TestResult {
+        let mut response = tlv(0x30, &tlv(0x02, &[0]));
+        response.extend_from_slice(TOKEN);
+        assert_crypto_verified(&tlv(0x30, &response))
+    }
+
+    #[test]
+    fn verifies_der_sorted_signed_attributes() -> TestResult {
+        let (sd, bytes) = required(signed_data_and_bytes_from_time_stamp_response(
+            SORTED_TOKEN,
+        )?)?;
+
+        let signers = sd.signer_infos.to_vec();
+        let signer = required(signers.first())?;
+        let raw = required(received_signer_infos(&bytes))?;
+
+        assert_eq!(
+            required(received_signed_attributes(&raw, signer))?,
+            rasn::der::encode(required(signer.signed_attrs.as_ref())?)?
+        );
+
+        assert_crypto_verified(SORTED_TOKEN)
+    }
+
+    #[test]
+    fn rejects_token_with_duplicated_signature() -> TestResult {
+        for token in [TOKEN, SORTED_TOKEN] {
+            // The unmodified token must verify; duplicated signers alone cause the
+            // rejection, including the sorted-input DER fallback regression.
+            assert_crypto_verified(token)?;
+            let signer = original_signer_info(token)?;
+            assert_duplicate_rejected(&rebuild_token(token, None, &[signer.clone(), signer])?)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_forged_timestamp_with_copied_signature() -> TestResult {
+        for original in [TOKEN, SORTED_TOKEN] {
+            for original_first in [false, true] {
+                let token = forged_token(original, true, original_first)?;
+                let sd = required(signed_data_from_time_stamp_response(&token)?)?;
+                let mut matching_digests = 0;
+
+                for signer in sd.signer_infos.to_vec() {
+                    if verify_attribute_digest(signer, &sd).is_ok() {
+                        matching_digests += 1;
+                    }
+                }
+
+                // The forged messageDigest matches its forged content, so rejection
+                // must happen for ambiguity, not merely a content digest mismatch.
+                assert_eq!(matching_digests, 1);
+                assert_duplicate_rejected(&token)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_forged_timestamp_with_only_modified_signer() -> TestResult {
+        for original in [TOKEN, SORTED_TOKEN] {
+            let token = forged_token(original, false, false)?;
+            let parsed = ParsedTimestamp::parse(&token)?;
+            let signers = parsed.signed_data.signer_infos.to_vec();
+            let signer = required(signers.first())?;
+            verify_attribute_digest(signer, &parsed.signed_data)?;
+
+            // The attacker also supplied the right imprint for its own data.
+            let tst = required(tst_info_from_signed_data(&parsed.signed_data)?)?;
+            let mut hasher = DigestAlgorithm::Sha256.digester();
+            hasher.update(FORGED_DATA);
+
+            assert_eq!(
+                tst.message_imprint.hashed_message.to_bytes(),
+                hasher.finish().as_ref()
+            );
+
+            let mut candidates = parsed.verify_signatures();
+            let error = required(required(candidates.next())?.err())?;
+
+            assert_eq!(error.stage, VerificationStage::Signature);
+            assert_eq!(error.kind, VerificationErrorKind::SignatureMismatch);
+            assert!(candidates.next().is_none());
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn detects_duplicate_signatures_without_raw_signer_infos() -> TestResult {
+        for original in [TOKEN, SORTED_TOKEN] {
+            let genuine = required(signed_data_from_time_stamp_response(original)?)?;
+
+            assert!(!has_duplicate_signatures(&genuine, None));
+
+            let token = forged_token(original, true, false)?;
+            let forged = required(signed_data_from_time_stamp_response(&token)?)?;
+
+            assert!(has_duplicate_signatures(&forged, None));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn locates_unsorted_attributes_with_subject_key_identifier() -> TestResult {
+        let sd = required(signed_data_from_time_stamp_response(TOKEN)?)?;
+        let certificates = required(sd.certificates.as_ref())?.to_vec();
+
+        let certificate = required(certificates.iter().find_map(|choice| match choice {
+            CertificateChoices::Certificate(certificate) => Some(certificate),
+            _ => None,
+        }))?;
+
+        let extensions = required(certificate.tbs_certificate.extensions.as_ref())?;
+
+        let extension = required(
+            extensions
+                .iter()
+                .find(|extension| extension.extn_id.to_string() == "2.5.29.14"),
+        )?;
+
+        let ski = rasn::der::decode::<types::OctetString>(&extension.extn_value)?;
+        let original = original_signer_info(TOKEN)?;
+        let raw_signer = any(&original)?;
+        let fields = required(timestamp_asn1_children(raw_signer.data))?;
+        let mut body = tlv(0x02, &[3]);
+        body.extend(tlv(0x80, &ski));
+
+        for field in &fields[2..] {
+            body.extend(tlv_of(field));
+        }
+
+        let token = rebuild_token(TOKEN, None, &[tlv(0x30, &body)])?;
+        let (sd, bytes) = required(signed_data_and_bytes_from_time_stamp_response(&token)?)?;
+        let signers = sd.signer_infos.to_vec();
+        let signer = required(signers.first())?;
+
+        assert!(matches!(
+            signer.sid,
+            SignerIdentifier::SubjectKeyIdentifier(_)
+        ));
+
+        let raw = required(received_signer_infos(&bytes))?;
+
+        assert_ne!(
+            required(received_signed_attributes(&raw, signer))?,
+            rasn::der::encode(required(signer.signed_attrs.as_ref())?)?
+        );
+
+        assert_eq!(
+            signer_certificate_from_token(&token)?,
+            signer_certificate_from_token(TOKEN)?
+        );
+
+        assert_crypto_verified(&token)
+    }
+
+    #[test]
+    fn rejects_encoded_attributes_that_differ_from_signer_info() -> TestResult {
+        let (sd, bytes) = required(signed_data_and_bytes_from_time_stamp_response(TOKEN)?)?;
+        let raw = required(received_signer_infos(&bytes))?;
+        let signers = sd.signer_infos.to_vec();
+        let mut signer = (*required(signers.first())?).clone();
+
+        assert!(received_signed_attributes(&raw, &signer).is_some());
+
+        let attrs = required(signer.signed_attrs.take())?;
+        let mut attrs: Vec<_> = attrs.to_vec().into_iter().cloned().collect();
+        required(attrs.pop())?;
+        signer.signed_attrs = Some(rasn::types::SetOf::from_vec(attrs));
+
+        assert!(received_signed_attributes(&raw, &signer).is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_cms_decoder_preserves_signed_attribute_signature_input() -> TestResult {
+        use bcder::{decode::Constructed, encode::Values, Mode};
+
+        use crate::asn1::rfc5652::{ContentInfo, SignedData, SignerInfo};
+
+        for token in [TOKEN, SORTED_TOKEN] {
+            let original = original_signer_info(token)?;
+            let raw_signer = any(&original)?;
+            let fields = required(timestamp_asn1_children(raw_signer.data))?;
+
+            let body: Vec<_> = fields
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != 3)
+                .flat_map(|(_, field)| tlv_of(field))
+                .collect();
+
+            // This variant exercises codec behavior only, not signature validity.
+            let without_attrs = rebuild_token(token, None, &[tlv(0x30, &body)])?;
+
+            for (has_attrs, token) in [(true, token), (false, without_attrs.as_slice())] {
+                let content = required(Constructed::decode(
+                    token,
+                    Mode::Der,
+                    ContentInfo::take_opt_from,
+                )?)?;
+
+                let legacy = Constructed::decode(
+                    content.content.as_slice(),
+                    Mode::Der,
+                    SignedData::take_from,
+                )?;
+
+                let (current, bytes) =
+                    required(signed_data_and_bytes_from_time_stamp_response(token)?)?;
+
+                assert_eq!(legacy.signer_infos.len(), 1);
+
+                assert_eq!(legacy.digest_algorithms.len(), 1);
+
+                let signers = current.signer_infos.to_vec();
+                let signer = required(signers.first())?;
+                let raw = required(received_signer_infos(&bytes))?;
+
+                let expected = if has_attrs {
+                    Some(required(received_signed_attributes(&raw, signer))?)
+                } else {
+                    assert!(signed_attributes_digested_content(signer)?.is_none());
+                    None
+                };
+
+                let mut legacy_signer = required(legacy.signer_infos.first())?.clone();
+
+                assert_eq!(
+                    legacy_signer.signed_attributes_digested_content()?,
+                    expected
+                );
+
+                legacy_signer.signed_attributes_data = None;
+
+                if has_attrs {
+                    // Captured input is lossless; regenerating it uses the legacy
+                    // encoder's extra primitive SEQUENCE wrapper.
+                    assert_ne!(
+                        legacy_signer.signed_attributes_digested_content()?,
+                        expected
+                    );
+                } else {
+                    assert!(legacy_signer
+                        .signed_attributes_digested_content()?
+                        .is_none());
+                }
+
+                let mut encoded = Vec::new();
+
+                legacy_signer
+                    .encode_ref()
+                    .write_encoded(Mode::Der, &mut encoded)?;
+
+                let roundtrip =
+                    Constructed::decode(encoded.as_slice(), Mode::Der, SignerInfo::take_opt_from);
+
+                if has_attrs {
+                    assert!(roundtrip.is_err());
+                } else {
+                    let roundtrip = required(roundtrip?)?;
+
+                    assert_eq!(roundtrip.signature, legacy_signer.signature);
+                    assert_eq!(roundtrip.sid, legacy_signer.sid);
+                    assert_eq!(roundtrip.signed_attributes_digested_content()?, expected);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
 
 /// Stage at which a candidate failed, independent of host status-code policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
