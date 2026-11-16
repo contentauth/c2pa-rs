@@ -50,4 +50,14 @@ The Rust library supports the following text formats when the `unstable_structur
 | `tex`            | `application/x-tex`     |
 | `toml`           | `application/toml`      |
 | `vtt`            | `text/vtt`              |
+| `xhtml`          | `application/xhtml+xml` |
+| `xml`            | `application/xml`, `text/xml` |
 | `yaml`, `yml`    | `application/yaml`      |
+
+## Experimental feature: HTML
+
+The Rust library supports HTML when the `unstable_html` feature is enabled.
+
+| Extensions      | MIME type   |
+| --------------- | ----------- |
+| `html`, `htm`   | `text/html` |
