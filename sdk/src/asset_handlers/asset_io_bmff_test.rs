@@ -11,20 +11,12 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::{
-    collections::BTreeMap,
-    fs,
-    io::{Cursor, Read, Seek},
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, fs, io::Cursor, path::PathBuf};
 
 use asset_io::{containers::bmff, ItemKind, NullSink, Structure, Updates};
 
 use crate::{
-    asset_handlers::bmff_io::{
-        c2pa_boxes_from_tree_and_map, exclusions_from_tree, BMFFArena, BmffIO, BmffSampleReader,
-        C2PABmffBoxes,
-    },
+    asset_handlers::bmff_io::{read_bmff_c2pa_boxes, BMFFArena, BmffIO},
     asset_io::{AssetIO, C2paWriter},
 };
 
@@ -63,7 +55,7 @@ fn new_tree(bytes: &[u8]) -> asset_io::Result<(Structure, PathMap)> {
 }
 
 fn old_tree(bytes: &[u8]) -> crate::Result<PathMap> {
-    let (arena, map) = BMFFArena::from_stream_legacy(&mut Cursor::new(bytes))?;
+    let (arena, map) = BMFFArena::from_stream(&mut Cursor::new(bytes))?;
     let mut out = PathMap::new();
     for (path, tokens) in map {
         let v = tokens
@@ -138,25 +130,12 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::AssertionBase,
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
+    asset_handlers::bmff_io::bmff_to_jumbf_exclusions,
     hash_utils::{hash_stream_by_alg, HashRange},
     status_tracker::StatusTracker,
     store::Store,
     Context,
 };
-
-fn bmff_to_jumbf_exclusions<R: Read + Seek + ?Sized>(
-    reader: &mut R,
-    list: &[ExclusionsMap],
-    v2: bool,
-) -> crate::Result<Vec<HashRange>> {
-    let (tree, map) = BMFFArena::from_stream_legacy(reader)?;
-    exclusions_from_tree(reader, &tree, &map, list, v2)
-}
-
-fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(reader: &mut R) -> crate::Result<C2PABmffBoxes> {
-    let (tree, map) = BMFFArena::from_stream_legacy(reader)?;
-    c2pa_boxes_from_tree_and_map(reader, &tree, &map)
-}
 
 #[derive(Debug)]
 struct N {
@@ -846,123 +825,4 @@ fn bmff_c2pa_boxes_match_existing_handler() {
     println!("c2pa boxes: {checked} compared, {with_c2pa} with C2PA boxes");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert!(with_c2pa > 0, "no fixture carried C2PA boxes");
-}
-
-fn all_bmff_fixtures() -> Vec<PathBuf> {
-    let root = crate::utils::test::fixture_path("");
-    let mut directories = vec![root];
-    let mut paths = Vec::new();
-    while let Some(directory) = directories.pop() {
-        for entry in fs::read_dir(directory).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                directories.push(path);
-            } else if matches!(
-                path.extension().and_then(|e| e.to_str()),
-                Some("mp4" | "m4a" | "m4v" | "mov" | "heic" | "heif" | "avif" | "m4s")
-            ) {
-                paths.push(path);
-            }
-        }
-    }
-    paths.sort();
-    paths
-}
-
-#[test]
-fn bmff_hash_inputs_match_legacy_parser() {
-    use crate::asset_handlers::bmff_io::{
-        bmff_to_jumbf_exclusions as asset_exclusions, read_bmff_c2pa_boxes as asset_boxes,
-    };
-
-    let mut checked = 0;
-    let mut fragments = 0;
-    for path in all_bmff_fixtures() {
-        let bytes = fs::read(&path).unwrap();
-        let old = read_bmff_c2pa_boxes(&mut Cursor::new(&bytes));
-        let new = asset_boxes(&mut Cursor::new(&bytes));
-        match (old, new) {
-            (Ok(old), Ok(new)) => assert_eq!(old, new, "{}", path.display()),
-            (Err(_), Err(_)) => continue,
-            (old, new) => panic!("{}: legacy {old:?}, asset-io {new:?}", path.display()),
-        }
-        let mut defaults = BmffHash::new("parity", "sha256", None);
-        defaults.set_default_exclusions();
-        let mut exclusions = defaults.exclusions().to_vec();
-        exclusions.extend(extra_exclusions());
-        exclusions.push(ExclusionsMap::new("/moov/trak[1]/mdia".into()));
-        for version in [false, true] {
-            let old =
-                bmff_to_jumbf_exclusions(&mut Cursor::new(&bytes), &exclusions, version).unwrap();
-            let new = asset_exclusions(&mut Cursor::new(&bytes), &exclusions, version).unwrap();
-            assert_eq!(
-                normalized(old.clone()),
-                normalized(new.clone()),
-                "{}",
-                path.display()
-            );
-            for alg in ["sha256", "sha384", "sha512"] {
-                let expected =
-                    hash_stream_by_alg(alg, &mut Cursor::new(&bytes), Some(old.clone()), true)
-                        .unwrap();
-                let actual =
-                    hash_stream_by_alg(alg, &mut Cursor::new(&bytes), Some(new.clone()), true)
-                        .unwrap();
-                assert_eq!(expected, actual, "{} {alg}", path.display());
-            }
-        }
-        checked += 1;
-        if path.extension().is_some_and(|ext| ext == "m4s") {
-            fragments += 1;
-        }
-    }
-    assert!(checked > 0);
-    assert!(fragments > 0, "no fragmented media compared");
-}
-
-#[test]
-fn bmff_samples_match_legacy_parser() {
-    let mut tracks = 0;
-    let mut samples = 0;
-    for path in fixtures() {
-        if !matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("mp4" | "m4a" | "mov")
-        ) {
-            continue;
-        }
-        let bytes = fs::read(&path).unwrap();
-        let old = BmffSampleReader::from_stream_legacy(&mut Cursor::new(&bytes));
-        let new = BmffSampleReader::from_stream(&mut Cursor::new(&bytes));
-        // Verification rejects malformed box trees before it reads sample tables.
-        if BMFFArena::from_stream_legacy(&mut Cursor::new(&bytes)).is_err() {
-            assert!(new.is_err(), "{} must remain invalid", path.display());
-            continue;
-        }
-        let (old, new) = match (old, new) {
-            (Ok(old), Ok(new)) => (old, new),
-            (Err(_), Err(_)) => continue,
-            (old, new) => panic!("{}: legacy {old:?}, asset-io {new:?}", path.display()),
-        };
-        assert_eq!(old, new, "{} sample tables", path.display());
-        for (id, track) in old.tracks() {
-            tracks += 1;
-            for sample in 1..=track.sample_count() {
-                let expected = old
-                    .read_sample(&mut Cursor::new(&bytes), *id, sample)
-                    .unwrap();
-                let actual = new
-                    .read_sample(&mut Cursor::new(&bytes), *id, sample)
-                    .unwrap();
-                assert_eq!(
-                    expected,
-                    actual,
-                    "{} track {id} sample {sample}",
-                    path.display()
-                );
-                samples += 1;
-            }
-        }
-    }
-    assert!(tracks > 0 && samples > 0, "no sample data compared");
 }

@@ -24,7 +24,8 @@ mod asset_io_equivalence_test;
 mod asset_io_perf_test;
 #[cfg(all(test, feature = "asset_io"))]
 mod asset_io_riff_test;
-// Shared BMFF hash semantics; box discovery uses asset-io when enabled.
+// The legacy BMFF parser: BmffHash's parser without `asset_io`; with it, only
+// timed-media sample tables and Merkle proof box framing still come from here.
 pub mod bmff_io;
 #[cfg(any(not(feature = "asset_io"), test))]
 pub mod c2pa_io;

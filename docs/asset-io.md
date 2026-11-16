@@ -56,27 +56,33 @@ container directly, a format served by a legacy handler through
 
 ### Current limitations
 
-Merkle BMFF bindings, remote BMFF hashes and indexed BMFF selectors are rejected
-explicitly. The path is synchronous; async signers use `save_to_stream_async`.
+Merkle BMFF bindings and remote BMFF hashes are rejected explicitly. The path is synchronous; async signers use `save_to_stream_async`.
 
 For callback behavior, see [Progress and cancellation API](progress_callbacks.md#typical-phase-sequences).
 
 ## BMFF hashing and verification
 
-With `asset_io` enabled, BMFF hash generation and verification discover boxes
-through asset-io's `Structure::walk`. This includes initialization segments,
-fragments, Merkle proof boxes and timed-media sample tables. The C2PA exclusion
-rules, sample-table field decoding and Merkle algorithms remain shared with the
-legacy path. Invalid input is not retried through the legacy parser.
+`BmffHash` (`sdk/src/assertions/bmff_hash/`) keeps its hashing, Merkle and
+verification code in one copy and reads boxes through one of two parsers:
 
-Differential tests compare the legacy and asset-io paths' box metadata,
-exclusions, digests, sample tables and sample bytes. Generation tests compare
-serialized Merkle assertions and UUID proof boxes, and check fragment and
-initialization hashes against legacy-parser-derived ranges.
+- `asset_io_parser.rs`, with `asset_io`: the box tree from `Structure::walk`
+  and the Merkle proof boxes from the structure's items. Exclusion selectors,
+  including indexed ones, are evaluated here, for verification and for the
+  direct-save binding alike.
+- `legacy_parser.rs`, without it: the existing `asset_handlers/bmff_io.rs`
+  parser, unchanged.
+
+Tests build both and require them to report the same boxes, Merkle proof
+boxes and exclusion ranges on every BMFF fixture, on assets with flat-file
+Merkle proof boxes and on signed fragments. Since everything downstream is
+shared, the two paths then produce the same hashes, proofs and results.
+
+Still read through `bmff_io.rs` either way, until asset-io provides them:
+timed-media sample tables (`BmffSampleReader`), and the framing of Merkle
+proof boxes the SDK writes itself (`write_c2pa_box`).
 
 This does not route public Builder signing through the direct-save pipeline
-above or add Merkle support to that pipeline. Without `asset_io`, BMFF hashing
-and verification continue to use the legacy parser.
+above or add Merkle support to that pipeline.
 
 ## Differences from the legacy handlers
 

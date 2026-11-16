@@ -1376,32 +1376,68 @@ mod tests {
 
     #[test]
     fn direct_asset_io_rejects_unsupported_bmff_requests_before_writing() {
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let mut store = unsigned_store(&context);
+        let mut hash = BmffHash::new("requested", "sha256", None);
+        hash.set_default_exclusions_with_options(context.settings());
+        hash.set_merkle(Vec::new());
+        store
+            .provenance_claim_mut()
+            .unwrap()
+            .add_assertion(&hash)
+            .unwrap();
+        let mut output = TrackedOutput::default();
+        let result = store.save_to_stream_asset_io(
+            "video/mp4",
+            &mut Cursor::new(bmff_fixture()),
+            &mut output,
+            context.signer().unwrap(),
+            &context,
+        );
+        assert!(matches!(result, Err(Error::NotImplemented(_))));
+        assert!(output.writes.is_empty());
+    }
+
+    /// An indexed selector excludes the box it names: changing it leaves the
+    /// hash valid, changing the media does not.
+    #[test]
+    fn direct_asset_io_bmff_indexed_selector_excludes_its_box() {
         use crate::assertions::ExclusionsMap;
-        for kind in ["merkle", "indexed"] {
-            let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
-            let mut store = unsigned_store(&context);
-            let mut hash = BmffHash::new("requested", "sha256", None);
-            hash.set_default_exclusions_with_options(context.settings());
-            match kind {
-                "merkle" => hash.set_merkle(Vec::new()),
-                _ => hash.add_exclusions(&mut vec![ExclusionsMap::new("/moov/trak[1]".into())]),
-            }
-            store
-                .provenance_claim_mut()
-                .unwrap()
-                .add_assertion(&hash)
-                .unwrap();
-            let mut output = TrackedOutput::default();
-            let result = store.save_to_stream_asset_io(
+        let context = test_context()
+            .with_settings(r#"{"verify":{"verify_after_sign":false}}"#)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ed25519));
+        let mut store = unsigned_store(&context);
+        let mut hash = BmffHash::new("requested", "sha256", None);
+        hash.set_default_exclusions_with_options(context.settings());
+        hash.add_exclusions(&mut vec![ExclusionsMap::new("/moov/trak[1]".into())]);
+        store
+            .provenance_claim_mut()
+            .unwrap()
+            .add_assertion(&hash)
+            .unwrap();
+        let mut output = Cursor::new(Vec::new());
+        let manifest = store
+            .save_to_stream_asset_io(
                 "video/mp4",
                 &mut Cursor::new(bmff_fixture()),
                 &mut output,
                 context.signer().unwrap(),
                 &context,
-            );
-            assert!(matches!(result, Err(Error::NotImplemented(_))), "{kind}");
-            assert!(output.writes.is_empty(), "{kind}");
-        }
+            )
+            .unwrap();
+        let signed = output.into_inner();
+        let tampered = |tag: &[u8], at: usize| {
+            let mut bytes = signed.clone();
+            let found = bytes.windows(4).position(|w| w == tag).unwrap();
+            bytes[found + 4 + at] ^= 1;
+            let reader = Reader::from_context(test_context())
+                .with_manifest_data_and_stream(&manifest, "video/mp4", Cursor::new(bytes))
+                .unwrap();
+            reader.validation_state()
+        };
+        assert_ne!(tampered(b"stco", 11), ValidationState::Invalid);
+        assert_eq!(tampered(b"mdat", 10), ValidationState::Invalid);
     }
 
     /// A data predicate over an offset table the write relocates sees the bytes

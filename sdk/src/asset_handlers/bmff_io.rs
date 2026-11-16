@@ -102,79 +102,6 @@ impl BMFFArena {
     where
         R: Read + Seek + ?Sized,
     {
-        #[cfg(feature = "asset_io")]
-        {
-            Self::from_stream_asset_io(stream)
-        }
-        #[cfg(not(feature = "asset_io"))]
-        {
-            Self::from_stream_legacy(stream)
-        }
-    }
-
-    #[cfg(feature = "asset_io")]
-    fn from_stream_asset_io<R: Read + Seek + ?Sized>(
-        mut stream: &mut R,
-    ) -> Result<(BMFFArena, HashMap<String, Vec<Token>>)> {
-        use ::asset_io::{containers::bmff, Name};
-
-        use crate::assertions::asset_binding::asset_io_error;
-
-        let structure = bmff::handler().parse(&mut stream).map_err(asset_io_error)?;
-        let root = BoxInfo {
-            path: String::new(),
-            offset: 0,
-            size: structure.total_size(),
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
-        let (mut arena, root_token) = Arena::with_data(root);
-        let mut parents = vec![root_token];
-        let mut map = HashMap::new();
-        structure
-            .walk(&mut stream, |node| {
-                let Name::FourCC(name) = node.name else {
-                    return Err(::asset_io::Error::UnsupportedFeature("BMFF box name"));
-                };
-                let depth = node.depth as usize;
-                let parent = depth
-                    .checked_sub(1)
-                    .and_then(|index| parents.get(index).copied())
-                    .ok_or(::asset_io::Error::UnsupportedFeature("BMFF box hierarchy"))?;
-                let token = parent.append(
-                    &mut arena,
-                    BoxInfo {
-                        path: String::from_utf8_lossy(&name).into_owned(),
-                        offset: node.range.offset(),
-                        size: node.range.len(),
-                        box_type: BoxType::from(u32::from_be_bytes(name)),
-                        parent: Some(parent),
-                        user_type: node.user_type.map(|uuid| uuid.to_vec()),
-                        version: node.version,
-                        flags: node.flags,
-                    },
-                );
-                map.entry(node.path.to_owned())
-                    .or_insert_with(Vec::new)
-                    .push(token);
-                parents.truncate(depth);
-                parents.push(token);
-                Ok(())
-            })
-            .map_err(asset_io_error)?;
-        Ok((Self { arena, root_token }, map))
-    }
-
-    #[cfg_attr(feature = "asset_io", allow(dead_code))]
-    pub(crate) fn from_stream_legacy<R>(
-        stream: &mut R,
-    ) -> Result<(BMFFArena, HashMap<String, Vec<Token>>)>
-    where
-        R: Read + Seek + ?Sized,
-    {
         let size = stream_len(stream)?;
 
         // create root node
@@ -543,20 +470,6 @@ pub(crate) struct BoxInfoLite {
     pub size: u64,
 }
 
-impl BoxInfoLite {
-    pub fn start(&self) -> u64 {
-        self.offset
-    }
-
-    pub fn end(&self) -> u64 {
-        self.offset + self.size
-    }
-
-    pub fn size(&self) -> u64 {
-        self.size
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FourCC {
     pub value: [u8; 4],
@@ -782,6 +695,8 @@ fn path_from_token(bmff_tree: &Arena<BoxInfo>, current_node_token: &Token) -> Re
     Ok(path)
 }
 
+// Unused with `asset_io`: BmffHash finds boxes through asset-io.
+#[cfg_attr(feature = "asset_io", allow(dead_code))]
 fn get_top_level_box_offsets(
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
@@ -826,8 +741,10 @@ fn get_top_level_boxes(
     tl_boxes
 }
 
+// Unused with `asset_io`: BmffHash finds boxes through asset-io.
+#[cfg_attr(feature = "asset_io", allow(dead_code))]
 pub fn bmff_to_jumbf_exclusions<R>(
-    reader: &mut R,
+    mut reader: &mut R,
     bmff_exclusions: &[ExclusionsMap],
     bmff_v2: bool,
 ) -> Result<Vec<HashRange>>
@@ -836,18 +753,8 @@ where
 {
     let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader)?;
 
-    exclusions_from_tree(reader, &bmff_tree, &bmff_map, bmff_exclusions, bmff_v2)
-}
-
-pub(crate) fn exclusions_from_tree<R: Read + Seek + ?Sized>(
-    mut reader: &mut R,
-    bmff_tree: &BMFFArena,
-    bmff_map: &HashMap<String, Vec<Token>>,
-    bmff_exclusions: &[ExclusionsMap],
-    bmff_v2: bool,
-) -> Result<Vec<HashRange>> {
     // get top level box offsets
-    let mut tl_offsets = get_top_level_box_offsets(bmff_tree.as_ref(), bmff_map);
+    let mut tl_offsets = get_top_level_box_offsets(bmff_tree.as_ref(), &bmff_map);
     tl_offsets.sort();
 
     let mut exclusions = Vec::new();
@@ -1830,7 +1737,6 @@ fn get_uuid_token(
 }
 
 #[allow(dead_code)]
-#[derive(Debug, PartialEq)]
 pub(crate) struct C2PABmffBoxes {
     pub manifest_bytes: Option<Vec<u8>>,
     pub original_bytes: Option<Vec<u8>>,
@@ -1850,7 +1756,7 @@ pub(crate) struct C2PABmffBoxes {
     pub xmp_box_size: u64,
 }
 
-pub(crate) fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
+fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     mut reader: &mut R,
     bmff_tree: &BMFFArena,
     bmff_map: &HashMap<String, Vec<Token>>,
@@ -2706,7 +2612,7 @@ pub(crate) fn inject_manifest_into_free_box(
 
 /// One `stsc` run, with the 1-based `first_sample` derived at parse time (it is
 /// not stored on disk).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct StscRun {
     pub first_chunk: u32,
     pub samples_per_chunk: u32,
@@ -2715,7 +2621,7 @@ pub(crate) struct StscRun {
 
 /// The parsed sample tables for a single track, sufficient to locate and read
 /// any sample's bytes.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct SampleTrack {
     track_id: u32,
     stsc: Vec<StscRun>,
@@ -2882,7 +2788,7 @@ impl SampleTrack {
 /// A parsed BMFF file exposing its tracks' sample tables, and the ability to
 /// read individual samples. Replaces the `mp4` crate for the timed-media
 /// Merkle-verification path.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct BmffSampleReader {
     tracks: HashMap<u32, SampleTrack>,
     stream_len: u64,
@@ -2893,83 +2799,6 @@ impl BmffSampleReader {
     /// `moov`. Does not retain the reader; sample bytes are read on demand via
     /// [`BmffSampleReader::read_sample`] using a caller-supplied reader.
     pub(crate) fn from_stream<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<Self> {
-        #[cfg(feature = "asset_io")]
-        {
-            Self::from_stream_asset_io(reader)
-        }
-        #[cfg(not(feature = "asset_io"))]
-        {
-            Self::from_stream_legacy(reader)
-        }
-    }
-
-    #[cfg(feature = "asset_io")]
-    fn from_stream_asset_io<R: Read + Seek + ?Sized>(mut reader: &mut R) -> Result<Self> {
-        use ::asset_io::containers::bmff;
-
-        use crate::assertions::asset_binding::asset_io_error;
-
-        let structure = bmff::handler().parse(&mut reader).map_err(asset_io_error)?;
-        let stream_len = structure.total_size();
-        let root = (0, stream_len);
-        let mut parents = vec![root];
-        let mut children = HashMap::<_, Vec<_>>::new();
-        structure
-            .walk(&mut reader, |node| {
-                let ::asset_io::Name::FourCC(name) = node.name else {
-                    return Err(::asset_io::Error::UnsupportedFeature("BMFF box name"));
-                };
-                let depth = node.depth as usize;
-                let parent = depth
-                    .checked_sub(1)
-                    .and_then(|index| parents.get(index).copied())
-                    .ok_or(::asset_io::Error::UnsupportedFeature("BMFF box hierarchy"))?;
-                let content = (
-                    node.range.offset() + u64::from(node.header_len),
-                    node.range.end(),
-                );
-                children
-                    .entry(parent)
-                    .or_default()
-                    .push((BoxType::from(u32::from_be_bytes(name)), content));
-                parents.truncate(depth);
-                parents.push(content);
-                Ok(())
-            })
-            .map_err(asset_io_error)?;
-
-        let entries = |range| children.get(&range).map(Vec::as_slice).unwrap_or_default();
-        let mut tracks = HashMap::new();
-        if let Some((_, moov)) = entries(root)
-            .iter()
-            .find(|(kind, _)| *kind == BoxType::MoovBox)
-        {
-            for (_, (start, end)) in entries(*moov)
-                .iter()
-                .filter(|(kind, _)| *kind == BoxType::TrakBox)
-            {
-                if let Some(track) =
-                    parse_trak_with(&mut reader, *start, *end, |_, start, end, target| {
-                        Ok(entries((start, end))
-                            .iter()
-                            .find(|(kind, _)| *kind == target)
-                            .map(|(_, range)| *range))
-                    })?
-                {
-                    if u64::from(track.sample_count) > stream_len {
-                        return Err(Error::InvalidAsset(
-                            "BMFF stsz sample count exceeds stream length".to_string(),
-                        ));
-                    }
-                    tracks.insert(track.track_id, track);
-                }
-            }
-        }
-        Ok(Self { tracks, stream_len })
-    }
-
-    #[cfg_attr(feature = "asset_io", allow(dead_code))]
-    pub(crate) fn from_stream_legacy<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<Self> {
         let stream_len = stream_len(reader)?;
 
         let mut tracks = HashMap::new();
@@ -3077,55 +2906,42 @@ fn parse_trak<R: Read + Seek + ?Sized>(
     start: u64,
     end: u64,
 ) -> Result<Option<SampleTrack>> {
-    parse_trak_with(reader, start, end, find_box)
-}
-
-fn parse_trak_with<R, F>(
-    reader: &mut R,
-    start: u64,
-    end: u64,
-    mut find: F,
-) -> Result<Option<SampleTrack>>
-where
-    R: Read + Seek + ?Sized,
-    F: FnMut(&mut R, u64, u64, BoxType) -> Result<Option<(u64, u64)>>,
-{
-    let (tkhd_start, tkhd_end) = match find(reader, start, end, BoxType::TkhdBox)? {
+    let (tkhd_start, tkhd_end) = match find_box(reader, start, end, BoxType::TkhdBox)? {
         Some(r) => r,
         None => return Ok(None),
     };
     let track_id = parse_tkhd_track_id(reader, tkhd_start, tkhd_end)?;
 
     // Descend moov/trak/mdia/minf/stbl.
-    let (mdia_start, mdia_end) = match find(reader, start, end, BoxType::MdiaBox)? {
+    let (mdia_start, mdia_end) = match find_box(reader, start, end, BoxType::MdiaBox)? {
         Some(r) => r,
         None => return Ok(None),
     };
-    let (minf_start, minf_end) = match find(reader, mdia_start, mdia_end, BoxType::MinfBox)? {
+    let (minf_start, minf_end) = match find_box(reader, mdia_start, mdia_end, BoxType::MinfBox)? {
         Some(r) => r,
         None => return Ok(None),
     };
-    let (stbl_start, stbl_end) = match find(reader, minf_start, minf_end, BoxType::StblBox)? {
+    let (stbl_start, stbl_end) = match find_box(reader, minf_start, minf_end, BoxType::StblBox)? {
         Some(r) => r,
         None => return Ok(None),
     };
 
-    let (stsc_start, stsc_end) = match find(reader, stbl_start, stbl_end, BoxType::StscBox)? {
+    let (stsc_start, stsc_end) = match find_box(reader, stbl_start, stbl_end, BoxType::StscBox)? {
         Some(r) => r,
         None => return Ok(None),
     };
     let stsc = parse_stsc(reader, stsc_start, stsc_end)?;
 
-    let chunk_offsets = if let Some((s, e)) = find(reader, stbl_start, stbl_end, BoxType::StcoBox)?
-    {
-        parse_stco(reader, s, e)?
-    } else if let Some((s, e)) = find(reader, stbl_start, stbl_end, BoxType::Co64Box)? {
-        parse_co64(reader, s, e)?
-    } else {
-        return Ok(None);
-    };
+    let chunk_offsets =
+        if let Some((s, e)) = find_box(reader, stbl_start, stbl_end, BoxType::StcoBox)? {
+            parse_stco(reader, s, e)?
+        } else if let Some((s, e)) = find_box(reader, stbl_start, stbl_end, BoxType::Co64Box)? {
+            parse_co64(reader, s, e)?
+        } else {
+            return Ok(None);
+        };
 
-    let (stsz_start, stsz_end) = match find(reader, stbl_start, stbl_end, BoxType::StszBox)? {
+    let (stsz_start, stsz_end) = match find_box(reader, stbl_start, stbl_end, BoxType::StszBox)? {
         Some(r) => r,
         None => return Ok(None),
     };
