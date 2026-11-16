@@ -530,7 +530,10 @@ mod rsa_pss_ski_regression {
     fn rsa_profiles_and_ski_signers_reach_normal_tsa_trust_validation() {
         for token in [PS256, PS384, PS512, PKCS1] {
             let mut sd = decode(token);
-            let cert_der = tsa_signer_cert_der_from_token_with_sdk_errors(token).unwrap().unwrap();
+            let cert_der = tsa_signer_cert_der_from_token_with_sdk_errors(token)
+                .unwrap()
+                .unwrap();
+
             let pem = pem::encode(&pem::Pem::new("CERTIFICATE", cert_der));
             let mut policy = CertificateTrustPolicy::new();
 
@@ -637,7 +640,9 @@ mod rsa_pss_ski_regression {
     #[test]
     fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
         let mut sd = decode(PS256);
-        let expected = tsa_signer_cert_der_from_token_with_sdk_errors(PS256).unwrap().unwrap();
+        let expected = tsa_signer_cert_der_from_token_with_sdk_errors(PS256)
+            .unwrap()
+            .unwrap();
 
         assert!(verify(PS256).0.is_ok());
 
@@ -706,7 +711,10 @@ mod rsa_pss_ski_regression {
 
             let token = encode(&changed);
 
-            assert!(tsa_signer_cert_der_from_token_with_sdk_errors(&token).unwrap().is_none());
+            assert!(tsa_signer_cert_der_from_token_with_sdk_errors(&token)
+                .unwrap()
+                .is_none());
+
             assert!(matches!(verify(&token).0, Err(TimeStampError::InvalidData)));
         }
 
@@ -714,7 +722,10 @@ mod rsa_pss_ski_regression {
         sd.signer_infos = vec![signer].into();
         let token = encode(&sd);
 
-        assert!(tsa_signer_cert_der_from_token_with_sdk_errors(&token).unwrap().is_none());
+        assert!(tsa_signer_cert_der_from_token_with_sdk_errors(&token)
+            .unwrap()
+            .is_none());
+
         assert!(matches!(verify(&token).0, Err(TimeStampError::InvalidData)));
     }
 }
