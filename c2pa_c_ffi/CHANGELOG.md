@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.92.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.92.1...c2pa-c-ffi-v0.92.2)
+_16 November 2026_
+
 ## [0.92.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.92.0...c2pa-c-ffi-v0.92.1)
 _13 November 2026_
 
