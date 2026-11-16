@@ -965,7 +965,7 @@ mod tests {
                     .unwrap(),
             );
 
-            assert!(super::certificate_issued_by(
+            assert!(crate::crypto::ocsp::certificate_issued_by(
                 &rasn::der::encode(&leaf).unwrap(),
                 &issuer
             ));
@@ -1007,7 +1007,7 @@ mod tests {
                         .unwrap(),
                 );
 
-                assert!(!super::certificate_issued_by(
+                assert!(!crate::crypto::ocsp::certificate_issued_by(
                     &rasn::der::encode(&leaf).unwrap(),
                     &issuer
                 ));
@@ -1017,19 +1017,26 @@ mod tests {
 
     #[test]
     fn issuance_authentication_rejects_malformed_and_unsupported_certificates() {
-        let responder = super::test_responder::IssuerResponder::new();
+        let responder = crate::crypto::ocsp::test_responder::IssuerResponder::new();
         let [leaf_der, issuer_der] = responder.chain.as_slice() else {
             panic!("test chain must contain the leaf and its issuer");
         };
 
-        assert!(!super::certificate_issued_by(&[0xde, 0xad], issuer_der));
-        assert!(!super::certificate_issued_by(leaf_der, &[0xde, 0xad]));
+        assert!(!crate::crypto::ocsp::certificate_issued_by(
+            &[0xde, 0xad],
+            issuer_der
+        ));
+
+        assert!(!crate::crypto::ocsp::certificate_issued_by(
+            leaf_der,
+            &[0xde, 0xad]
+        ));
 
         let leaf: rasn_pkix::Certificate = rasn::der::decode(leaf_der).unwrap();
         let mut mismatched = leaf.clone();
         mismatched.tbs_certificate.signature.algorithm =
             rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
-        assert!(!super::certificate_issued_by(
+        assert!(!crate::crypto::ocsp::certificate_issued_by(
             &rasn::der::encode(&mismatched).unwrap(),
             issuer_der,
         ));
@@ -1038,7 +1045,7 @@ mod tests {
         unsupported.signature_algorithm.algorithm =
             rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
         unsupported.tbs_certificate.signature = unsupported.signature_algorithm.clone();
-        assert!(!super::certificate_issued_by(
+        assert!(!crate::crypto::ocsp::certificate_issued_by(
             &rasn::der::encode(&unsupported).unwrap(),
             issuer_der,
         ));
@@ -1189,7 +1196,7 @@ mod tests {
     // rather than stopping at signature verification.
     #[cfg(feature = "openssl")]
     fn sign_response(basic: rasn_ocsp::BasicOcspResponse) -> Vec<u8> {
-        super::test_responder::TestResponder::new().sign(basic)
+        crate::crypto::ocsp::test_responder::TestResponder::new().sign(basic)
     }
 
     #[cfg(feature = "openssl")]
@@ -1464,7 +1471,10 @@ mod tests {
                 None,
                 &mut log,
             );
-            assert!(matches!(result, Err(super::OcspError::InvalidCertificate)));
+            assert!(matches!(
+                result,
+                Err(crate::crypto::ocsp::OcspError::InvalidCertificate)
+            ));
             assert!(log.logged_items().is_empty());
         }
     }

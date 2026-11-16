@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn request_encodes_subject_serial_issuer_hashes_and_null_sha1_parameters() {
         let certs = ca_chain();
-        let responder = super::super::test_responder::IssuerResponder::new();
+        let responder = crate::crypto::ocsp::test_responder::IssuerResponder::new();
 
         for index in [0, 1] {
             let requests = process_ocsp_responders(&certs, index).unwrap();
