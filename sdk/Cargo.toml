@@ -41,7 +41,7 @@ unstable_builder_filter = []
 # guarantees and may change or be removed in any release. See docs/experimental-features.md.
 unstable_plain_text = ["dep:unicode-normalization"]
 file_io = []
-# EXPERIMENT: JPEG, PNG, SVG, RIFF, TIFF/DNG, MP3, FLAC and GIF use asset-io;
+# EXPERIMENT: BMFF, JPEG, PNG, SVG, RIFF, TIFF/DNG, MP3, FLAC and GIF use asset-io;
 # PDF does too with the pdf feature.
 asset_io = ["dep:asset-io"]
 fetch_remote_manifests = ["dep:wasi"]

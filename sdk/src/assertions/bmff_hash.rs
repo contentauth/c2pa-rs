@@ -429,6 +429,17 @@ impl BmffHash {
         merkle_chunk_size: usize,
         max_proofs: usize,
     ) -> crate::error::Result<()> {
+        let boxes = read_bmff_c2pa_boxes(asset_stream)?;
+        self.add_merkle_map_for_mdat_boxes(asset_stream, merkle_chunk_size, max_proofs, boxes)
+    }
+
+    fn add_merkle_map_for_mdat_boxes(
+        &mut self,
+        asset_stream: &mut dyn ReadSeek,
+        merkle_chunk_size: usize,
+        max_proofs: usize,
+        boxes: C2PABmffBoxes,
+    ) -> crate::Result<()> {
         // enable flat flat files with Merkle trees if desired
         // we do this here because the UUID boxes must be in place
         // for the later hash generation
@@ -443,7 +454,6 @@ impl BmffHash {
         self.exclusions.push(mdat);
 
         // get the merkle hashes for the mdat boxes
-        let boxes = read_bmff_c2pa_boxes(asset_stream)?;
         let mut mdat_boxes = boxes.box_infos.clone();
         mdat_boxes.retain(|b| b.path == "mdat");
 
@@ -2680,6 +2690,229 @@ mod bmff_hash_tests {
 
     use super::*;
     use crate::asset_handlers::bmff_io::{BoxInfoLite, C2PABmffBoxes};
+
+    #[cfg(feature = "asset_io")]
+    #[test]
+    fn merkle_generation_matches_legacy_parser() {
+        use crate::asset_handlers::bmff_io::{
+            c2pa_boxes_from_tree_and_map, exclusions_from_tree, BMFFArena,
+        };
+
+        for fixture in ["video1_no_manifest.mp4", "c.mov", "sample1.heic"] {
+            let source = std::fs::read(crate::utils::test::fixture_path(fixture)).unwrap();
+            for alg in ["sha256", "sha384", "sha512"] {
+                for max_proofs in [0, 1, 5] {
+                    let mut expected = BmffHash::new("parity", alg, None);
+                    expected.set_default_exclusions();
+                    let mut actual =
+                        BmffHash::from_assertion(&expected.to_assertion().unwrap()).unwrap();
+                    let (tree, map) =
+                        BMFFArena::from_stream_legacy(&mut Cursor::new(&source)).unwrap();
+                    let boxes =
+                        c2pa_boxes_from_tree_and_map(&mut Cursor::new(&source), &tree, &map)
+                            .unwrap();
+                    expected
+                        .add_merkle_map_for_mdat_boxes(
+                            &mut Cursor::new(&source),
+                            16,
+                            max_proofs,
+                            boxes,
+                        )
+                        .unwrap();
+                    actual
+                        .add_merkle_map_for_mdats(&mut Cursor::new(&source), 16, max_proofs)
+                        .unwrap();
+                    assert_eq!(
+                        expected.to_assertion().unwrap(),
+                        actual.to_assertion().unwrap()
+                    );
+                    assert_eq!(expected.merkle_uuid_boxes, actual.merkle_uuid_boxes);
+                    assert_eq!(
+                        expected.merkle_uuid_boxes_insertion_point,
+                        actual.merkle_uuid_boxes_insertion_point
+                    );
+                    assert_eq!(
+                        expected.merkle_replacement_range,
+                        actual.merkle_replacement_range
+                    );
+                    assert!(
+                        actual.merkle().is_some(),
+                        "{fixture}: no Merkle tree generated"
+                    );
+
+                    let mut output = source.clone();
+                    if let Some(proofs) = actual.merkle_uuid_boxes() {
+                        let offset = proofs.insertion_point as usize;
+                        output.splice(offset..offset, proofs.bytes.iter().copied());
+                    }
+                    let (tree, map) =
+                        BMFFArena::from_stream_legacy(&mut Cursor::new(&output)).unwrap();
+                    let exclusions = exclusions_from_tree(
+                        &mut Cursor::new(&output),
+                        &tree,
+                        &map,
+                        expected.exclusions(),
+                        true,
+                    )
+                    .unwrap();
+                    expected.set_hash(
+                        hash_stream_by_alg(alg, &mut Cursor::new(&output), Some(exclusions), true)
+                            .unwrap(),
+                    );
+                    actual
+                        .gen_hash_from_stream(&mut Cursor::new(&output))
+                        .unwrap();
+                    assert_eq!(
+                        expected.to_assertion().unwrap(),
+                        actual.to_assertion().unwrap()
+                    );
+                    actual
+                        .verify_stream_hash(&mut Cursor::new(&output), None)
+                        .unwrap();
+
+                    let legacy_boxes =
+                        c2pa_boxes_from_tree_and_map(&mut Cursor::new(&output), &tree, &map)
+                            .unwrap();
+                    expected
+                        .validate_merkle_maps_mdat_boxes(&mut Cursor::new(&output), &legacy_boxes)
+                        .unwrap();
+                    let mdat = legacy_boxes
+                        .box_infos
+                        .iter()
+                        .find(|b| b.path == "mdat")
+                        .unwrap();
+                    output[mdat.offset as usize + 16] ^= 1;
+                    assert!(actual
+                        .verify_stream_hash(&mut Cursor::new(&output), None)
+                        .is_err());
+                    assert!(expected
+                        .validate_merkle_maps_mdat_boxes(&mut Cursor::new(&output), &legacy_boxes)
+                        .is_err());
+                }
+            }
+        }
+    }
+
+    #[cfg(all(feature = "asset_io", feature = "file_io"))]
+    #[test]
+    fn fragment_generation_matches_legacy_parser() {
+        use crate::{
+            asset_handlers::bmff_io::{
+                c2pa_boxes_from_tree_and_map, exclusions_from_tree, write_c2pa_box, BMFFArena,
+                MERKLE,
+            },
+            utils::test::fixture_path,
+        };
+
+        let paths: Vec<_> = [1, 10, 11]
+            .iter()
+            .map(|index| fixture_path(&format!("bunny/bunny_89283bps/BigBuckBunny_2s{index}.m4s")))
+            .collect();
+        let init = fixture_path("bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4");
+        let init_bytes = std::fs::read(&init).unwrap();
+        for alg in ["sha256", "sha384", "sha512"] {
+            for max_proofs in [0, 1, 5] {
+                let directory = tempfile::tempdir().unwrap();
+                let mut binding = BmffHash::new("parity", alg, None);
+                binding.set_default_exclusions();
+                binding
+                    .add_merkle_for_fragmented(max_proofs, alg, &paths, directory.path(), 7, 9)
+                    .unwrap();
+                binding.update_fragmented_inithash(9, 7, &init).unwrap();
+                let (tree, map) =
+                    BMFFArena::from_stream_legacy(&mut Cursor::new(&init_bytes)).unwrap();
+                let exclusions = exclusions_from_tree(
+                    &mut Cursor::new(&init_bytes),
+                    &tree,
+                    &map,
+                    binding.exclusions(),
+                    true,
+                )
+                .unwrap();
+                let expected_init =
+                    hash_stream_by_alg(alg, &mut Cursor::new(&init_bytes), Some(exclusions), true)
+                        .unwrap();
+                let mm = &binding.merkle().unwrap()[0];
+                assert_eq!(mm.init_hash.as_deref(), Some(&expected_init));
+
+                let mut leaves = Vec::new();
+                let mut fragments = Vec::new();
+                let mut output_paths = Vec::new();
+                for path in &paths {
+                    let output = directory.path().join(path.file_name().unwrap());
+                    let bytes = std::fs::read(&output).unwrap();
+                    let (tree, map) =
+                        BMFFArena::from_stream_legacy(&mut Cursor::new(&bytes)).unwrap();
+                    let boxes = c2pa_boxes_from_tree_and_map(&mut Cursor::new(&bytes), &tree, &map)
+                        .unwrap();
+                    let exclusions = exclusions_from_tree(
+                        &mut Cursor::new(&bytes),
+                        &tree,
+                        &map,
+                        binding.exclusions(),
+                        true,
+                    )
+                    .unwrap();
+                    leaves.push(MerkleNode(
+                        hash_stream_by_alg(alg, &mut Cursor::new(&bytes), Some(exclusions), true)
+                            .unwrap(),
+                    ));
+                    output_paths.push(output);
+                    fragments.push((bytes, boxes));
+                }
+                let expected = C2PAMerkleTree::from_leaves(leaves, alg, false);
+                let row = max_proofs.min(expected.layers.len() - 1);
+                let expected_hashes: Vec<_> = expected.layers[row]
+                    .iter()
+                    .map(|n| ByteBuf::from(n.0.clone()))
+                    .collect();
+                assert_eq!(mm.hashes.0, expected_hashes);
+                for (location, (mut bytes, boxes)) in fragments.into_iter().enumerate() {
+                    let proof = expected.get_proof_by_index(location, max_proofs).unwrap();
+                    let proof = BmffMerkleMap {
+                        unique_id: 9,
+                        local_id: 7,
+                        location,
+                        hashes: (!proof.is_empty())
+                            .then(|| VecByteBuf(proof.into_iter().map(ByteBuf::from).collect())),
+                    };
+                    let mut expected_box = Vec::new();
+                    write_c2pa_box(
+                        &mut expected_box,
+                        &[],
+                        MERKLE,
+                        &c2pa_cbor::to_vec(&proof).unwrap(),
+                        0,
+                    )
+                    .unwrap();
+                    let info = &boxes.bmff_merkle_box_infos[0];
+                    assert_eq!(
+                        &bytes[info.offset as usize..info.end() as usize],
+                        expected_box
+                    );
+                    binding
+                        .verify_stream_segment(
+                            &mut Cursor::new(&init_bytes),
+                            &mut Cursor::new(&bytes),
+                            None,
+                        )
+                        .unwrap();
+                    let mdat = boxes.box_infos.iter().find(|b| b.path == "mdat").unwrap();
+                    bytes[mdat.offset as usize + 16] ^= 1;
+                    assert!(binding
+                        .verify_stream_segment(
+                            &mut Cursor::new(&init_bytes),
+                            &mut Cursor::new(&bytes),
+                            None,
+                        )
+                        .is_err());
+                }
+                binding
+                    .verify_stream_segments(&mut Cursor::new(&init_bytes), &output_paths, None)
+                    .unwrap();
+            }
+        }
+    }
 
     /// `set_default_exclusions` (no args) must keep excluding `/free`/`/skip`,
     /// matching its existing, documented default behavior.

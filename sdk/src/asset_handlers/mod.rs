@@ -24,7 +24,7 @@ mod asset_io_equivalence_test;
 mod asset_io_perf_test;
 #[cfg(all(test, feature = "asset_io"))]
 mod asset_io_riff_test;
-// The BMFF hash still reads boxes and samples through the legacy BMFF parser.
+// Shared BMFF hash semantics; box discovery uses asset-io when enabled.
 pub mod bmff_io;
 #[cfg(any(not(feature = "asset_io"), test))]
 pub mod c2pa_io;

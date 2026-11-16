@@ -61,6 +61,23 @@ explicitly. The path is synchronous; async signers use `save_to_stream_async`.
 
 For callback behavior, see [Progress and cancellation API](progress_callbacks.md#typical-phase-sequences).
 
+## BMFF hashing and verification
+
+With `asset_io` enabled, BMFF hash generation and verification discover boxes
+through asset-io's `Structure::walk`. This includes initialization segments,
+fragments, Merkle proof boxes and timed-media sample tables. The C2PA exclusion
+rules, sample-table field decoding and Merkle algorithms remain shared with the
+legacy path. Invalid input is not retried through the legacy parser.
+
+Differential tests compare the legacy and asset-io paths' box metadata,
+exclusions, digests, sample tables and sample bytes. Generation tests compare
+serialized Merkle assertions and UUID proof boxes, and check fragment and
+initialization hashes against legacy-parser-derived ranges.
+
+This does not route public Builder signing through the direct-save pipeline
+above or add Merkle support to that pipeline. Without `asset_io`, BMFF hashing
+and verification continue to use the legacy parser.
+
 ## Differences from the legacy handlers
 
 With `asset_io`, the legacy handlers' unit tests run against the asset-io
