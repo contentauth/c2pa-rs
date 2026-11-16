@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 As of December 2025 and until the 1.0.0 version is released, the CAI team will only make minor version changes (incrementing the `x` in `0.x.0`) if breaking changes are made. Features will now result in a patch version change (incrementing the `y` in `0.x.y`). This brings us into closer compliance with typical SemVer practice (and follows the default behavior of [`release-plz`](https://release-plz.dev/docs/config#the-features_always_increment_minor-field).
 
+## [0.92.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.92.1...c2pa-v0.92.2)
+_16 November 2026_
+
+### Fixed
+
+* Allowed list only goes to trust kind supporting it (C2PA 2.5 13.4.3) (backport #3091) ([#3094](https://github.com/contentauth/c2pa-rs/pull/3094))
+* If collection hash has no URIs, report malformed error (backport #3088) ([#3092](https://github.com/contentauth/c2pa-rs/pull/3092))
+
 ## [0.92.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.92.0...c2pa-v0.92.1)
 _13 November 2026_
 
