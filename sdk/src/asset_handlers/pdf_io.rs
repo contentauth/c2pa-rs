@@ -357,6 +357,20 @@ pub mod tests {
         asset_io::{AssetIO, C2paReader},
     };
 
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "asset_io"))]
+    fn test_handler(format: &str) -> PdfIO {
+        PdfIO::new(format)
+    }
+
+    #[cfg(feature = "asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
+
     static MANIFEST_BYTES: &[u8; 2] = &[10u8, 20u8];
 
     #[test]
@@ -438,7 +452,7 @@ pub mod tests {
     fn test_get_object_locations_matches_manifest_bytes() {
         let source = include_bytes!("../../tests/fixtures/basic.pdf");
         let manifest_bytes = vec![10u8, 20u8, 30u8, 40u8, 50u8];
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let writer = pdf_io.get_writer("pdf").unwrap();
         let mut input = Cursor::new(source.to_vec());
         let mut output = Cursor::new(Vec::new());
@@ -533,7 +547,7 @@ pub mod tests {
     fn test_get_object_locations_truncated_pdf_does_not_panic() {
         let source = include_bytes!("../../tests/fixtures/basic.pdf");
         let manifest_bytes = vec![10u8, 20u8, 30u8, 40u8, 50u8];
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let writer = pdf_io.get_writer("pdf").unwrap();
         let mut input = Cursor::new(source.to_vec());
         let mut output = Cursor::new(Vec::new());
@@ -557,7 +571,7 @@ pub mod tests {
     fn test_write_c2pa_same_length_rewrite_preserves_offset() {
         let source = include_bytes!("../../tests/fixtures/basic.pdf");
         let placeholder = vec![0u8; 5];
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let writer = pdf_io.get_writer("pdf").unwrap();
 
         let mut input = Cursor::new(source.to_vec());
@@ -600,7 +614,7 @@ pub mod tests {
     #[test]
     fn test_cai_read_finds_no_manifest() {
         let source = crate::utils::test::fixture_path("basic.pdf");
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let mut f = std::fs::File::open(&source).unwrap();
 
         assert!(matches!(
@@ -614,7 +628,7 @@ pub mod tests {
         let source = include_bytes!("../../tests/fixtures/basic.pdf");
         let mut stream = Cursor::new(source.to_vec());
 
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         assert!(pdf_io.read_xmp(&mut stream).is_some());
     }
 
@@ -622,7 +636,7 @@ pub mod tests {
     fn test_write_read_and_remove_manifest() {
         let source = include_bytes!("../../tests/fixtures/basic.pdf");
         let manifest_bytes = vec![10u8, 20u8, 30u8];
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let writer = pdf_io.get_writer("pdf").unwrap();
         let mut input = Cursor::new(source.to_vec());
         let mut output = Cursor::new(Vec::new());
@@ -651,7 +665,7 @@ pub mod tests {
     #[test]
     fn test_remove_c2pa_on_pdf_without_manifest_is_a_no_op() {
         let source = include_bytes!("../../tests/fixtures/basic.pdf");
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let writer = pdf_io.get_writer("pdf").unwrap();
         let mut input = Cursor::new(source.to_vec());
         let mut output = Cursor::new(Vec::new());
@@ -668,7 +682,7 @@ pub mod tests {
     #[test]
     fn test_read_cai_express_pdf_finds_single_manifest_store() {
         let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let mut pdf_stream = Cursor::new(source.to_vec());
         assert!(pdf_io.read_c2pa(&mut pdf_stream).is_ok());
     }
@@ -686,7 +700,7 @@ pub mod tests {
     #[test]
     fn test_get_object_locations_matches_manifest_on_externally_signed_incremental_update_pdf() {
         let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let writer = pdf_io.get_writer("pdf").unwrap();
         let mut stream = Cursor::new(source.to_vec());
 
@@ -709,7 +723,7 @@ pub mod tests {
         let source = include_bytes!("../../tests/fixtures/basic-no-xmp.pdf");
         let test_url = "https://example.com/manifest.c2pa";
 
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let remote_ref_handler = pdf_io.remote_manifest_url_ref().unwrap();
 
         let mut input = Cursor::new(source.to_vec());
@@ -734,7 +748,7 @@ pub mod tests {
         let source = include_bytes!("../../tests/fixtures/basic.pdf");
         let test_url = "https://example.com/manifest.c2pa";
 
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let mut input = Cursor::new(source.to_vec());
         let existing_xmp = pdf_io.read_xmp(&mut input).unwrap();
         // Sanity check on the fixture itself: the merge logic only adds a new
@@ -762,7 +776,7 @@ pub mod tests {
     #[test]
     fn test_read_manifest_url_none_when_absent() {
         let source = include_bytes!("../../tests/fixtures/basic-no-xmp.pdf");
-        let pdf_io = PdfIO::new("pdf");
+        let pdf_io = test_handler("pdf");
         let remote_ref_handler = pdf_io.remote_manifest_url_ref().unwrap();
 
         let mut input = Cursor::new(source.to_vec());

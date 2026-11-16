@@ -2711,6 +2711,20 @@ pub mod tests {
     use core::panic;
 
     use super::*;
+
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "asset_io"))]
+    fn test_handler(format: &str) -> TiffIO {
+        TiffIO::new(format)
+    }
+
+    #[cfg(feature = "asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
     use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
 
     #[test]
@@ -2725,7 +2739,7 @@ pub mod tests {
 
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // save data to tiff
         tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
@@ -2763,7 +2777,7 @@ pub mod tests {
 
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // save data to tiff
         tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
@@ -2860,7 +2874,7 @@ pub mod tests {
 
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // save data to tiff
         tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
@@ -2883,7 +2897,7 @@ pub mod tests {
 
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // save data to tiff
         tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
@@ -2905,7 +2919,7 @@ pub mod tests {
 
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // save data to tiff
         tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
@@ -3005,7 +3019,7 @@ pub mod tests {
 
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // add a manifest first to stress this case
         // save data to tiff
@@ -3036,7 +3050,7 @@ pub mod tests {
         let output = temp_dir_path(&temp_dir, "test.tif");
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // write_xmp_ref must be wired up for this handler.
         assert!(tiff_io.write_xmp_ref().is_some());
@@ -3080,7 +3094,7 @@ pub mod tests {
 
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // first make sure that calling this without a manifest does not error
         tiff_io.remove_c2pa_store(&output).unwrap();
@@ -3115,7 +3129,7 @@ pub mod tests {
 
         std::fs::copy(source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // save data to tiff
         tiff_io.save_c2pa_store(&output, &data).unwrap();
@@ -3180,7 +3194,7 @@ pub mod tests {
 
         let mut stream = Cursor::new(&data);
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         let locations = tiff_io.get_object_locations(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
@@ -3238,7 +3252,7 @@ pub mod tests {
         ];
 
         let mut stream = Cursor::new(&data);
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // Before the fix: this would panic (exit 101) in debug or silently overflow in release.
         // After the fix: must return Err(Error::InvalidAsset) without any panic.
@@ -3298,7 +3312,7 @@ pub mod tests {
         ];
 
         let mut stream = Cursor::new(&data);
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // Before the fix: this would OOM-kill an 8 GB Linux container.
         // After the fix: must return Err(Error::InvalidAsset) without any allocation.
@@ -3558,7 +3572,7 @@ pub mod tests {
 
         std::fs::copy(&source, &output).unwrap();
 
-        let tiff_io = TiffIO {};
+        let tiff_io = test_handler("tif");
 
         // save data to tiff
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();

@@ -359,6 +359,8 @@ pub(crate) mod test_helpers {
         let mut cursor = Cursor::new(b"abc");
         match handler.get_reader().read_c2pa(&mut cursor) {
             Err(Error::IoError(_)) => {}
+            // asset-io rejects it as too small to be audio.
+            Err(Error::InvalidAsset(_)) if cfg!(feature = "asset_io") => {}
             other => panic!("expected IoError for short stream, got {:?}", other),
         }
     }
@@ -509,6 +511,8 @@ pub(crate) mod test_helpers {
         {
             Err(Error::InvalidAsset(msg))
                 if msg.contains("patch_cai_store store size mismatch") => {}
+            // asset-io words the same refusal differently.
+            Err(Error::InvalidAsset(_)) if cfg!(feature = "asset_io") => {}
             other => panic!("expected InvalidAsset(size mismatch), got {:?}", other),
         }
     }
@@ -559,6 +563,8 @@ pub(crate) mod test_helpers {
             .unwrap()
             .get_object_locations(&mut f)
             .unwrap();
+        // asset-io reports each ID3 frame and the audio as their own regions.
+        #[cfg(not(feature = "asset_io"))]
         assert_eq!(positions.len(), 3, "expected [Cai, Other, Other]");
         let file_len = std::fs::metadata(tmp).unwrap().len();
         let sum_len: u64 = positions.iter().map(|p| p.length).sum();

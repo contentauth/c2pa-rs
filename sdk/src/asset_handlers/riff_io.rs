@@ -601,6 +601,20 @@ pub mod tests {
     use std::{fs::File, panic, path::Path};
 
     use super::*;
+
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "asset_io"))]
+    fn test_handler(format: &str) -> RiffIO {
+        RiffIO::new(format)
+    }
+
+    #[cfg(feature = "asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
     use crate::utils::{
         hash_utils::vec_compare,
         io_utils::tempdirectory,
@@ -634,7 +648,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let riff_io = RiffIO::new("wav");
+                let riff_io = test_handler("wav");
 
                 if let Ok(()) = riff_io.save_c2pa_store(&output, more_data) {
                     if let Ok(read_test_data) = riff_io.read_cai_store(&output) {
@@ -658,7 +672,7 @@ pub mod tests {
         data.extend_from_slice(b"C2PA");
         data.extend_from_slice(&u32::MAX.to_le_bytes()); // forged 4 GB declared size
 
-        let riff_io = RiffIO::new("wav");
+        let riff_io = test_handler("wav");
         let mut source = Cursor::new(data);
         assert!(matches!(
             riff_io.read_c2pa(&mut source),
@@ -676,7 +690,7 @@ pub mod tests {
         data.extend_from_slice(b"DATA");
         data.extend_from_slice(&u32::MAX.to_le_bytes()); // forged 4 GB declared size
 
-        let riff_io = RiffIO::new("wav");
+        let riff_io = test_handler("wav");
         let mut source = Cursor::new(data);
         let mut dest = Cursor::new(Vec::new());
         assert!(matches!(
@@ -687,9 +701,8 @@ pub mod tests {
 
     #[test]
     fn test_read_cai_with_incorrect_header_size_does_not_panic() {
-        let riff_io = RiffIO::new("wav");
-
         let panic_result = panic::catch_unwind(|| {
+            let riff_io = test_handler("wav");
             let mut source = File::open(fixture_path("sample3.invalid.wav")).unwrap();
             assert!(matches!(
                 riff_io.read_c2pa(&mut source),
@@ -704,17 +717,19 @@ pub mod tests {
     fn test_write_cai_with_large_recursion_does_not_panic() {
         let more_data = "some more test data".as_bytes();
 
-        let riff_io = RiffIO::new("wav");
         if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
             let panic_result = panic::catch_unwind(|| {
+                let riff_io = test_handler("wav");
                 let mut output_stream = File::create(&output).unwrap();
                 let mut source = File::open(fixture_path("riff_bomb_1000.wav")).unwrap();
-                assert!(matches!(
-                    riff_io.write_c2pa(&mut source, &mut output_stream, more_data),
-                    Err(Error::InvalidAsset(_))
-                ));
+                let result = riff_io.write_c2pa(&mut source, &mut output_stream, more_data);
+                // asset-io bounds the chunk tree and writes the file.
+                #[cfg(not(feature = "asset_io"))]
+                assert!(matches!(result, Err(Error::InvalidAsset(_))));
+                #[cfg(feature = "asset_io")]
+                assert!(result.is_ok());
             });
 
             assert!(panic_result.is_ok());
@@ -726,7 +741,7 @@ pub mod tests {
         let more_data = "some more test data".as_bytes();
         let mut source = File::open(fixture_path("sample1.wav")).unwrap();
 
-        let riff_io = RiffIO::new("wav");
+        let riff_io = test_handler("wav");
         if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
@@ -752,7 +767,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let riff_io = RiffIO::new("wav");
+                let riff_io = test_handler("wav");
 
                 if let Ok(()) = riff_io.save_c2pa_store(&output, test_data) {
                     if let Ok(source_data) = riff_io.read_cai_store(&output) {
@@ -781,7 +796,7 @@ pub mod tests {
         let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
         std::fs::copy(source, &output).unwrap();
-        let riff_io = RiffIO::new("wav");
+        let riff_io = test_handler("wav");
 
         riff_io.remove_c2pa_store(&output).unwrap();
 
@@ -797,7 +812,7 @@ pub mod tests {
         let source = fixture_path("test_xmp.webp");
         let mut reader = File::open(source).unwrap();
 
-        let riff_io = RiffIO::new("webp");
+        let riff_io = test_handler("webp");
 
         let xmp = riff_io.read_xmp(&mut reader).unwrap();
         println!("XMP: {xmp}");
@@ -814,7 +829,7 @@ pub mod tests {
 
             std::fs::copy(source, &output).unwrap();
 
-            let riff_io = RiffIO::new("webp");
+            let riff_io = test_handler("webp");
 
             if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
                 if let Ok(()) =
@@ -849,7 +864,7 @@ pub mod tests {
 
             std::fs::copy(source, &output).unwrap();
 
-            let riff_io = RiffIO::new("webp");
+            let riff_io = test_handler("webp");
 
             if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
                 if let Ok(()) =
@@ -884,7 +899,7 @@ pub mod tests {
 
             std::fs::copy(source, &output).unwrap();
 
-            let riff_io = RiffIO::new("webp");
+            let riff_io = test_handler("webp");
 
             if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
                 if let Ok(()) =
@@ -913,7 +928,7 @@ pub mod tests {
         // Test basic AVI file support
         let source = fixture_path("test.avi");
         let mut f = File::open(source).unwrap();
-        let riff_io = RiffIO::new("avi");
+        let riff_io = test_handler("avi");
 
         // Should work even though file doesn't have C2PA yet
         assert!(matches!(
@@ -946,7 +961,7 @@ pub mod tests {
         let mut source = File::open(test_file).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
 
-        let riff_io = RiffIO::new("avi");
+        let riff_io = test_handler("avi");
         let test_data = b"C2PA test data for large AVIX file";
 
         eprintln!("Writing C2PA data to large AVI...");
@@ -1013,7 +1028,7 @@ pub mod tests {
         let mut source = File::open(test_file).unwrap();
         let mut dest = Cursor::new(Vec::new());
 
-        let riff_io = RiffIO::new("avi");
+        let riff_io = test_handler("avi");
         let test_data = b"test C2PA data for large AVI";
 
         // Write C2PA data

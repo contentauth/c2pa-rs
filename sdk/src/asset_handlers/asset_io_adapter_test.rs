@@ -154,8 +154,8 @@ fn same<T: PartialEq + std::fmt::Debug>(
 }
 
 /// A manifest the legacy handler returns that is not JUMBF at all (the SVG fixtures
-/// hold base64 text). The legacy SVG handler takes any `<c2pa:manifest>` for the store;
-/// the adapter, for every container, takes only a C2PA JUMBF superbox.
+/// hold base64 text). Both readers return a carrier's content as it is, but the
+/// adapter locates the store only through asset-io's typed items.
 fn legacy_reads_non_jumbf(old: &dyn AssetIO, bytes: &[u8]) -> bool {
     old.get_reader()
         .read_c2pa(&mut Cursor::new(bytes))
@@ -182,19 +182,12 @@ fn reads_agree() {
         if declined(&new.get_reader().read_c2pa(&mut Cursor::new(&bytes))) {
             continue;
         }
-        if legacy_reads_non_jumbf(&*old, &bytes) {
-            let n = new.get_reader().read_c2pa(&mut Cursor::new(&bytes));
-            if !matches!(n, Err(Error::JumbfNotFound)) {
-                problems.push(format!("{name} read_c2pa: non-JUMBF manifest gave {n:?}"));
-            }
-        } else {
-            same(
-                &format!("{name} read_c2pa"),
-                old.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
-                new.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
-                &mut problems,
-            );
-        }
+        same(
+            &format!("{name} read_c2pa"),
+            old.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
+            new.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
+            &mut problems,
+        );
         let (ox, nx) = (
             old.get_reader().read_xmp(&mut Cursor::new(&bytes)),
             new.get_reader().read_xmp(&mut Cursor::new(&bytes)),

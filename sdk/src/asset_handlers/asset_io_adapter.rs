@@ -16,7 +16,7 @@ use aio::{
 
 use crate::{
     asset_io::{
-        AllowedExclusion, AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter,
+        AllowedExclusion, AssetBoxHash, AssetIO, AssetPatch, BoxMap, C2paReader, C2paWriter,
         ComposedManifestRef, ExclusionKind, ObjectLocations, ObjectType, WriteXmp, C2PA_BOXHASH,
     },
     error::{Error, Result},
@@ -196,18 +196,14 @@ pub(crate) fn builtin_adapters() -> Vec<Box<dyn AssetIO>> {
         .collect()
 }
 
-/// Whether `bytes` begin with a JUMBF superbox of the C2PA store type.
-fn is_c2pa_store(bytes: &[u8]) -> bool {
-    aio::jumbf::superbox_type(bytes) == Some(aio::jumbf::C2PA_STORE_TYPE)
-}
-
 /// The item holding the asset's C2PA manifest store.
 ///
 /// A container that reserves an element for the store (an SVG `<c2pa:manifest>`,
 /// a PNG `caBX` chunk) reports every such element as a store, whatever it holds.
-/// When there are several, as in an SVG with a second, injected element, the store
-/// is the one holding a C2PA store superbox. Reading, locating and writing must all
-/// agree on it: data-hash verification compares the exclusion with this location.
+/// When there are several, empty and undecodable ones are ignored (an SVG with a
+/// second, injected element), and more than one with content is
+/// [`Error::TooManyManifestStores`]. Reading, locating and writing must all agree
+/// on it: data-hash verification compares the exclusion with this location.
 fn c2pa_store_item<'s>(s: &'s Structure, src: &mut dyn ReadSeek) -> Result<Option<&'s aio::Item>> {
     match s.c2pa_item() {
         Err(aio::Error::Ambiguous { .. }) => {}
@@ -225,7 +221,7 @@ fn c2pa_store_item<'s>(s: &'s Structure, src: &mut dyn ReadSeek) -> Result<Optio
             Err(aio::Error::InvalidFormat(_)) => continue,
             Err(e) => return Err(err(e)),
         };
-        if is_c2pa_store(&content) && found.replace(item).is_some() {
+        if !content.is_empty() && found.replace(item).is_some() {
             return Err(Error::TooManyManifestStores);
         }
     }
@@ -243,9 +239,10 @@ impl C2paReader for AssetIoAdapter {
             Some(item) => Some(s.read_content(&mut input, item).map_err(err)?),
         };
         match store {
-            // A dedicated carrier may hold anything; only a C2PA store superbox is
-            // a manifest store.
-            Some(v) if is_c2pa_store(&v) => Ok(v),
+            // A dedicated carrier may hold anything. Its content is returned as it
+            // is, for the store's parser to accept or reject: reporting no
+            // manifest instead would allow a remote-manifest fallback.
+            Some(v) if !v.is_empty() => Ok(v),
             // C2PA boxes that travel only with a store (ISO BMFF merkle boxes) mean
             // the store was removed or retagged. Report tampering rather than an
             // unsigned asset, which would allow a remote-manifest fallback.
@@ -436,6 +433,18 @@ impl WriteXmp for AssetIoAdapter {
             output_stream,
             &Updates::new().set_xmp(xmp.as_bytes().to_vec()),
         )
+    }
+}
+
+impl AssetPatch for AssetIoAdapter {
+    /// Replace the store with one of exactly the same stored length, in place.
+    fn patch_c2pa(&self, stream: &mut dyn ReadWriteSeek, store_bytes: &[u8]) -> Result<()> {
+        let mut stream = stream;
+        let s = self.parse(&mut *stream)?;
+        let item = c2pa_store_item(&s, &mut *stream)?.ok_or(Error::JumbfNotFound)?;
+        s.patch_exact(&mut stream, item, store_bytes).map_err(err)?;
+        stream.flush()?;
+        Ok(())
     }
 }
 
@@ -693,6 +702,10 @@ impl AssetIO for AssetIoAdapter {
     }
 
     // A C2PA sidecar is the store alone; it has nowhere to put XMP.
+    fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
+        Some(self)
+    }
+
     fn remote_manifest_url_ref(&self) -> Option<&dyn crate::asset_io::RemoteManifestUrl> {
         (self.container() != Some(aio::containers::c2pa::ID)).then_some(self as _)
     }
