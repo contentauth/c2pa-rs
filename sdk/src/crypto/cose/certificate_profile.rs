@@ -268,14 +268,15 @@ mod tests {
             let mut log = StatusTracker::default();
 
             let result = if claim_role {
-                super::CertificateRole::ClaimSigner.check_profile(&der, &policy, &mut log, None)
+                crate::crypto::cose::certificate_profile::CertificateRole::ClaimSigner
+                    .check_profile(&der, &policy, &mut log, None)
             } else {
                 check_end_entity_certificate_profile(&der, &policy, &mut log, None)
             };
 
             assert_eq!(
                 result,
-                Err(super::CertificateProfileError::InvalidCertificate)
+                Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate)
             );
 
             assert_eq!(log.logged_items().len(), 1);
@@ -556,7 +557,7 @@ mod tests {
                 &mut validation_log,
                 None,
             ),
-            Err(super::CertificateProfileError::InvalidCertificate)
+            Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate)
         );
 
         let item = &validation_log.logged_items()[0];
@@ -601,17 +602,21 @@ mod tests {
         existing.extn_value = value.into();
     }
 
-    fn assert_profile_error(cert: &Certificate, expected: super::CertificateProfileError) {
+    fn assert_profile_error(
+        cert: &Certificate,
+        expected: crate::crypto::cose::certificate_profile::CertificateProfileError,
+    ) {
         // These mutations test profile validation, not certificate signature verification.
         let der = rasn::der::encode(cert).unwrap();
         let mut log = StatusTracker::default();
 
-        let result = super::check_certificate_profile_with_sdk_policy(
-            &der,
-            &CertificateTrustPolicy::default(),
-            &mut log,
-            None,
-        );
+        let result =
+            crate::crypto::cose::certificate_profile::check_certificate_profile_with_sdk_policy(
+                &der,
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                None,
+            );
 
         assert_eq!(result, Err(expected));
     }
@@ -627,7 +632,7 @@ mod tests {
                 &mut log,
                 None,
             ),
-            Err(super::CertificateProfileError::InvalidCertificate)
+            Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate)
         );
 
         assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
@@ -637,14 +642,17 @@ mod tests {
 
         assert_profile_error(
             &cert,
-            super::CertificateProfileError::InvalidCertificateVersion,
+            crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificateVersion,
         );
 
         let mut cert = profile_cert();
         cert.signature_algorithm.algorithm = oid(&[1, 2, 3, 4]);
         cert.tbs_certificate.signature = cert.signature_algorithm.clone();
 
-        assert_profile_error(&cert, super::CertificateProfileError::UnsupportedAlgorithm);
+        assert_profile_error(
+            &cert,
+            crate::crypto::cose::certificate_profile::CertificateProfileError::UnsupportedAlgorithm,
+        );
 
         for issuer in [false, true] {
             let mut cert = profile_cert();
@@ -657,7 +665,7 @@ mod tests {
                     Some(rasn::types::BitString::from_slice(&[1]));
             }
 
-            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+            assert_profile_error(&cert, crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate);
         }
 
         for parameters in [
@@ -673,7 +681,7 @@ mod tests {
                     parameters,
                 };
 
-            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+            assert_profile_error(&cert, crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate);
         }
     }
 
@@ -699,7 +707,7 @@ mod tests {
                 rasn::der::encode(&ekus).unwrap(),
             );
 
-            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+            assert_profile_error(&cert, crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate);
         }
 
         for removed in [&[2, 5, 29, 35][..], &[2, 5, 29, 15], &[2, 5, 29, 37]] {
@@ -711,14 +719,14 @@ mod tests {
                 .unwrap()
                 .retain(|e| e.extn_id != oid(removed));
 
-            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+            assert_profile_error(&cert, crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate);
         }
 
         for usage in [vec![3, 2, 2, 0x84], vec![3, 2, 0, 0]] {
             let mut cert = profile_cert();
             extension(&mut cert, &[2, 5, 29, 15], usage);
 
-            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+            assert_profile_error(&cert, crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate);
         }
 
         for critical in [false, true] {
@@ -736,12 +744,13 @@ mod tests {
 
             let mut log = StatusTracker::default();
 
-            let result = super::check_certificate_profile_with_sdk_policy(
-                &rasn::der::encode(&cert).unwrap(),
-                &CertificateTrustPolicy::default(),
-                &mut log,
-                None,
-            );
+            let result =
+                crate::crypto::cose::certificate_profile::check_certificate_profile_with_sdk_policy(
+                    &rasn::der::encode(&cert).unwrap(),
+                    &CertificateTrustPolicy::default(),
+                    &mut log,
+                    None,
+                );
 
             assert_eq!(result.is_err(), critical);
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), critical);
@@ -763,7 +772,7 @@ mod tests {
                 &mut log,
                 None,
             ),
-            Err(super::CertificateProfileError::InvalidEku)
+            Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidEku)
         );
 
         assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
@@ -788,7 +797,7 @@ mod tests {
 
         assert_eq!(
             check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
-            Err(super::CertificateProfileError::InvalidEku)
+            Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidEku)
         );
 
         assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
@@ -803,7 +812,7 @@ mod tests {
 
         assert_eq!(
             check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
-            Err(super::CertificateProfileError::InvalidCertificate)
+            Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate)
         );
 
         assert!(log
@@ -813,7 +822,7 @@ mod tests {
 
         cert.tbs_certificate.issuer = cert.tbs_certificate.subject.clone();
 
-        assert_profile_error(&cert, super::CertificateProfileError::SelfSignedCertificate);
+        assert_profile_error(&cert, crate::crypto::cose::certificate_profile::CertificateProfileError::SelfSignedCertificate);
     }
 
     #[test]
@@ -855,7 +864,7 @@ mod tests {
                     assert_eq!(result, Ok(()));
                     assert!(!log.has_status(SIGNING_CREDENTIAL_INVALID));
                 } else {
-                    assert_eq!(result, Err(super::CertificateProfileError::InvalidEku));
+                    assert_eq!(result, Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidEku));
                     assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
 
                     assert!(log
@@ -1017,13 +1026,13 @@ mod tests {
             let der = rasn::der::encode(&cert).unwrap();
 
             assert_eq!(
-                super::check_certificate_profile_with_sdk_policy(
+                crate::crypto::cose::certificate_profile::check_certificate_profile_with_sdk_policy(
                     &der,
                     &CertificateTrustPolicy::default(),
                     &mut StatusTracker::default(),
                     None
                 ),
-                Err(super::CertificateProfileError::InvalidCertificate)
+                Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate)
             );
         }
 
@@ -1056,7 +1065,10 @@ mod tests {
             .subject_public_key =
             rasn::types::BitString::from_slice(&rasn::der::encode(&invalid).unwrap());
 
-        assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+        assert_profile_error(
+            &cert,
+            crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate,
+        );
     }
 
     #[test]
@@ -1122,12 +1134,13 @@ mod tests {
 
             let mut log = StatusTracker::default();
 
-            let result = super::check_certificate_profile_with_sdk_policy(
-                &rasn::der::encode(&cert).unwrap(),
-                &CertificateTrustPolicy::default(),
-                &mut log,
-                None,
-            );
+            let result =
+                crate::crypto::cose::certificate_profile::check_certificate_profile_with_sdk_policy(
+                    &rasn::der::encode(&cert).unwrap(),
+                    &CertificateTrustPolicy::default(),
+                    &mut log,
+                    None,
+                );
 
             assert_eq!(
                 result.is_ok(),
@@ -1147,7 +1160,10 @@ mod tests {
 
         cert.tbs_certificate.signature = cert.signature_algorithm.clone();
 
-        assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+        assert_profile_error(
+            &cert,
+            crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate,
+        );
     }
 
     fn timestamp_at(seconds: i64) -> crate::crypto::asn1::rfc3161::TstInfo {
@@ -1218,7 +1234,7 @@ mod tests {
             } else {
                 assert_eq!(
                     result,
-                    Err(super::CertificateProfileError::CertificateNotValidAtTime)
+                    Err(crate::crypto::cose::certificate_profile::CertificateProfileError::CertificateNotValidAtTime)
                 );
 
                 assert!(log.has_status(SIGNING_CREDENTIAL_EXPIRED));
@@ -1269,16 +1285,17 @@ mod tests {
 
             cert.tbs_certificate.signature = cert.signature_algorithm.clone();
 
-            let result = super::check_certificate_profile_with_sdk_policy(
-                &rasn::der::encode(&cert).unwrap(),
-                &CertificateTrustPolicy::default(),
-                &mut StatusTracker::default(),
-                None,
-            );
+            let result =
+                crate::crypto::cose::certificate_profile::check_certificate_profile_with_sdk_policy(
+                    &rasn::der::encode(&cert).unwrap(),
+                    &CertificateTrustPolicy::default(),
+                    &mut StatusTracker::default(),
+                    None,
+                );
 
             assert_eq!(
                 result,
-                Err(super::CertificateProfileError::InvalidCertificate)
+                Err(crate::crypto::cose::certificate_profile::CertificateProfileError::InvalidCertificate)
             );
         }
     }

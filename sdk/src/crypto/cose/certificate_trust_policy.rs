@@ -235,7 +235,7 @@ impl CertificateTrustPolicy {
             return Ok((TrustAnchorType::EndEntity, String::new()));
         }
 
-        super::certificate_trust::check_certificate_trust(
+        crate::crypto::cose::certificate_trust::check_certificate_trust(
             self,
             anchor_type,
             chain_der,

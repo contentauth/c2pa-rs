@@ -14,9 +14,9 @@
 use asn1_rs::FromDer;
 use x509_parser::certificate::X509Certificate;
 
-use super::ChainError;
-use crate::x509::certificate::{
-    cert_signing_alg, check_chain_order_and_ca_authorization, verify_data,
+use crate::x509::{
+    certificate::{cert_signing_alg, check_chain_order_and_ca_authorization, verify_data},
+    chain::ChainError,
 };
 
 pub(crate) fn check_certificate_trust(

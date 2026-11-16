@@ -19,7 +19,7 @@ use c2pa_raw_crypto::{
 use x509_parser::certificate::TbsCertificate;
 use x509_parser::{certificate::X509Certificate, x509::AlgorithmIdentifier};
 
-use super::{
+use crate::x509::{
     chain::ChainError,
     profile::{CertificateProfileError, ProfileError},
 };
