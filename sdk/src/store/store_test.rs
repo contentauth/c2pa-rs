@@ -6840,14 +6840,66 @@ fn test_from_context_allowed_list_is_manifest_only() {
             .is_ok()
     };
 
-    // A manifest entry's allowed list trusts the claim signer.
-    assert!(allowed_list_trusts_claim_signer(TrustListKind::Manifest));
+    for kind in [
+        TrustListKind::Manifest,
+        TrustListKind::TSA,
+        TrustListKind::CAWG,
+    ] {
+        let expected = match kind {
+            TrustListKind::Manifest => true,
+            TrustListKind::TSA | TrustListKind::CAWG => false,
+        };
+        assert_eq!(
+            allowed_list_trusts_claim_signer(kind.clone()),
+            expected,
+            "{kind:?}"
+        );
+    }
+}
 
-    // A CAWG entry's allowed list does not trust the claim signer.
-    assert!(!allowed_list_trusts_claim_signer(TrustListKind::CAWG));
+#[test]
+fn test_from_context_allowed_list_authorizes_ocsp_responder_for_manifest_only() {
+    // An allowed-list hit is an explicitly trusted responder (RFC 6960 section 3.2 case 2),
+    // which `delegated_response_authorized` checks with an untyped trust check.
+    let responder_pem = include_bytes!("../../tests/fixtures/crypto/ocsp/ocsp_responder.pem");
+    let responder_der = crate::crypto::cert_chain_pem_to_der(responder_pem)
+        .unwrap()
+        .remove(0);
+    let allowed_list_with_responder = String::from_utf8(responder_pem.to_vec()).unwrap();
 
-    // A TSA entry's allowed list does not trust the claim signer.
-    assert!(!allowed_list_trusts_claim_signer(TrustListKind::TSA));
+    for kind in [
+        TrustListKind::Manifest,
+        TrustListKind::TSA,
+        TrustListKind::CAWG,
+    ] {
+        let expected = match kind {
+            TrustListKind::Manifest => true,
+            TrustListKind::TSA | TrustListKind::CAWG => false,
+        };
+
+        // The store's only trust entry has this kind, no anchors, and the responder on allow list.
+        let mut settings = Settings::default();
+        settings.trust.anchors = Some(vec![TrustAnchor {
+            trust_anchors: String::new(),
+            trust_uri: None,
+            trust_kind: kind.clone(),
+            trust_config: None,
+            allowed_list: Some(allowed_list_with_responder.clone()),
+            trusted_ica_issuers: None,
+        }]);
+        let store = Store::from_context(&Context::new().with_settings(settings).unwrap());
+
+        let result = store.ctp.check_certificate_trust(
+            std::slice::from_ref(&responder_der),
+            &responder_der,
+            None,
+        );
+        assert_eq!(
+            matches!(result, Ok((TrustAnchorType::EndEntity, _))),
+            expected,
+            "{kind:?}: {result:?}"
+        );
+    }
 }
 
 #[test]
