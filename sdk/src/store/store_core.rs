@@ -159,8 +159,13 @@ impl Store {
                     anchor.trust_config.clone(),
                 );
 
-                if let Some(al) = &anchor.allowed_list {
-                    let _v = store.add_trust_allowed_list(al.as_bytes());
+                // The allowed list is the private credential store, limited by C2PA 2.5 13.4.3  to signer credentials.
+                // CAWG identities read cawg entries' allowed lists in the identity assertion handlers.
+                // OCSP responder checks read this same list, so cawg and tsa allowed lists no longer authorize responders.
+                if anchor.trust_kind == TrustListKind::Manifest {
+                    if let Some(al) = &anchor.allowed_list {
+                        let _v = store.add_trust_allowed_list(al.as_bytes());
+                    }
                 }
             }
         }
