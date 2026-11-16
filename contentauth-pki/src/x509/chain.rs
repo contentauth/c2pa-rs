@@ -17,7 +17,7 @@ use asn1_rs::FromDer;
 use thiserror::Error;
 use x509_parser::certificate::X509Certificate;
 
-use super::certificate::{cert_signing_alg, verify_data};
+use crate::x509::certificate::{cert_signing_alg, verify_data};
 
 #[cfg(feature = "rust_native_crypto")]
 mod native;

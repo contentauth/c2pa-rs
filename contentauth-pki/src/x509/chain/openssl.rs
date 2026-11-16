@@ -17,7 +17,7 @@ use openssl::{
     x509::{verify::X509VerifyFlags, X509StoreContext, X509},
 };
 
-use super::ChainError;
+use crate::x509::chain::ChainError;
 
 // OpenSSL X509_V_ERR_CERT_NOT_YET_VALID and X509_V_ERR_CERT_HAS_EXPIRED.
 const CERT_NOT_YET_VALID: i32 = 9;

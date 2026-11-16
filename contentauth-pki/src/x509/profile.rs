@@ -26,7 +26,7 @@ use x509_parser::{
     x509::X509Version,
 };
 
-use super::{certificate::rsa_pss_algorithms, ParsedCertificate};
+use crate::x509::{certificate::rsa_pss_algorithms, ParsedCertificate};
 
 /// Concrete constraints chosen by the host for a certificate's role.
 ///
