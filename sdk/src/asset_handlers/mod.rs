@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "unstable_append_only_text")]
+pub(crate) mod append_only_text_io;
 pub mod bmff_io;
 pub mod c2pa_io;
 pub mod flac_io;

@@ -1392,6 +1392,50 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_COLLECTIONHASH_MALFORMED: &str = "assertion.collectionHash.malformed";
 
+    /// Hash of a segment of the asset matches the hash declared in the segment hash
+    /// assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    #[cfg(feature = "unstable_append_only_text")]
+    pub const ASSERTION_SEGMENTHASH_MATCH: &str = "assertion.segmentHash.match";
+
+    /// A segment hash assertion is malformed, or declares a version that the validator
+    /// does not recognise.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    #[cfg(feature = "unstable_append_only_text")]
+    pub const ASSERTION_SEGMENTHASH_MALFORMED: &str = "assertion.segmentHash.malformed";
+
+    /// The hash of the segment of the asset does not match the hash declared in the
+    /// segment hash assertion, or the sentinel line is not at the byte offset declared in
+    /// that assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    #[cfg(feature = "unstable_append_only_text")]
+    pub const ASSERTION_SEGMENTHASH_MISMATCH: &str = "assertion.segmentHash.mismatch";
+
+    /// Part of the asset is not covered by any checkpoint.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    #[cfg(feature = "unstable_append_only_text")]
+    pub const ASSERTION_SEGMENTHASH_PARTIAL_COVERAGE: &str =
+        "assertion.segmentHash.partialCoverage";
+
+    /// The hash of the preceding sentinel line's bytes does not match the
+    /// `predecessorSentinel.hash` value declared in the segment hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    #[cfg(feature = "unstable_append_only_text")]
+    pub const ASSERTION_SEGMENTHASH_PREDECESSOR_MISMATCH: &str =
+        "assertion.segmentHash.predecessorMismatch";
+
+    /// No complete sentinel line was found in the append-only text file, or the last
+    /// sentinel line was incomplete or malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA claim box.
+    #[cfg(feature = "unstable_append_only_text")]
+    pub const MANIFEST_APPEND_ONLY_TEXT_NO_SENTINEL: &str = "manifest.appendOnlyText.noSentinel";
+
     /// The ingredient assertion was incomplete.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
@@ -1496,6 +1540,8 @@ pub mod validation_codes {
             | ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS
             | ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS
             | CAWG_ICA_UNTRUSTED_ISSUER => LogKind::Informational,
+            #[cfg(feature = "unstable_append_only_text")]
+            ASSERTION_SEGMENTHASH_MATCH => LogKind::Success,
             _ => LogKind::Failure,
         }
     }

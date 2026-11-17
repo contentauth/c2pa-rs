@@ -1133,7 +1133,7 @@ impl Store {
 
     /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
     #[async_generic]
-    fn handle_remote_manifest(ext_ref: &str, _context: &Context) -> Result<Vec<u8>> {
+    pub(super) fn handle_remote_manifest(ext_ref: &str, _context: &Context) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
             #[cfg(feature = "fetch_remote_manifests")]
@@ -1179,6 +1179,21 @@ impl Store {
         match context.io().read_c2pa(asset_type, stream) {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
+                // An append-only text file's active checkpoint may reference its Manifest
+                // Store by URI.
+                #[cfg(feature = "unstable_append_only_text")]
+                if let Some(
+                    crate::asset_handlers::append_only_text_io::ManifestReference::External(url),
+                ) = crate::asset_handlers::append_only_text_io::active_reference(
+                    asset_type, stream,
+                )? {
+                    let jumbf = if _sync {
+                        Store::handle_remote_manifest(&url, context)?
+                    } else {
+                        Store::handle_remote_manifest_async(&url, context).await?
+                    };
+                    return Ok((jumbf, Some(url)));
+                }
                 stream.rewind()?;
                 if let Some(ext_ref) =
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
@@ -1328,6 +1343,28 @@ impl Store {
                 Store::verify_store_async(&store, Some(&mut asset_data), validation_log, context)
                     .await
             }?;
+
+            #[cfg(feature = "unstable_append_only_text")]
+            if crate::asset_handlers::append_only_text_io::is_append_only_format(format) {
+                if _sync {
+                    Store::verify_checkpoint_chain(
+                        &store,
+                        format,
+                        &mut stream,
+                        validation_log,
+                        context,
+                    )
+                } else {
+                    Store::verify_checkpoint_chain_async(
+                        &store,
+                        format,
+                        &mut stream,
+                        validation_log,
+                        context,
+                    )
+                    .await
+                }?;
+            }
         }
         Ok(store)
     }

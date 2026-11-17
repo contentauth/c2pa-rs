@@ -52,6 +52,10 @@ pub const BMFF_HASH: &str = "c2pa.hash.bmff";
 /// See [Collection data hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_collection_data_hash).
 pub const COLLECTION_HASH: &str = "c2pa.hash.collection.data";
 
+/// Label prefix for a segment hash assertion, the hard binding for append-only text files.
+#[cfg(feature = "unstable_append_only_text")]
+pub const SEGMENT_HASH: &str = "c2pa.hash.segment";
+
 /// Label prefix for a soft binding assertion.
 ///
 /// See [Soft binding - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_soft_binding_2).
@@ -229,8 +233,8 @@ pub const NON_REDACTABLE_LABELS: [&str; 5] =
     [ACTIONS, DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
 
 /// Returns `true` if `label` names a hard binding assertion (`c2pa.hash.data`,
-/// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, `c2pa.hash.collection.data`, or
-/// `c2pa.hash.multi-asset`).
+/// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, `c2pa.hash.collection.data`,
+/// `c2pa.hash.multi-asset`, or, with `unstable_append_only_text`, `c2pa.hash.segment`).
 ///
 /// `BMFF_HASH` is matched on its base label (version/instance suffix stripped)
 /// so it accepts `.v2`/`.v3` variants without accepting a fake like
@@ -241,6 +245,23 @@ pub(crate) fn is_hard_binding_label(label: &str) -> bool {
         || label == COLLECTION_HASH
         || label == MULTI_ASSET_HASH
         || base(label) == BMFF_HASH
+        || is_segment_hash_label(label)
+}
+
+/// Returns `true` if `label` is one of [`HASH_LABELS`], or the segment hash label when
+/// `unstable_append_only_text` is enabled.
+pub(crate) fn is_hash_label(label: &str) -> bool {
+    HASH_LABELS.contains(&label) || is_segment_hash_label(label)
+}
+
+#[cfg(feature = "unstable_append_only_text")]
+fn is_segment_hash_label(label: &str) -> bool {
+    label == SEGMENT_HASH
+}
+
+#[cfg(not(feature = "unstable_append_only_text"))]
+fn is_segment_hash_label(_label: &str) -> bool {
+    false
 }
 
 /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
