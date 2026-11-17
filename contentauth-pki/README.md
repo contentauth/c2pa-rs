@@ -317,6 +317,12 @@ orchestration, settings/context, I/O, and C2PA/CAWG status reporting. Its public
 there is no new SDK deprecation. Its previous error/status mappings and check
 ordering remain in the SDK adapter.
 
+COSE verification errors are non-exhaustive: downstream matches must retain an
+unknown-error arm. The SDK preserves every known category and reports future
+unmapped categories as internal errors rather than accepting verification.
+The SDK's existing `CoseError` is also non-exhaustive; downstream exhaustive
+matches require an additional arm.
+
 See the `cose` module's host-independent example. The embedded unit tests reuse
 existing signing fixtures for every supported algorithm and independently encode
 a noncanonical protected-header signature input; SDK claim, CAWG, profile, and
