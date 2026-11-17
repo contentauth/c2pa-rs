@@ -460,12 +460,6 @@ impl TryFrom<time::OffsetDateTime> for GeneralizedTime {
     }
 }
 
-impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
-    fn from(value: GeneralizedTime) -> Self {
-        std::time::SystemTime::from(time::OffsetDateTime::from(value)).into()
-    }
-}
-
 #[allow(dead_code)]
 pub mod rfc3161;
 #[allow(dead_code)]
@@ -1228,11 +1222,8 @@ mod tests {
         };
 
         // Verify the time value
-        let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
-        assert_eq!(
-            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-            "2024-01-15 12:00:00"
-        );
+        let dt: time::OffsetDateTime = gen_time.into();
+        assert_eq!(dt, time::macros::datetime!(2024-01-15 12:00 UTC));
     }
 
     /// Test RFC 3161 GeneralizedTime with fractional seconds

@@ -1188,11 +1188,11 @@ mod tests {
 
         for required in [&timestamp, &ocsp] {
             for purposes in [
-                vec![claim_signing.clone()],
-                vec![email.clone()],
-                vec![email.clone(), claim_signing.clone()],
-                vec![timestamp.clone()],
-                vec![ocsp.clone()],
+                vec![claim_signing],
+                vec![email],
+                vec![email, claim_signing],
+                vec![timestamp],
+                vec![ocsp],
             ] {
                 let mut cert = profile_cert();
                 extension(
@@ -1499,7 +1499,7 @@ mod tests {
                 .as_mut()
                 .unwrap()
                 .push(x509_cert::ext::Extension {
-                    extn_id: id.clone(),
+                    extn_id: id,
                     critical: true,
                     extn_value: OctetString::new(value).unwrap(),
                 });

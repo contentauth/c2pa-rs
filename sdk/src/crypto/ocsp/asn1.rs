@@ -279,6 +279,28 @@ mod tests {
     }
 
     #[test]
+    fn date_construction_preserves_epoch_boundaries_fractions_and_offsets() {
+        use time::macros::datetime;
+
+        for (datetime, expected) in [
+            (datetime!(1950-01-01 00:00 UTC), "19500101000000Z"),
+            (datetime!(1969-12-31 23:59:59.5 UTC), "19691231235959.5Z"),
+            (datetime!(1970-01-01 05:30 +05:30), "19700101000000Z"),
+            (datetime!(2050-01-01 00:00 UTC), "20500101000000Z"),
+        ] {
+            let value = GeneralizedTime::try_from(datetime).unwrap();
+            let encoded = value.to_der().unwrap();
+            assert_eq!(encoded, encoded_time(expected));
+            assert_eq!(
+                GeneralizedTime::from_der(&encoded).unwrap().datetime,
+                datetime
+            );
+        }
+
+        assert!(GeneralizedTime::try_from(datetime!(-0001-01-01 00:00 UTC)).is_err());
+    }
+
+    #[test]
     fn leap_seconds_and_invalid_dates_are_rejected_without_normalization() {
         for value in [
             "20161231235960Z",

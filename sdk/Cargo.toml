@@ -108,7 +108,6 @@ bytes = "1.11.1"
 brotli = "7.0.0"
 byteorder = { version = "1.5.0", default-features = false }
 byteordered = "0.6.0"
-chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.78.0"
 c2pa_raw_crypto = { version = "0.3.0", default-features = false, features = ["serde"] }
 coset = "0.4.2"
@@ -144,10 +143,6 @@ quick-xml = "0.41.0"
 rand = "0.10.2"
 rand_chacha = { version = "0.9.0", features = ["os_rng"] }
 range-set = "0.1.0"
-rasn = "0.28.13"
-rasn-cms = "0.28.13"
-rasn-ocsp = "0.28.13"
-rasn-pkix = "0.28.13"
 regex = "1.12.3"
 riff = "2.0.0"
 schemars = { version = "1.2.1", optional = true }
@@ -221,16 +216,6 @@ image = { version = "0.25.10", default-features = false, features = [
     # "avif-native"
 ], optional = true }
 
-[target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies.chrono]
-version = "0.4.44"
-default-features = false
-features = ["now"]
-
-[target.'cfg(all(target_arch = "wasm32", target_os = "emscripten"))'.dependencies.chrono]
-version = "0.4.44"
-default-features = false
-features = ["clock", "serde"]
-
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 # Also enable getrandom 0.2 with js feature for other dependencies (rand, tempfile, config)
@@ -244,11 +229,6 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = [
 uuid = { version = "1.23.2", features = ["serde", "v4", "js"] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-chrono = { version = "0.4.44", default-features = false, features = [
-    "clock",
-    "serde",
-    "wasmbind",
-] }
 console_log = { version = "1.0.0", features = ["color"] }
 # Enable getrandom with wasm_js feature for WASM support
 js-sys = "0.3.99"

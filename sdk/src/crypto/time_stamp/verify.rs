@@ -22,8 +22,6 @@ use der::{
     asn1::{Any, ObjectIdentifier, OctetString as DerOctetString},
     Decode, Encode, Tagged,
 };
-#[cfg(test)]
-use rasn::{prelude::*, types};
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use time::OffsetDateTime;
@@ -210,7 +208,7 @@ pub fn verify_time_stamp(
     };
 
     // Reject ambiguous signatures before trying any signer, including identical
-    // SignerInfo entries that rasn may have collapsed while decoding the SET OF.
+    // SignerInfo entries that a SET OF decoder might otherwise collapse.
     let raw_signer_infos = received_signer_infos(&sd_bytes);
     if has_duplicate_signatures(&sd, raw_signer_infos.as_deref()) {
         log_item!(
@@ -1117,14 +1115,6 @@ impl AsRef<[u8]> for HasherOutput {
     }
 }
 
-#[cfg(test)]
-fn time_to_datetime(t: rasn_pkix::Time) -> chrono::DateTime<chrono::Utc> {
-    match t {
-        rasn_pkix::Time::Utc(u) => u,
-        rasn_pkix::Time::General(gt) => gt.into(),
-    }
-}
-
 /// Order certificates from leaf to root based on the signer certificate position
 fn order_certificates_leaf_to_root(
     cert_ders: &[Vec<u8>],
@@ -1320,12 +1310,20 @@ mod tests {
 
     #[test]
     fn timestamp_conversions_preserve_utc_and_generalized_dates() {
-        use chrono::{TimeZone, Utc};
+        use bcder::{decode::Constructed, Mode};
 
-        use super::time_to_datetime;
-        let utc = Utc.timestamp_opt(1_577_836_800, 0).single().expect("date");
-        assert_eq!(time_to_datetime(rasn_pkix::Time::Utc(utc)), utc);
-        assert_eq!(time_to_datetime(rasn_pkix::Time::General(utc.into())), utc);
+        use crate::crypto::asn1::rfc5652::Time;
+
+        let expected = time::macros::datetime!(2020-01-01 00:00 UTC);
+        for encoded in [
+            b"\x17\x0d200101000000Z".as_slice(),
+            b"\x18\x0f20200101000000Z".as_slice(),
+        ] {
+            let value =
+                Constructed::decode(encoded, Mode::Der, Time::take_from).expect("valid ASN.1 date");
+            let actual: time::OffsetDateTime = value.into();
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
@@ -1374,7 +1372,7 @@ pub(crate) mod message_imprint_regression {
         x509::{extension::ExtendedKeyUsage, X509Builder, X509NameBuilder},
     };
 
-    use super::{generalized_time_to_datetime, verify_time_stamp};
+    use super::{generalized_time_to_datetime, verify_time_stamp, SignedData};
     use crate::{
         crypto::{cose::CertificateTrustPolicy, time_stamp::TimeStampError},
         status_tracker::StatusTracker,
@@ -1840,18 +1838,16 @@ pub(crate) mod message_imprint_regression {
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
     }
 
-    fn decode_token(token: &[u8]) -> rasn_cms::SignedData {
-        let decoded = super::signed_data_from_time_stamp_response(token)
+    fn decode_token(token: &[u8]) -> SignedData {
+        super::signed_data_from_time_stamp_response(token)
             .unwrap()
-            .unwrap();
-
-        rasn::der::decode(&decoded.to_der().unwrap()).unwrap()
+            .unwrap()
     }
 
-    fn encode_token(sd: &rasn_cms::SignedData) -> Vec<u8> {
+    fn encode_token(sd: &SignedData) -> Vec<u8> {
         tlv(
             0x30,
-            &cat(&[OID_SIGNED_DATA, &tlv(0xa0, &rasn::der::encode(sd).unwrap())]),
+            &cat(&[OID_SIGNED_DATA, &tlv(0xa0, &sd.to_der().unwrap())]),
         )
     }
 
@@ -1962,7 +1958,7 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn signed_message_digest_failures_have_distinct_statuses() {
-        use rasn::types::{Any, ObjectIdentifier};
+        use der::{asn1::ObjectIdentifier, Any};
 
         use crate::validation_status::{TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH};
         let token = build_token_with(
@@ -1976,39 +1972,45 @@ pub(crate) mod message_imprint_regression {
         );
         for case in 0..6 {
             let mut sd = decode_token(&token);
-            let mut signer = sd.signer_infos.to_vec().remove(0).clone();
+            let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
             let mut attrs: Vec<_> = signer
                 .signed_attrs
                 .take()
                 .unwrap()
-                .to_vec()
-                .into_iter()
+                .iter()
                 .cloned()
                 .collect();
             let pos = attrs
                 .iter()
-                .position(|a| {
-                    a.r#type == rasn::types::Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_MESSAGE_DIGEST
-                })
+                .position(|a| a.oid == ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.4"))
                 .unwrap();
             match case {
                 0 => {
                     attrs.remove(pos);
                 }
                 1 => {
-                    attrs[pos].values =
-                        vec![Any::new(vec![0x04, 0x01, 1]), Any::new(vec![0x04, 0x01, 2])].into()
+                    attrs[pos].values = vec![
+                        Any::from_der(&[0x04, 0x01, 1]).unwrap(),
+                        Any::from_der(&[0x04, 0x01, 2]).unwrap(),
+                    ]
+                    .try_into()
+                    .unwrap()
                 }
-                2 => attrs[pos].values = vec![Any::new(vec![0x02, 0x01, 1])].into(),
-                3 => attrs[pos].values = vec![Any::new(vec![0x04, 0x01, 1])].into(),
-                5 => attrs[pos].values = Vec::<Any>::new().into(),
-                _ => {
-                    signer.digest_algorithm.algorithm =
-                        ObjectIdentifier::new(vec![1, 2, 3, 4]).unwrap()
+                2 => {
+                    attrs[pos].values = vec![Any::from_der(&[0x02, 0x01, 1]).unwrap()]
+                        .try_into()
+                        .unwrap()
                 }
+                3 => {
+                    attrs[pos].values = vec![Any::from_der(&[0x04, 0x01, 1]).unwrap()]
+                        .try_into()
+                        .unwrap()
+                }
+                5 => attrs[pos].values = Default::default(),
+                _ => signer.digest_alg.oid = ObjectIdentifier::new_unwrap("1.2.3.4"),
             }
-            signer.signed_attrs = Some(attrs.into());
-            sd.signer_infos = vec![signer].into();
+            signer.signed_attrs = Some(attrs.try_into().unwrap());
+            sd.signer_infos = cms::signed_data::SignerInfos(vec![signer].try_into().unwrap());
             let status = if case == 3 {
                 TIMESTAMP_MISMATCH
             } else {
@@ -2047,9 +2049,9 @@ pub(crate) mod message_imprint_regression {
                 .unwrap()
                 .is_none()
         );
-        for content in [None, Some(vec![0x30, 0].into())] {
+        for content in [None, Some(der::asn1::OctetString::new([0x30, 0]).unwrap())] {
             let mut broken = sd.clone();
-            broken.encap_content_info.content = content;
+            broken.encap_content_info.econtent = content;
             assert!(matches!(
                 check_error(&encode_token(&broken), TIMESTAMP_MALFORMED),
                 TimeStampError::InvalidData
@@ -2057,15 +2059,16 @@ pub(crate) mod message_imprint_regression {
         }
 
         let mut bad_signature = sd.clone();
-        let mut signer = bad_signature.signer_infos.to_vec().remove(0).clone();
-        signer.signature = vec![0].into();
-        bad_signature.signer_infos = vec![signer].into();
+        let mut signer = bad_signature.signer_infos.0.iter().next().unwrap().clone();
+        signer.signature = der::asn1::OctetString::new([0]).unwrap();
+        bad_signature.signer_infos =
+            cms::signed_data::SignerInfos(vec![signer].try_into().unwrap());
         assert!(matches!(
             check_error(&encode_token(&bad_signature), TIMESTAMP_UNTRUSTED),
             TimeStampError::Untrusted
         ));
         let mut no_signers = sd;
-        no_signers.signer_infos = Vec::<rasn_cms::SignerInfo>::new().into();
+        no_signers.signer_infos = cms::signed_data::SignerInfos(Default::default());
         let mut log = StatusTracker::default();
         assert!(matches!(
             verify_time_stamp(
@@ -2172,7 +2175,8 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn signer_lookup_matches_issuer_serial_and_decoded_ski() {
-        use rasn_cms::{CertificateChoices, SignerIdentifier};
+        use cms::signed_data::SignerIdentifier;
+        use x509_cert::der::Decode as Decode07;
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),
@@ -2187,23 +2191,35 @@ pub(crate) mod message_imprint_regression {
             .unwrap();
         for raw_extension in [false, true] {
             let mut sd = decode_token(&token);
-            let certs = sd.certificates.as_ref().unwrap().to_vec();
-            let cert = certs
+            let raw = sd
+                .certificates
+                .as_ref()
+                .unwrap()
                 .iter()
-                .find_map(|choice| match choice {
-                    CertificateChoices::Certificate(cert) => Some(cert),
-                    _ => None,
-                })
+                .next()
                 .expect("test token contains a certificate");
-            let ski = cert.tbs_certificate.extensions.as_ref().unwrap().iter().find(|e| e.extn_id == rasn::types::Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER).unwrap().extn_value.clone();
-            let mut signer = sd.signer_infos.to_vec().remove(0).clone();
-            signer.sid = SignerIdentifier::SubjectKeyIdentifier(if raw_extension {
-                ski
-            } else {
-                rasn::der::decode::<rasn::types::OctetString>(&ski).unwrap()
-            });
-            signer.version = 3.into();
-            sd.signer_infos = vec![signer].into();
+            let cert = x509_cert::Certificate::from_der(&raw.to_der().unwrap()).unwrap();
+            let ski = cert
+                .tbs_certificate
+                .extensions
+                .as_ref()
+                .unwrap()
+                .iter()
+                .find(|e| e.extn_id.to_string() == "2.5.29.14")
+                .unwrap()
+                .extn_value
+                .clone();
+            let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
+            signer.sid = SignerIdentifier::SubjectKeyIdentifier(
+                (if raw_extension {
+                    der::asn1::OctetString::new(ski.as_bytes()).unwrap()
+                } else {
+                    der::asn1::OctetString::from_der(ski.as_bytes()).unwrap()
+                })
+                .into(),
+            );
+            signer.version = cms::content_info::CmsVersion::V3;
+            sd.signer_infos = cms::signed_data::SignerInfos(vec![signer].try_into().unwrap());
             let token = encode_token(&sd);
             assert_eq!(
                 super::tsa_signer_cert_der_from_token(&token).unwrap(),
@@ -2417,11 +2433,12 @@ pub(crate) mod message_imprint_regression {
 
                 if timestamp_case == "bad_signature" {
                     let mut signed_data = decode_token(&token);
-                    let mut signer = signed_data.signer_infos.to_vec().remove(0).clone();
-                    let mut signature = signer.signature.to_vec();
+                    let mut signer = signed_data.signer_infos.0.iter().next().unwrap().clone();
+                    let mut signature = signer.signature.as_bytes().to_vec();
                     *signature.last_mut().unwrap() ^= 1;
-                    signer.signature = signature.into();
-                    signed_data.signer_infos = vec![signer].into();
+                    signer.signature = der::asn1::OctetString::new(signature).unwrap();
+                    signed_data.signer_infos =
+                        cms::signed_data::SignerInfos(vec![signer].try_into().unwrap());
                     token = encode_token(&signed_data);
                 }
 
@@ -2731,10 +2748,7 @@ pub(crate) mod message_imprint_regression {
             assert_eq!(legacy.digest_algorithms.len(), 1);
             let mut signer = legacy.signer_infos[0].clone();
             let expected = super::signed_attributes_digested_content(
-                &cms::signed_data::SignerInfo::from_der(
-                    &rasn::der::encode(current.signer_infos.to_vec()[0]).unwrap(),
-                )
-                .unwrap(),
+                current.signer_infos.0.iter().next().unwrap(),
             )
             .unwrap();
             assert_eq!(
@@ -2781,13 +2795,17 @@ pub(crate) mod message_imprint_regression {
         let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
         for ski in [false, true] {
             let mut sd = decode_token(&token);
-            let mut signer = sd.signer_infos.to_vec()[0].clone();
+            let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
             if ski {
-                signer.sid = rasn_cms::SignerIdentifier::SubjectKeyIdentifier(vec![1, 2, 3].into());
-            } else if let rasn_cms::SignerIdentifier::IssuerAndSerialNumber(sn) = &mut signer.sid {
-                sn.serial_number = 99.into();
+                signer.sid = cms::signed_data::SignerIdentifier::SubjectKeyIdentifier(
+                    der::asn1::OctetString::new([1, 2, 3]).unwrap().into(),
+                );
+            } else if let cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(sn) =
+                &mut signer.sid
+            {
+                sn.serial_number = 99u32.into();
             }
-            sd.signer_infos = vec![signer].into();
+            sd.signer_infos = cms::signed_data::SignerInfos(vec![signer].try_into().unwrap());
             let token = encode_token(&sd);
             assert!(super::tsa_signer_cert_der_from_token(&token)
                 .unwrap()
@@ -2805,9 +2823,8 @@ pub(crate) mod message_imprint_regression {
         }
 
         let mut sd = decode_token(&token);
-        let other: rasn_cms::CertificateChoices =
-            rasn::der::decode(&tlv(0xa3, &cat(&[OID_POLICY, &[0x05, 0]]))).unwrap();
-        sd.certificates = Some(vec![other].into());
+        let other = der::Any::from_der(&tlv(0xa3, &cat(&[OID_POLICY, &[0x05, 0]]))).unwrap();
+        sd.certificates = Some(vec![other].try_into().unwrap());
         let token = encode_token(&sd);
         assert!(super::tsa_signer_cert_der_from_token(&token).is_err());
         assert!(matches!(
@@ -2935,7 +2952,7 @@ mod signed_attrs_tests {
     const FORGED_DATA: &[u8] = b"attacker-controlled content";
 
     // Preserve each SignerInfo's original attribute order when rebuilding the
-    // envelope; re-encoding SignedData with rasn would sort those attributes.
+    // envelope; re-encoding SignedData would sort those attributes.
     fn rebuild_token(token: &[u8], content: Option<&[u8]>, signer_infos: &[Vec<u8>]) -> Vec<u8> {
         let (_, outer) = asn1_rs::Any::from_der(token).unwrap();
         let ci = timestamp_asn1_children(outer.data).unwrap();

@@ -1472,12 +1472,6 @@ impl From<Time> for time::OffsetDateTime {
     }
 }
 
-impl From<Time> for chrono::DateTime<chrono::Utc> {
-    fn from(value: Time) -> Self {
-        std::time::SystemTime::from(time::OffsetDateTime::from(value)).into()
-    }
-}
-
 pub type AttributeCertificateV2 = AttributeCertificate;
 
 #[cfg(test)]
@@ -1505,8 +1499,8 @@ mod tests {
         ] {
             let der = tlv(tag, time);
             let decoded = Constructed::decode(der.as_slice(), Mode::Der, Time::take_from).unwrap();
-            let dt: chrono::DateTime<chrono::Utc> = decoded.into();
-            assert_eq!(dt.timestamp(), expected);
+            let dt: time::OffsetDateTime = decoded.into();
+            assert_eq!(dt.unix_timestamp(), expected);
         }
 
         for (tag, time) in [
@@ -1587,7 +1581,7 @@ mod tests {
     #[test]
     fn unsupported_legacy_certificate_choices_fail_without_panicking() {
         // These legacy CMS choices have explicit unimplemented parsers;
-        // the RFC 3161 engine uses rasn_cms instead.
+        // the RFC 3161 engine uses a separate CMS decoder.
         for tag in [0xa0, 0xa1, 0xa2, 0xa3] {
             let der = tlv(tag, &[0x30, 0]);
             assert!(Constructed::decode(

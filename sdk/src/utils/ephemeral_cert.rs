@@ -19,7 +19,7 @@
 
 //! In-house X.509 ephemeral certificate generation for Ed25519.
 //!
-//! Builds CA and end-entity certificates using rasn_pkix and ed25519-dalek,
+//! Builds CA and end-entity certificates using x509-cert and ed25519-dalek,
 //! without rcgen, so it works on Wasm (getrandom) and native targets.
 //!
 //! ## OpenSSL 3.x verification

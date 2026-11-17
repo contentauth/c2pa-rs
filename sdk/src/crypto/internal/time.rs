@@ -11,7 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use chrono::{DateTime, Utc};
 use time::OffsetDateTime;
 
 /// Return the current time in UTC, including on browser WebAssembly.
@@ -138,11 +137,6 @@ pub(crate) mod rfc3339 {
     }
 }
 
-/// Return the current time in UTC.
-pub(crate) fn utc_now() -> DateTime<Utc> {
-    std::time::SystemTime::from(now()).into()
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -262,8 +256,8 @@ mod tests {
         wasm_bindgen_test
     )]
     fn now() {
-        let time_now = time::utc_now();
-        let unix_ts = time_now.timestamp();
+        let time_now = time::now();
+        let unix_ts = time_now.unix_timestamp();
         dbg!(&unix_ts);
 
         assert!(unix_ts > 1731560000); // 2024-11-14T04:53:00Z
