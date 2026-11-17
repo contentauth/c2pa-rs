@@ -53,6 +53,12 @@ rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
 # feature: exempt from the crate's usual semantic-versioning stability guarantees and may change
 # or be removed in any release. See docs/experimental-features.md.
 unstable_structured_text = []
+# Native TTML (`application/ttml+xml`) asset handler (C2PA 2.5 "Embedding manifests into TTML"),
+# embedding a Base64 Manifest Store in `/tt:tt/tt:head/tt:metadata/c2pa:manifest`. Implemented
+# in-tree on the existing quick-xml dependency. Experimental feature: exempt from the crate's
+# usual semantic-versioning stability guarantees and may change or be removed in any release.
+# See docs/experimental-features.md.
+unstable_ttml = []
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]

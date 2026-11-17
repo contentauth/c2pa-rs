@@ -23,6 +23,8 @@ use crate::asset_handlers::pdf_io::PdfIO;
 use crate::asset_handlers::plain_text_io::PlainTextIO;
 #[cfg(feature = "unstable_structured_text")]
 use crate::asset_handlers::structured_text_io::StructuredTextIO;
+#[cfg(feature = "unstable_ttml")]
+use crate::asset_handlers::ttml_io::TtmlIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
@@ -55,6 +57,8 @@ lazy_static! {
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
         Box::new(PlainTextIO::new("")),
+        #[cfg(feature = "unstable_ttml")]
+        Box::new(TtmlIO::new("")),
         Box::new(ZipIO::new("")),
     ];
 
@@ -365,6 +369,9 @@ pub mod tests {
 
         let plain_text_supported = supported.iter().any(|s| s == "txt");
         assert_eq!(plain_text_supported, cfg!(feature = "unstable_plain_text"));
+
+        let ttml_supported = supported.iter().any(|s| s == "ttml");
+        assert_eq!(ttml_supported, cfg!(feature = "unstable_ttml"));
 
         assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "jpeg"));
