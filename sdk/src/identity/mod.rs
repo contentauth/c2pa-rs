@@ -23,6 +23,9 @@ pub mod builder;
 pub mod claim_aggregation;
 pub mod validator;
 
+#[cfg(feature = "unstable_cawg_vcb")]
+pub mod vc_binding;
+
 mod identity_assertion;
 pub use identity_assertion::{
     assertion::IdentityAssertion,

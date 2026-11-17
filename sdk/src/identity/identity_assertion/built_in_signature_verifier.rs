@@ -64,6 +64,14 @@ impl SignatureVerifier for BuiltInSignatureVerifier<'_> {
                 .map(BuiltInCredential::X509Signature)
                 .map_err(map_err_to_built_in),
 
+            #[cfg(feature = "unstable_cawg_vcb")]
+            crate::identity::vc_binding::CAWG_VCB_SIG_TYPE => {
+                crate::identity::vc_binding::VcbSignatureVerifier::new(self.ica_verifier.context())
+                    .check_signature(signer_payload, signature, status_tracker)
+                    .map(BuiltInCredential::VerifiableCredentialBinding)
+                    .map_err(map_err_to_built_in)
+            }
+
             sig_type => Err(ValidationError::UnknownSignatureType(sig_type.to_string())),
         }
     }
@@ -88,6 +96,15 @@ impl SignatureVerifier for BuiltInSignatureVerifier<'_> {
                 .await
                 .map(BuiltInCredential::X509Signature)
                 .map_err(map_err_to_built_in),
+
+            #[cfg(feature = "unstable_cawg_vcb")]
+            crate::identity::vc_binding::CAWG_VCB_SIG_TYPE => {
+                crate::identity::vc_binding::VcbSignatureVerifier::new(self.ica_verifier.context())
+                    .check_signature_async(signer_payload, signature, status_tracker)
+                    .await
+                    .map(BuiltInCredential::VerifiableCredentialBinding)
+                    .map_err(map_err_to_built_in)
+            }
 
             sig_type => Err(ValidationError::UnknownSignatureType(sig_type.to_string())),
         }
@@ -121,6 +138,8 @@ fn map_err_to_built_in<E: Into<BuiltInSignatureError>>(
 pub enum BuiltInCredential {
     IdentityClaimsAggregationCredential(IcaCredential),
     X509Signature(X509SignatureInfo),
+    #[cfg(feature = "unstable_cawg_vcb")]
+    VerifiableCredentialBinding(crate::identity::vc_binding::VcbCredential),
 }
 
 impl ToCredentialSummary for BuiltInCredential {
@@ -134,6 +153,10 @@ impl ToCredentialSummary for BuiltInCredential {
             Self::X509Signature(sig_info) => {
                 BuiltInCredentialSummary::X509CredentialSummary(sig_info.to_summary())
             }
+            #[cfg(feature = "unstable_cawg_vcb")]
+            Self::VerifiableCredentialBinding(vcb) => {
+                BuiltInCredentialSummary::VerifiableCredentialBinding(vcb.to_summary())
+            }
         }
     }
 }
@@ -143,6 +166,8 @@ impl ToCredentialSummary for BuiltInCredential {
 pub enum BuiltInCredentialSummary {
     IcaCredentialSummary(IcaCredentialSummary),
     X509CredentialSummary(X509SignatureReport),
+    #[cfg(feature = "unstable_cawg_vcb")]
+    VerifiableCredentialBinding(crate::identity::vc_binding::VcbCredentialSummary),
 }
 
 impl Serialize for BuiltInCredentialSummary {
@@ -153,6 +178,8 @@ impl Serialize for BuiltInCredentialSummary {
         match self {
             Self::IcaCredentialSummary(ica) => ica.serialize(serializer),
             Self::X509CredentialSummary(x509) => x509.serialize(serializer),
+            #[cfg(feature = "unstable_cawg_vcb")]
+            Self::VerifiableCredentialBinding(vcb) => vcb.serialize(serializer),
         }
     }
 }
@@ -162,6 +189,15 @@ impl Serialize for BuiltInCredentialSummary {
 pub enum BuiltInSignatureError {
     IcaValidationError(IcaValidationError),
     X509CoseValidationError(CoseError),
+    #[cfg(feature = "unstable_cawg_vcb")]
+    VerifiableCredentialBinding(crate::identity::vc_binding::VcbValidationError),
+}
+
+#[cfg(feature = "unstable_cawg_vcb")]
+impl From<crate::identity::vc_binding::VcbValidationError> for BuiltInSignatureError {
+    fn from(e: crate::identity::vc_binding::VcbValidationError) -> Self {
+        Self::VerifiableCredentialBinding(e)
+    }
 }
 
 impl From<IcaValidationError> for BuiltInSignatureError {
