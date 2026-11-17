@@ -16,24 +16,29 @@
 
 #![allow(clippy::unwrap_used)]
 
-use rasn_ocsp::{BasicOcspResponse, OcspResponse};
+use der::{
+    asn1::{Any, BitString, ObjectIdentifier, OctetString},
+    Decode, Encode,
+};
 #[cfg(feature = "openssl")]
 pub(crate) use responder::TestResponder;
+
+use crate::crypto::ocsp::asn1::{BasicOcspResponse, ResponderId, Response};
 
 const GOOD_RESPONSE: &[u8] =
     include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
 
 /// The `response_good.der` fixture's `BasicOcspResponse`, to be modified and re-signed.
 pub(crate) fn good_basic_response() -> BasicOcspResponse {
-    let response: OcspResponse = rasn::der::decode(GOOD_RESPONSE).unwrap();
-    rasn::der::decode(&response.bytes.unwrap().response).unwrap()
+    let response = Response::from_der(GOOD_RESPONSE).unwrap();
+    BasicOcspResponse::from_der(response.bytes.unwrap().response.as_bytes()).unwrap()
 }
 
 /// Wraps `basic` in the fixture's `OcspResponse` envelope and encodes it.
 pub(crate) fn encode_response(basic: &BasicOcspResponse) -> Vec<u8> {
-    let mut response: OcspResponse = rasn::der::decode(GOOD_RESPONSE).unwrap();
-    response.bytes.as_mut().unwrap().response = rasn::der::encode(basic).unwrap().into();
-    rasn::der::encode(&response).unwrap()
+    let mut response = Response::from_der(GOOD_RESPONSE).unwrap();
+    response.bytes.as_mut().unwrap().response = OctetString::new(basic.to_der().unwrap()).unwrap();
+    response.to_der().unwrap()
 }
 
 /// Backend-independent issuer-signed responses with a real signed leaf/CA chain.
@@ -45,7 +50,14 @@ pub(crate) struct IssuerResponder {
 impl IssuerResponder {
     pub(crate) fn new() -> Self {
         use ed25519_dalek::Signer;
-        use rasn_pkix::Certificate;
+        use x509_cert::{
+            der::{
+                asn1::{BitString, ObjectIdentifier, OctetString},
+                Decode as Decode07, Encode as Encode07,
+            },
+            spki::AlgorithmIdentifierOwned,
+            Certificate,
+        };
 
         let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
         let mut chain: Vec<Certificate> = pem::parse_many(include_bytes!(
@@ -53,11 +65,11 @@ impl IssuerResponder {
         ))
         .unwrap()
         .into_iter()
-        .map(|p| rasn::der::decode(p.contents()).unwrap())
+        .map(|p| Certificate::from_der(p.contents()).unwrap())
         .collect();
 
-        let algorithm = rasn_pkix::AlgorithmIdentifier {
-            algorithm: rasn::types::ObjectIdentifier::new_unchecked(vec![1, 3, 101, 112].into()),
+        let algorithm = AlgorithmIdentifierOwned {
+            oid: ObjectIdentifier::new_unwrap("1.3.101.112"),
             parameters: None,
         };
 
@@ -65,69 +77,60 @@ impl IssuerResponder {
         chain[1]
             .tbs_certificate
             .subject_public_key_info
-            .subject_public_key =
-            rasn::types::BitString::from_vec(key.verifying_key().to_bytes().to_vec());
+            .subject_public_key = BitString::from_bytes(&key.verifying_key().to_bytes()).unwrap();
 
-        let mut key_usage = rasn::types::BitString::from_vec(vec![0x06]);
-        key_usage.truncate(7); // keyCertSign and cRLSign
+        let key_usage = BitString::new(1, vec![0x06]).unwrap();
         chain[1]
             .tbs_certificate
             .extensions
             .as_mut()
             .unwrap()
-            .push(rasn_pkix::Extension {
-                extn_id: rasn::types::ObjectIdentifier::new_unchecked(vec![2, 5, 29, 15].into()),
+            .push(x509_cert::ext::Extension {
+                extn_id: ObjectIdentifier::new_unwrap("2.5.29.15"),
                 critical: true,
-                extn_value: rasn::der::encode(&key_usage).unwrap().into(),
+                extn_value: OctetString::new(key_usage.to_der().unwrap()).unwrap(),
             });
 
         for cert in &mut chain {
             cert.signature_algorithm = algorithm.clone();
             cert.tbs_certificate.signature = algorithm.clone();
-            cert.signature_value = rasn::types::BitString::from_vec(
-                key.sign(&rasn::der::encode(&cert.tbs_certificate).unwrap())
-                    .to_bytes()
-                    .to_vec(),
-            );
+            cert.signature = BitString::from_bytes(
+                &key.sign(&cert.tbs_certificate.to_der().unwrap()).to_bytes(),
+            )
+            .unwrap();
         }
 
         Self {
             key,
-            chain: chain
-                .iter()
-                .map(|c| rasn::der::encode(c).unwrap())
-                .collect(),
+            chain: chain.iter().map(|c| c.to_der().unwrap()).collect(),
         }
     }
 
     pub(crate) fn basic_response(&self, by_name: bool) -> BasicOcspResponse {
         let mut basic = good_basic_response();
-        let issuer: rasn_pkix::Certificate = rasn::der::decode(&self.chain[1]).unwrap();
+        use x509_parser::prelude::{FromDer, X509Certificate};
+
+        let (_, issuer) = X509Certificate::from_der(&self.chain[1]).unwrap();
         basic.certs = None;
-        basic.signature_algorithm = issuer.signature_algorithm.clone();
+        basic.signature_algorithm = spki::AlgorithmIdentifierOwned {
+            oid: ObjectIdentifier::new_unwrap("1.3.101.112"),
+            parameters: None,
+        };
         basic.tbs_response_data.responder_id = if by_name {
-            rasn_ocsp::ResponderId::ByName(issuer.tbs_certificate.subject.clone())
+            ResponderId::ByName(Any::from_der(issuer.subject().as_raw()).unwrap())
         } else {
-            rasn_ocsp::ResponderId::ByKey(
-                crate::crypto::hash::sha1(
-                    issuer
-                        .tbs_certificate
-                        .subject_public_key_info
-                        .subject_public_key
-                        .as_raw_slice(),
-                )
-                .into(),
+            ResponderId::ByKey(
+                OctetString::new(crate::crypto::hash::sha1(
+                    &issuer.public_key().subject_public_key.data,
+                ))
+                .unwrap(),
             )
         };
 
-        basic.tbs_response_data.responses[0].cert_id.issuer_key_hash = crate::crypto::hash::sha1(
-            issuer
-                .tbs_certificate
-                .subject_public_key_info
-                .subject_public_key
-                .as_raw_slice(),
+        basic.tbs_response_data.responses[0].cert_id.issuer_key_hash = OctetString::new(
+            crate::crypto::hash::sha1(&issuer.public_key().subject_public_key.data),
         )
-        .into();
+        .unwrap();
 
         basic
     }
@@ -135,45 +138,63 @@ impl IssuerResponder {
     pub(crate) fn sign(&self, mut basic: BasicOcspResponse) -> Vec<u8> {
         use ed25519_dalek::Signer;
 
-        basic.signature = rasn::types::BitString::from_vec(
-            self.key
-                .sign(&rasn::der::encode(&basic.tbs_response_data).unwrap())
-                .to_bytes()
-                .to_vec(),
-        );
+        basic.signature = BitString::from_bytes(
+            &self
+                .key
+                .sign(&basic.tbs_response_data.to_der().unwrap())
+                .to_bytes(),
+        )
+        .unwrap();
 
         encode_response(&basic)
     }
 
     pub(crate) fn delegated_response(&self, mut basic: BasicOcspResponse) -> Vec<u8> {
         use ed25519_dalek::Signer;
+        use x509_cert::{
+            der::{asn1::BitString as BitString07, Decode as Decode07, Encode as Encode07},
+            Certificate,
+        };
 
         let key = ed25519_dalek::SigningKey::from_bytes(&[43; 32]);
-        let mut cert = good_basic_response().certs.unwrap().remove(0);
-        cert.signature_algorithm = basic.signature_algorithm.clone();
-        cert.tbs_certificate.signature = basic.signature_algorithm.clone();
-        cert.tbs_certificate.subject_public_key_info.algorithm = basic.signature_algorithm.clone();
+        let mut cert = Certificate::from_der(
+            &good_basic_response()
+                .certs
+                .unwrap()
+                .remove(0)
+                .to_der()
+                .unwrap(),
+        )
+        .unwrap();
+        let algorithm = x509_cert::spki::AlgorithmIdentifierOwned::from_der(
+            &basic.signature_algorithm.to_der().unwrap(),
+        )
+        .unwrap();
+        cert.signature_algorithm = algorithm.clone();
+        cert.tbs_certificate.signature = algorithm.clone();
+        cert.tbs_certificate.subject_public_key_info.algorithm = algorithm;
         cert.tbs_certificate
             .subject_public_key_info
-            .subject_public_key =
-            rasn::types::BitString::from_vec(key.verifying_key().to_bytes().to_vec());
+            .subject_public_key = BitString07::from_bytes(&key.verifying_key().to_bytes()).unwrap();
 
-        cert.signature_value = rasn::types::BitString::from_vec(
-            self.key
-                .sign(&rasn::der::encode(&cert.tbs_certificate).unwrap())
-                .to_bytes()
-                .to_vec(),
+        cert.signature = BitString07::from_bytes(
+            &self
+                .key
+                .sign(&cert.tbs_certificate.to_der().unwrap())
+                .to_bytes(),
+        )
+        .unwrap();
+
+        basic.tbs_response_data.responder_id = ResponderId::ByName(
+            Any::from_der(&cert.tbs_certificate.subject.to_der().unwrap()).unwrap(),
         );
 
-        basic.tbs_response_data.responder_id =
-            rasn_ocsp::ResponderId::ByName(cert.tbs_certificate.subject.clone());
-
-        basic.certs = Some(vec![cert]);
-        basic.signature = rasn::types::BitString::from_vec(
-            key.sign(&rasn::der::encode(&basic.tbs_response_data).unwrap())
-                .to_bytes()
-                .to_vec(),
-        );
+        basic.certs = Some(vec![Any::from_der(&cert.to_der().unwrap()).unwrap()]);
+        basic.signature = BitString::from_bytes(
+            &key.sign(&basic.tbs_response_data.to_der().unwrap())
+                .to_bytes(),
+        )
+        .unwrap();
 
         encode_response(&basic)
     }
@@ -197,9 +218,11 @@ mod responder {
             X509Builder, X509Name, X509NameBuilder, X509,
         },
     };
-    use rasn_ocsp::BasicOcspResponse;
 
-    use super::encode_response;
+    use super::{
+        encode_response, Any, BasicOcspResponse, BitString, Decode, Encode, ObjectIdentifier,
+        ResponderId,
+    };
 
     // 2020-01-01T00:00:00Z, so certificates are also valid at historical
     // time-stamp times used by tests.
@@ -307,26 +330,19 @@ mod responder {
         /// Signs `basic` with this responder, embedding its certificate, and returns
         /// the encoded `OcspResponse`.
         pub(crate) fn sign(&self, mut basic: BasicOcspResponse) -> Vec<u8> {
-            basic.certs = Some(vec![
-                rasn::der::decode(&self.cert.to_der().unwrap()).unwrap()
-            ]);
-            basic.tbs_response_data.responder_id = rasn_ocsp::ResponderId::ByName(
-                basic.certs.as_ref().unwrap()[0]
-                    .tbs_certificate
-                    .subject
-                    .clone(),
+            basic.certs = Some(vec![Any::from_der(&self.cert.to_der().unwrap()).unwrap()]);
+            basic.tbs_response_data.responder_id = ResponderId::ByName(
+                Any::from_der(&self.cert.subject_name().to_der().unwrap()).unwrap(),
             );
             // ecdsa-with-SHA256
-            basic.signature_algorithm.algorithm = rasn::types::ObjectIdentifier::new_unchecked(
-                vec![1, 2, 840, 10045, 4, 3, 2].into(),
-            );
+            basic.signature_algorithm.oid = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
             basic.signature_algorithm.parameters = None;
 
             let mut signer = Signer::new(MessageDigest::sha256(), &self.key).unwrap();
             signer
-                .update(&rasn::der::encode(&basic.tbs_response_data).unwrap())
+                .update(&basic.tbs_response_data.to_der().unwrap())
                 .unwrap();
-            basic.signature = rasn::types::BitString::from_vec(signer.sign_to_vec().unwrap());
+            basic.signature = BitString::from_bytes(&signer.sign_to_vec().unwrap()).unwrap();
 
             encode_response(&basic)
         }

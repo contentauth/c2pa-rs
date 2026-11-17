@@ -27,6 +27,33 @@ impl FixedTag for GeneralizedTime {
     const TAG: Tag = Tag::GeneralizedTime;
 }
 
+impl TryFrom<OffsetDateTime> for GeneralizedTime {
+    type Error = der::Error;
+
+    fn try_from(datetime: OffsetDateTime) -> der::Result<Self> {
+        let datetime = datetime
+            .checked_to_offset(UtcOffset::UTC)
+            .filter(|datetime| datetime.year() >= 0)
+            .ok_or_else(|| Self::TAG.value_error())?;
+        let mut value = datetime
+            .format(time::macros::format_description!(
+                "[year][month][day][hour][minute][second]"
+            ))
+            .map_err(|_| Self::TAG.value_error())?;
+
+        if datetime.nanosecond() != 0 {
+            value.push('.');
+            value.push_str(format!("{:09}", datetime.nanosecond()).trim_end_matches('0'));
+        }
+        value.push('Z');
+
+        Ok(Self {
+            value: value.into_bytes(),
+            datetime,
+        })
+    }
+}
+
 impl<'a> DecodeValue<'a> for GeneralizedTime {
     type Error = der::Error;
 

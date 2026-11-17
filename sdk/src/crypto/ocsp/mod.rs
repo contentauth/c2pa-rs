@@ -15,8 +15,8 @@
 
 use std::str::FromStr;
 
+use ::time::OffsetDateTime;
 use c2pa_raw_crypto::RawSignatureValidationError;
-use chrono::{DateTime, Utc};
 use der::{asn1::ObjectIdentifier, Decode, Encode};
 use thiserror::Error;
 use x509_parser::{certificate::X509Certificate, prelude::FromDer};
@@ -35,15 +35,18 @@ use crate::{
 
 /// OcspResponse - struct to contain the OCSPResponse DER and the time
 /// for the next OCSP check
+///
+/// Date fields and verification-time parameters now use [`OffsetDateTime`]
+/// instead of `chrono::DateTime<Utc>`.
 pub struct OcspResponse {
     /// Original OCSP DER response.
     pub ocsp_der: Vec<u8>,
 
     /// Time when OCSP response should be re-checked.
-    pub next_update: DateTime<Utc>,
+    pub next_update: OffsetDateTime,
 
     /// Time when certificate was revoked, if applicable.
-    pub revoked_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<OffsetDateTime>,
 
     /// Authenticated responder certificate chain, including an issuing CA
     /// resolved from the signing chain when it signs the response directly.
@@ -57,7 +60,7 @@ impl Default for OcspResponse {
     fn default() -> Self {
         Self {
             ocsp_der: Vec::new(),
-            next_update: time::utc_now(),
+            next_update: time::now(),
             revoked_at: None,
             ocsp_certs: None,
             certificate_serial_num: String::new(),
@@ -85,14 +88,14 @@ impl OcspResponse {
     pub(crate) fn from_der_checked(
         der: &[u8],
         signing_cert_chain: &[Vec<u8>],
-        signing_time: Option<DateTime<Utc>>,
+        signing_time: Option<OffsetDateTime>,
         validation_log: &mut StatusTracker,
     ) -> Result<Self, OcspError> {
         Self::from_der_checked_at(
             der,
             signing_cert_chain,
             signing_time,
-            time::utc_now(),
+            time::now(),
             validation_log,
         )
     }
@@ -102,11 +105,11 @@ impl OcspResponse {
     fn from_der_checked_at(
         der: &[u8],
         signing_cert_chain: &[Vec<u8>],
-        signing_time: Option<DateTime<Utc>>,
-        now: DateTime<Utc>,
+        signing_time: Option<OffsetDateTime>,
+        now: OffsetDateTime,
         validation_log: &mut StatusTracker,
     ) -> Result<Self, OcspError> {
-        let now = now.timestamp();
+        let now = now.unix_timestamp();
         let mut output = OcspResponse {
             ocsp_der: der.to_vec(),
             ..Default::default()
@@ -236,7 +239,7 @@ impl OcspResponse {
             // C2PA only accepts a response whose thisUpdate is not in the future
             // ("The current time is no earlier than thisUpdate"). Such a response
             // says nothing about the certificate, whatever its status.
-            let this_update = status_time(&single_response.this_update)?.timestamp();
+            let this_update = status_time(&single_response.this_update)?.unix_timestamp();
             if now < this_update {
                 continue;
             }
@@ -256,7 +259,7 @@ impl OcspResponse {
                 CertStatus::Good(()) => {
                     // check cert range against signing time
                     let next_update = if let Some(nu) = &single_response.next_update {
-                        status_time(nu)?.timestamp()
+                        status_time(nu)?.unix_timestamp()
                     } else {
                         // use producedAt + 24hr when there is no nextUpdate
                         response_data.produced_at.datetime.unix_timestamp() + (24 * 60 * 60)
@@ -264,8 +267,9 @@ impl OcspResponse {
 
                     // Was signing time within the acceptable range?
                     let in_range = if let Some(st) = signing_time {
-                        st.timestamp() < this_update
-                            || (st.timestamp() >= this_update && st.timestamp() <= next_update)
+                        st.unix_timestamp() < this_update
+                            || (st.unix_timestamp() >= this_update
+                                && st.unix_timestamp() <= next_update)
                     } else {
                         // If no signing time was provided, use current system time.
                         now >= this_update && now <= next_update
@@ -291,13 +295,13 @@ impl OcspResponse {
                     let revocation_time = &revoked_info.revocation_time;
 
                     let revoked_at_native = status_time(revocation_time)?;
-                    let revoked_at = revoked_at_native.timestamp();
+                    let revoked_at = revoked_at_native.unix_timestamp();
 
                     if let Some(reason) = revoked_info.revocation_reason {
                         if reason == CrlReason::RemoveFromCRL {
                             // Was signing time prior to revocation?
                             let in_range = if let Some(st) = signing_time {
-                                revoked_at > st.timestamp()
+                                revoked_at > st.unix_timestamp()
                             } else {
                                 // No signing time was provided; use current system time.
                                 revoked_at > now
@@ -322,7 +326,7 @@ impl OcspResponse {
 
                             // Was the cert signed before revocation?
                             let in_range = if let Some(st) = signing_time {
-                                st.timestamp() < utc_with_offset.timestamp()
+                                st.unix_timestamp() < utc_with_offset.unix_timestamp()
                             } else {
                                 false
                             };
@@ -582,15 +586,15 @@ pub(crate) enum OcspError {
     CertificateStatusUnknown,
 }
 
-fn status_time(value: &asn1::GeneralizedTime) -> Result<DateTime<Utc>, OcspError> {
+fn status_time(value: &asn1::GeneralizedTime) -> Result<OffsetDateTime, OcspError> {
     if value.datetime.nanosecond() != 0 {
         return Err(OcspError::InvalidCertificate);
     }
 
-    Ok(std::time::SystemTime::from(value.datetime).into())
+    Ok(value.datetime)
 }
 
-mod asn1;
+pub(crate) mod asn1;
 mod fetch;
 
 pub(crate) use fetch::{fetch_ocsp_response, fetch_ocsp_response_async};
@@ -604,11 +608,23 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use ::time::macros::datetime;
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
-    use chrono::DateTime;
-    use chrono::{TimeZone, Utc};
+    use ::time::OffsetDateTime;
+    use asn1_rs::FromDer;
+    use der::{
+        asn1::{BitString, Int, ObjectIdentifier, OctetString},
+        Any, Decode, Encode,
+    };
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
+    use x509_cert::der::{
+        asn1::{
+            BitString as BitString07, ObjectIdentifier as ObjectIdentifier07,
+            OctetString as OctetString07,
+        },
+        Decode as Decode07, Encode as Encode07,
+    };
 
     use crate::{
         crypto::{
@@ -647,7 +663,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let test_time = datetime!(2023-02-01 08:00:00 UTC);
 
         let ocsp_data = OcspResponse::from_der_checked(
             rsp_data,
@@ -672,7 +688,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = datetime!(2024-02-01 08:00:00 UTC);
 
         let ocsp_data = OcspResponse::from_der_checked(
             rsp_data,
@@ -700,7 +716,7 @@ mod tests {
         let mut validation_log = StatusTracker::default();
         validation_log.push_current_uri(signature_uri);
 
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = datetime!(2024-02-01 08:00:00 UTC);
 
         OcspResponse::from_der_checked(
             rsp_data,
@@ -728,7 +744,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = datetime!(2024-02-01 08:00:00 UTC);
 
         let ocsp_data = OcspResponse::from_der_checked(
             rsp_data,
@@ -811,14 +827,14 @@ mod tests {
     fn response_from_the_future_is_ignored() {
         // response_good.der has thisUpdate 2025-03-07T14:53:24Z.
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
-        let signing_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let signing_time = datetime!(2023-02-01 08:00:00 UTC);
 
-        let this_update = Utc.with_ymd_and_hms(2025, 3, 7, 14, 53, 24).unwrap();
+        let this_update = datetime!(2025-03-07 14:53:24 UTC);
         for signing_time in [None, Some(signing_time)] {
             for (now, accepted) in [
-                (this_update - chrono::Duration::seconds(1), false),
+                (this_update - ::time::Duration::seconds(1), false),
                 (this_update, true),
-                (this_update + chrono::Duration::seconds(1), true),
+                (this_update + ::time::Duration::seconds(1), true),
             ] {
                 let mut validation_log = StatusTracker::default();
                 let parsed = OcspResponse::from_der_checked_at(
@@ -850,7 +866,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2026, 2, 1, 8, 0, 0).unwrap();
+        let test_time = datetime!(2026-02-01 08:00:00 UTC);
 
         let ocsp_data = OcspResponse::from_der_checked(
             rsp_data,
@@ -881,7 +897,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let test_time = datetime!(2023-02-01 08:00:00 UTC);
 
         // Reverse the chain so chain[0] is the root, whose serial number does
         // not match the response's certId serial number.
@@ -911,11 +927,11 @@ mod tests {
         let next_update = basic.tbs_response_data.responses[0]
             .next_update
             .as_ref()
-            .map(|next_update| next_update.to_utc())
+            .map(|next_update| next_update.datetime)
             .unwrap_or_else(|| {
-                basic.tbs_response_data.produced_at.to_utc() + chrono::Duration::hours(24)
+                basic.tbs_response_data.produced_at.datetime + ::time::Duration::hours(24)
             });
-        assert!(time::utc_now() > next_update);
+        assert!(time::now() > next_update);
 
         let mut log = StatusTracker::default();
         OcspResponse::from_der_checked(
@@ -935,21 +951,20 @@ mod tests {
     #[test]
     fn uninterpretable_responses_preserve_der_without_asserting_status() {
         let mut responses = vec![Vec::new(), vec![0xde, 0xad]];
-        let mut response: rasn_ocsp::OcspResponse = rasn::der::decode(include_bytes!(
+        let mut response = super::asn1::Response::from_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/response_good.der"
         ))
         .unwrap();
-        response.status = rasn_ocsp::OcspResponseStatus::Unauthorized;
-        responses.push(rasn::der::encode(&response).unwrap());
-        response.status = rasn_ocsp::OcspResponseStatus::Successful;
-        response.bytes.as_mut().unwrap().response = vec![0xde, 0xad].into();
-        responses.push(rasn::der::encode(&response).unwrap());
+        response.status = crate::crypto::ocsp::asn1::OcspResponseStatus::Unauthorized;
+        responses.push(response.to_der().unwrap());
+        response.status = crate::crypto::ocsp::asn1::OcspResponseStatus::Successful;
+        response.bytes.as_mut().unwrap().response = OctetString::new([0xde, 0xad]).unwrap();
+        responses.push(response.to_der().unwrap());
         response.bytes = None;
-        responses.push(rasn::der::encode(&response).unwrap());
+        responses.push(response.to_der().unwrap());
 
         let mut basic = basic_response();
-        basic.signature_algorithm.algorithm =
-            rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
+        basic.signature_algorithm.oid = ObjectIdentifier::new_unwrap("1.2.3.4");
         responses.push(encode_response(&basic));
         for der in responses {
             let mut log = StatusTracker::default();
@@ -969,7 +984,7 @@ mod tests {
         let mut no_certs = basic_response();
         no_certs.certs = None;
         let mut bad_signature = basic_response();
-        bad_signature.signature = rasn::types::BitString::from_vec(vec![0; 64]);
+        bad_signature.signature = BitString::from_bytes(&[0; 64]).unwrap();
         for basic in [no_certs, bad_signature] {
             let mut log = StatusTracker::default();
             let parsed = OcspResponse::from_der_checked(
@@ -990,14 +1005,14 @@ mod tests {
         use super::test_responder::IssuerResponder;
 
         let responder = IssuerResponder::new();
-        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+        let now = datetime!(2025-03-08 00:00:00 UTC);
 
         for by_name in [false, true] {
             for certs in [
                 None,
                 Some(vec![]),
                 Some(basic_response().certs.unwrap()),
-                Some(vec![rasn::der::decode(&responder.chain[1]).unwrap()]),
+                Some(vec![Any::from_der(&responder.chain[1]).unwrap()]),
             ] {
                 let mut basic = responder.basic_response(by_name);
                 basic.certs = certs;
@@ -1022,15 +1037,18 @@ mod tests {
 
         let responder = IssuerResponder::new();
         let original = responder.basic_response(false);
-        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+        let now = datetime!(2025-03-08 00:00:00 UTC);
         let mut wrong_key_id = original.clone();
         wrong_key_id.tbs_response_data.responder_id =
-            rasn_ocsp::ResponderId::ByKey(vec![0; 20].into());
+            crate::crypto::ocsp::asn1::ResponderId::ByKey(OctetString::new([0; 20]).unwrap());
 
         let mut wrong_name_id = original.clone();
-        let leaf: rasn_pkix::Certificate = rasn::der::decode(&responder.chain[0]).unwrap();
+        let (_, leaf) =
+            x509_parser::prelude::X509Certificate::from_der(&responder.chain[0]).unwrap();
         wrong_name_id.tbs_response_data.responder_id =
-            rasn_ocsp::ResponderId::ByName(leaf.tbs_certificate.subject);
+            crate::crypto::ocsp::asn1::ResponderId::ByName(
+                Any::from_der(leaf.subject().as_raw()).unwrap(),
+            );
 
         let mut variants = vec![wrong_key_id, wrong_name_id];
 
@@ -1038,9 +1056,9 @@ mod tests {
             let mut basic = original.clone();
             let id = &mut basic.tbs_response_data.responses[0].cert_id;
             match field {
-                0 => id.serial_number = 0.into(),
-                1 => id.issuer_name_hash = vec![0; 20].into(),
-                _ => id.issuer_key_hash = vec![0; 20].into(),
+                0 => id.serial_number = Int::new(&[0]).unwrap(),
+                1 => id.issuer_name_hash = OctetString::new([0; 20]).unwrap(),
+                _ => id.issuer_key_hash = OctetString::new([0; 20]).unwrap(),
             }
 
             variants.push(basic);
@@ -1048,7 +1066,7 @@ mod tests {
 
         let mut ders: Vec<_> = variants.into_iter().map(|b| responder.sign(b)).collect();
         let mut bad_signature = original;
-        bad_signature.signature = rasn::types::BitString::from_vec(vec![0; 64]);
+        bad_signature.signature = BitString::from_bytes(&[0; 64]).unwrap();
         ders.push(encode_response(&bad_signature));
 
         for der in ders {
@@ -1069,25 +1087,25 @@ mod tests {
 
         let responder = IssuerResponder::new();
         let der = responder.sign(responder.basic_response(false));
-        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+        let now = datetime!(2025-03-08 00:00:00 UTC);
 
         for variant in 0..6 {
             let mut chain = responder.chain.clone();
             match variant {
                 0 => chain.truncate(1),
                 1 => {
-                    let mut leaf: rasn_pkix::Certificate = rasn::der::decode(&chain[0]).unwrap();
-                    leaf.signature_value = rasn::types::BitString::from_vec(vec![0; 64]);
-                    chain[0] = rasn::der::encode(&leaf).unwrap();
+                    let mut leaf: x509_cert::Certificate = Decode07::from_der(&chain[0]).unwrap();
+                    leaf.signature = BitString07::from_bytes(&[0; 64]).unwrap();
+                    chain[0] = leaf.to_der().unwrap();
                 }
                 2 => {
-                    let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+                    let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
                     issuer.tbs_certificate.extensions = None;
-                    chain[1] = rasn::der::encode(&issuer).unwrap();
+                    chain[1] = issuer.to_der().unwrap();
                 }
                 3 => chain[1] = signing_cert_chain()[1].clone(),
                 4 => {
-                    let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+                    let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
                     issuer
                         .tbs_certificate
                         .extensions
@@ -1096,15 +1114,15 @@ mod tests {
                         .iter_mut()
                         .find(|ext| ext.extn_id.to_string() == "2.5.29.15")
                         .unwrap()
-                        .extn_value = vec![0x03, 0x02, 0x07, 0x80].into();
+                        .extn_value = OctetString07::new([0x03, 0x02, 0x07, 0x80]).unwrap();
 
-                    chain[1] = rasn::der::encode(&issuer).unwrap();
+                    chain[1] = issuer.to_der().unwrap();
                 }
                 _ => {
-                    let leaf: rasn_pkix::Certificate = rasn::der::decode(&chain[0]).unwrap();
-                    let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+                    let leaf: x509_cert::Certificate = Decode07::from_der(&chain[0]).unwrap();
+                    let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
                     issuer.tbs_certificate.subject = leaf.tbs_certificate.subject;
-                    chain[1] = rasn::der::encode(&issuer).unwrap();
+                    chain[1] = issuer.to_der().unwrap();
                 }
             }
 
@@ -1121,13 +1139,13 @@ mod tests {
     #[test]
     fn issuance_authentication_preserves_rsa_pss_certificate_support() {
         let chain = signing_cert_chain();
-        let mut leaf: rasn_pkix::Certificate = rasn::der::decode(&chain[0]).unwrap();
-        let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+        let mut leaf: x509_cert::Certificate = Decode07::from_der(&chain[0]).unwrap();
+        let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
         let rsa_cert = pem::parse_many(include_bytes!("../../../tests/fixtures/certs/ps256.pub"))
             .unwrap()
             .remove(0);
 
-        let rsa_cert: rasn_pkix::Certificate = rasn::der::decode(rsa_cert.contents()).unwrap();
+        let rsa_cert: x509_cert::Certificate = Decode07::from_der(rsa_cert.contents()).unwrap();
         issuer.tbs_certificate.subject_public_key_info =
             rsa_cert.tbs_certificate.subject_public_key_info;
 
@@ -1139,7 +1157,7 @@ mod tests {
             0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0xa2, 0x03, 0x02, 0x01, 0x20,
         ];
 
-        let issuer = rasn::der::encode(&issuer).unwrap();
+        let issuer = issuer.to_der().unwrap();
 
         for (alg, hash_suffix, salt_len) in [
             (c2pa_raw_crypto::SigningAlg::Ps256, 1, 32),
@@ -1150,11 +1168,9 @@ mod tests {
             params[16] = hash_suffix;
             params[46] = hash_suffix;
             params[53] = salt_len;
-            leaf.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
-                algorithm: rasn::types::ObjectIdentifier::new_unchecked(
-                    vec![1, 2, 840, 113549, 1, 1, 10].into(),
-                ),
-                parameters: Some(rasn::der::decode(&params).unwrap()),
+            leaf.signature_algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
+                oid: ObjectIdentifier07::new_unwrap("1.2.840.113549.1.1.10"),
+                parameters: Some(Decode07::from_der(&params).unwrap()),
             };
 
             leaf.tbs_certificate.signature = leaf.signature_algorithm.clone();
@@ -1164,14 +1180,15 @@ mod tests {
             )
             .unwrap();
 
-            leaf.signature_value = rasn::types::BitString::from_vec(
-                signer
-                    .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
+            leaf.signature = BitString07::from_bytes(
+                &signer
+                    .sign(&leaf.tbs_certificate.to_der().unwrap())
                     .unwrap(),
-            );
+            )
+            .unwrap();
 
             assert!(super::certificate_issued_by(
-                &rasn::der::encode(&leaf).unwrap(),
+                &leaf.to_der().unwrap(),
                 &issuer
             ));
 
@@ -1194,26 +1211,27 @@ mod tests {
             wrong_trailer.extend_from_slice(&[0xa3, 0x03, 0x02, 0x01, 0x02]);
 
             for invalid_params in [
-                Some(rasn::der::decode(&wrong_salt).unwrap()),
-                Some(rasn::der::decode(&wrong_mgf_hash).unwrap()),
-                Some(rasn::der::decode(&unsupported_hash).unwrap()),
-                Some(rasn::der::decode(&malformed_mgf).unwrap()),
-                Some(rasn::der::decode(&wrong_mgf).unwrap()),
-                Some(rasn::der::decode(&wrong_trailer).unwrap()),
-                Some(rasn::der::decode(&[0x05, 0x00]).unwrap()),
+                Some(Decode07::from_der(&wrong_salt).unwrap()),
+                Some(Decode07::from_der(&wrong_mgf_hash).unwrap()),
+                Some(Decode07::from_der(&unsupported_hash).unwrap()),
+                Some(Decode07::from_der(&malformed_mgf).unwrap()),
+                Some(Decode07::from_der(&wrong_mgf).unwrap()),
+                Some(Decode07::from_der(&wrong_trailer).unwrap()),
+                Some(Decode07::from_der(&[0x05, 0x00]).unwrap()),
                 None,
             ] {
                 leaf.signature_algorithm.parameters = invalid_params;
                 leaf.tbs_certificate.signature = leaf.signature_algorithm.clone();
                 // A fresh signature isolates parameter validation from signature failure.
-                leaf.signature_value = rasn::types::BitString::from_vec(
-                    signer
-                        .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
+                leaf.signature = BitString07::from_bytes(
+                    &signer
+                        .sign(&leaf.tbs_certificate.to_der().unwrap())
                         .unwrap(),
-                );
+                )
+                .unwrap();
 
                 assert!(!super::certificate_issued_by(
-                    &rasn::der::encode(&leaf).unwrap(),
+                    &leaf.to_der().unwrap(),
                     &issuer
                 ));
             }
@@ -1230,21 +1248,19 @@ mod tests {
         assert!(!super::certificate_issued_by(&[0xde, 0xad], issuer_der));
         assert!(!super::certificate_issued_by(leaf_der, &[0xde, 0xad]));
 
-        let leaf: rasn_pkix::Certificate = rasn::der::decode(leaf_der).unwrap();
+        let leaf: x509_cert::Certificate = Decode07::from_der(leaf_der).unwrap();
         let mut mismatched = leaf.clone();
-        mismatched.tbs_certificate.signature.algorithm =
-            rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
+        mismatched.tbs_certificate.signature.oid = ObjectIdentifier07::new_unwrap("1.2.3.4");
         assert!(!super::certificate_issued_by(
-            &rasn::der::encode(&mismatched).unwrap(),
+            &mismatched.to_der().unwrap(),
             issuer_der,
         ));
 
         let mut unsupported = leaf;
-        unsupported.signature_algorithm.algorithm =
-            rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 3, 4].into());
+        unsupported.signature_algorithm.oid = ObjectIdentifier07::new_unwrap("1.2.3.4");
         unsupported.tbs_certificate.signature = unsupported.signature_algorithm.clone();
         assert!(!super::certificate_issued_by(
-            &rasn::der::encode(&unsupported).unwrap(),
+            &unsupported.to_der().unwrap(),
             issuer_der,
         ));
     }
@@ -1257,33 +1273,33 @@ mod tests {
 
         for has_next_update in [false, true] {
             let mut basic = responder.basic_response(false);
-            let start = basic.tbs_response_data.responses[0].this_update.to_utc();
+            let start = basic.tbs_response_data.responses[0].this_update.datetime;
             let end = if has_next_update {
-                let end = start + chrono::Duration::hours(48);
-                basic.tbs_response_data.responses[0].next_update = Some(end.fixed_offset());
+                let end = start + ::time::Duration::hours(48);
+                basic.tbs_response_data.responses[0].next_update = Some(end.try_into().unwrap());
                 end
             } else {
                 basic.tbs_response_data.responses[0].next_update = None;
-                basic.tbs_response_data.produced_at.to_utc() + chrono::Duration::hours(24)
+                basic.tbs_response_data.produced_at.datetime + ::time::Duration::hours(24)
             };
 
             let der = responder.sign(basic);
 
             for (now, signing_time, accepted) in [
-                (start - chrono::Duration::seconds(1), Some(start), false),
+                (start - ::time::Duration::seconds(1), Some(start), false),
                 (start, None, true),
                 (end, None, true),
-                (end + chrono::Duration::seconds(1), None, false),
-                (end + chrono::Duration::days(1), Some(start), true),
-                (end + chrono::Duration::days(1), Some(end), true),
+                (end + ::time::Duration::seconds(1), None, false),
+                (end + ::time::Duration::days(1), Some(start), true),
+                (end + ::time::Duration::days(1), Some(end), true),
                 (
-                    end + chrono::Duration::days(1),
-                    Some(start - chrono::Duration::seconds(1)),
+                    end + ::time::Duration::days(1),
+                    Some(start - ::time::Duration::seconds(1)),
                     true,
                 ),
                 (
-                    end + chrono::Duration::days(1),
-                    Some(end + chrono::Duration::seconds(1)),
+                    end + ::time::Duration::days(1),
+                    Some(end + ::time::Duration::seconds(1)),
                     false,
                 ),
             ] {
@@ -1310,13 +1326,14 @@ mod tests {
         use super::test_responder::IssuerResponder;
 
         let responder = IssuerResponder::new();
-        let outer: rasn_ocsp::OcspResponse = rasn::der::decode(include_bytes!(
+        let outer = super::asn1::Response::from_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/response_revoked.der"
         ))
         .unwrap();
 
-        let revoked: rasn_ocsp::BasicOcspResponse =
-            rasn::der::decode(&outer.bytes.unwrap().response).unwrap();
+        let revoked =
+            super::asn1::BasicOcspResponse::from_der(outer.bytes.unwrap().response.as_bytes())
+                .unwrap();
 
         for (status, expected) in [
             (
@@ -1324,7 +1341,7 @@ mod tests {
                 SIGNING_CREDENTIAL_REVOKED,
             ),
             (
-                rasn_ocsp::CertStatus::Unknown(()),
+                crate::crypto::ocsp::asn1::CertStatus::Unknown(()),
                 SIGNING_CREDENTIAL_OCSP_UNKNOWN,
             ),
         ] {
@@ -1335,7 +1352,7 @@ mod tests {
                 &responder.sign(basic),
                 &responder.chain,
                 None,
-                Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap(),
+                datetime!(2025-03-08 00:00:00 UTC),
                 &mut log,
             )
             .unwrap();
@@ -1358,25 +1375,23 @@ mod tests {
             .certs
             .as_mut()
             .unwrap()
-            .insert(0, rasn::der::decode(&signing_cert_chain()[1]).unwrap());
+            .insert(0, Any::from_der(&signing_cert_chain()[1]).unwrap());
 
         let mut log = StatusTracker::default();
         let parsed = OcspResponse::from_der_checked(
             &encode_response(&basic),
             &signing_cert_chain(),
-            Some(Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap()),
+            Some(datetime!(2023-02-01 08:00:00 UTC)),
             &mut log,
         )
         .unwrap();
 
-        assert_eq!(
-            parsed.ocsp_certs.unwrap()[0],
-            rasn::der::encode(&responder).unwrap()
-        );
+        assert_eq!(parsed.ocsp_certs.unwrap()[0], responder.to_der().unwrap());
 
         assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
 
-        basic.tbs_response_data.responder_id = rasn_ocsp::ResponderId::ByKey(vec![0; 20].into());
+        basic.tbs_response_data.responder_id =
+            crate::crypto::ocsp::asn1::ResponderId::ByKey(OctetString::new([0; 20]).unwrap());
         let mut log = StatusTracker::default();
         let parsed = OcspResponse::from_der_checked(
             &encode_response(&basic),
@@ -1392,18 +1407,13 @@ mod tests {
 
     #[test]
     fn cert_id_requires_serial_both_issuer_hashes_and_supported_algorithm() {
-        use der::{
-            asn1::{Int, ObjectIdentifier, OctetString},
-            Decode,
-        };
+        use der::asn1::{Int, ObjectIdentifier, OctetString};
         use x509_parser::prelude::{FromDer, X509Certificate};
 
         let chain = signing_cert_chain();
         let original = basic_response().tbs_response_data.responses[0]
             .cert_id
             .clone();
-        let original =
-            super::asn1::CertId::from_der(&rasn::der::encode(&original).unwrap()).unwrap();
         assert!(super::cert_id_matches_signer(&original, &chain));
         for invalid_chain in [
             vec![],
@@ -1472,7 +1482,7 @@ mod tests {
     // Re-sign mutated response data so the tests exercise status interpretation,
     // rather than stopping at signature verification.
     #[cfg(feature = "openssl")]
-    fn sign_response(basic: rasn_ocsp::BasicOcspResponse) -> Vec<u8> {
+    fn sign_response(basic: crate::crypto::ocsp::asn1::BasicOcspResponse) -> Vec<u8> {
         super::test_responder::TestResponder::new().sign(basic)
     }
 
@@ -1480,15 +1490,15 @@ mod tests {
     #[test]
     fn good_time_boundaries_and_missing_next_update() {
         let mut basic = basic_response();
-        let this_update = basic.tbs_response_data.responses[0].this_update.to_utc();
-        let next_update = this_update + chrono::Duration::days(1);
-        basic.tbs_response_data.responses[0].next_update = Some(next_update.fixed_offset());
+        let this_update = basic.tbs_response_data.responses[0].this_update.datetime;
+        let next_update = this_update + ::time::Duration::days(1);
+        basic.tbs_response_data.responses[0].next_update = Some(next_update.try_into().unwrap());
         let der = sign_response(basic.clone());
         for (signing_time, accepted) in [
-            (Some(this_update - chrono::Duration::seconds(1)), true),
+            (Some(this_update - ::time::Duration::seconds(1)), true),
             (Some(this_update), true),
             (Some(next_update), true),
-            (Some(next_update + chrono::Duration::seconds(1)), false),
+            (Some(next_update + ::time::Duration::seconds(1)), false),
         ] {
             let mut log = StatusTracker::default();
             let parsed =
@@ -1515,11 +1525,11 @@ mod tests {
         let mut no_next_update = basic;
         no_next_update.tbs_response_data.responses[0].next_update = None;
         let expiry =
-            no_next_update.tbs_response_data.produced_at.to_utc() + chrono::Duration::hours(24);
+            no_next_update.tbs_response_data.produced_at.datetime + ::time::Duration::hours(24);
         let der = sign_response(no_next_update);
         for (signing_time, accepted) in [
             (expiry, true),
-            (expiry + chrono::Duration::seconds(1), false),
+            (expiry + ::time::Duration::seconds(1), false),
         ] {
             let mut log = StatusTracker::default();
             let parsed = OcspResponse::from_der_checked(
@@ -1536,12 +1546,13 @@ mod tests {
         }
 
         let mut future = basic_response();
-        let tomorrow =
-            DateTime::from_timestamp((Utc::now() + chrono::Duration::days(1)).timestamp(), 0)
-                .unwrap();
-        future.tbs_response_data.responses[0].this_update = tomorrow.fixed_offset();
+        let tomorrow = OffsetDateTime::from_unix_timestamp(
+            (crate::crypto::internal::time::now() + ::time::Duration::days(1)).unix_timestamp(),
+        )
+        .unwrap();
+        future.tbs_response_data.responses[0].this_update = tomorrow.try_into().unwrap();
         future.tbs_response_data.responses[0].next_update =
-            Some((tomorrow + chrono::Duration::days(1)).fixed_offset());
+            Some((tomorrow + ::time::Duration::days(1)).try_into().unwrap());
         let mut log = StatusTracker::default();
         OcspResponse::from_der_checked(
             &sign_response(future),
@@ -1556,7 +1567,7 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn good_response_current_time_requires_freshness() {
-        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        let now = datetime!(2026-06-01 12:00:00 UTC);
         for (this_update_hours, produced_at_hours, next_update_hours, accepted) in [
             (-48, -48, Some(-24), false),
             (-24, -12, Some(24), true),
@@ -1566,13 +1577,16 @@ mod tests {
             (24, 0, None, false),
         ] {
             let mut basic = basic_response();
-            basic.tbs_response_data.produced_at =
-                (now + chrono::Duration::hours(produced_at_hours)).fixed_offset();
+            basic.tbs_response_data.produced_at = (now
+                + ::time::Duration::hours(produced_at_hours))
+            .try_into()
+            .unwrap();
             let response = &mut basic.tbs_response_data.responses[0];
-            response.this_update =
-                (now + chrono::Duration::hours(this_update_hours)).fixed_offset();
+            response.this_update = (now + ::time::Duration::hours(this_update_hours))
+                .try_into()
+                .unwrap();
             response.next_update = next_update_hours
-                .map(|hours| (now + chrono::Duration::hours(hours)).fixed_offset());
+                .map(|hours| (now + ::time::Duration::hours(hours)).try_into().unwrap());
 
             let mut log = StatusTracker::default();
             OcspResponse::from_der_checked_at(
@@ -1598,30 +1612,29 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn future_responses_are_ignored_regardless_of_certificate_status() {
-        use rasn_ocsp::{CertStatus, RevokedInfo};
-        use rasn_pkix::CrlReason;
+        use crate::crypto::ocsp::asn1::{CertStatus, CrlReason, RevokedInfo};
 
-        let this_update = Utc.with_ymd_and_hms(2025, 3, 7, 14, 53, 24).unwrap();
-        let revoked_at = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
-        let signing_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let this_update = datetime!(2025-03-07 14:53:24 UTC);
+        let revoked_at = datetime!(2023-01-01 00:00:00 UTC);
+        let signing_time = datetime!(2023-02-01 08:00:00 UTC);
         for status in [
-            CertStatus::Good,
+            CertStatus::Good(()),
             CertStatus::Unknown(()),
             CertStatus::Revoked(RevokedInfo {
-                revocation_time: revoked_at.fixed_offset(),
+                revocation_time: revoked_at.try_into().unwrap(),
                 revocation_reason: None,
             }),
             CertStatus::Revoked(RevokedInfo {
-                revocation_time: revoked_at.fixed_offset(),
+                revocation_time: revoked_at.try_into().unwrap(),
                 revocation_reason: Some(CrlReason::KeyCompromise),
             }),
             CertStatus::Revoked(RevokedInfo {
-                revocation_time: revoked_at.fixed_offset(),
+                revocation_time: revoked_at.try_into().unwrap(),
                 revocation_reason: Some(CrlReason::RemoveFromCRL),
             }),
         ] {
             let mut basic = basic_response();
-            basic.tbs_response_data.responses[0].this_update = this_update.fixed_offset();
+            basic.tbs_response_data.responses[0].this_update = this_update.try_into().unwrap();
             basic.tbs_response_data.responses[0].cert_status = status;
             let der = sign_response(basic);
             for signing_time in [None, Some(signing_time)] {
@@ -1630,7 +1643,7 @@ mod tests {
                     &der,
                     &signing_cert_chain(),
                     signing_time,
-                    this_update - chrono::Duration::seconds(1),
+                    this_update - ::time::Duration::seconds(1),
                     &mut log,
                 )
                 .unwrap();
@@ -1644,8 +1657,7 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn revocation_reason_and_signing_time_matrix() {
-        use rasn_ocsp::{CertStatus, RevokedInfo};
-        use rasn_pkix::CrlReason;
+        use crate::crypto::ocsp::asn1::{CertStatus, CrlReason, RevokedInfo};
 
         for reason in [
             None,
@@ -1654,24 +1666,25 @@ mod tests {
         ] {
             for future in [false, true] {
                 let revoked_at = if future {
-                    Utc::now() + chrono::Duration::days(365)
+                    crate::crypto::internal::time::now() + ::time::Duration::days(365)
                 } else {
-                    Utc.with_ymd_and_hms(2023, 2, 1, 0, 0, 0).unwrap()
+                    datetime!(2023-02-01 00:00:00 UTC)
                 };
                 // DER GeneralizedTime rounds fractional seconds.
-                let revoked_at = DateTime::from_timestamp(revoked_at.timestamp(), 0).unwrap();
+                let revoked_at =
+                    OffsetDateTime::from_unix_timestamp(revoked_at.unix_timestamp()).unwrap();
                 let mut basic = basic_response();
                 basic.tbs_response_data.responses[0].cert_status =
                     CertStatus::Revoked(RevokedInfo {
-                        revocation_time: revoked_at.fixed_offset(),
+                        revocation_time: revoked_at.try_into().unwrap(),
                         revocation_reason: reason,
                     });
                 let der = sign_response(basic);
                 for signing_time in [
                     None,
-                    Some(revoked_at - chrono::Duration::seconds(1)),
+                    Some(revoked_at - ::time::Duration::seconds(1)),
                     Some(revoked_at),
-                    Some(revoked_at + chrono::Duration::seconds(1)),
+                    Some(revoked_at + ::time::Duration::seconds(1)),
                 ] {
                     let expected_revoked = match reason {
                         None => true,
@@ -1701,13 +1714,14 @@ mod tests {
     #[test]
     fn matching_good_response_suppresses_earlier_unknown_diagnostics() {
         let mut basic = basic_response();
-        basic.tbs_response_data.produced_at =
-            (time::utc_now() - chrono::Duration::hours(1)).fixed_offset();
+        basic.tbs_response_data.produced_at = (time::now() - ::time::Duration::hours(1))
+            .try_into()
+            .unwrap();
         let good = basic.tbs_response_data.responses[0].clone();
         let mut unknown = good.clone();
-        unknown.cert_status = rasn_ocsp::CertStatus::Unknown(());
+        unknown.cert_status = crate::crypto::ocsp::asn1::CertStatus::Unknown(());
         let mut unrelated = good.clone();
-        unrelated.cert_id.serial_number = 0.into();
+        unrelated.cert_id.serial_number = Int::new(&[0]).unwrap();
         basic.tbs_response_data.responses = vec![unrelated, unknown, good];
         let mut log = StatusTracker::default();
         let parsed = OcspResponse::from_der_checked(
@@ -1725,19 +1739,20 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn fractional_ocsp_status_times_are_rejected_as_invalid_certificates() {
-        let fractional = Utc.with_ymd_and_hms(2025, 3, 7, 15, 0, 0).unwrap()
-            + chrono::Duration::milliseconds(123);
+        let fractional = datetime!(2025-03-07 15:00:00 UTC) + ::time::Duration::milliseconds(123);
         for field in 0..3 {
             let mut basic = basic_response();
             let single = &mut basic.tbs_response_data.responses[0];
             match field {
-                0 => single.this_update = fractional.fixed_offset(),
-                1 => single.next_update = Some(fractional.fixed_offset()),
+                0 => single.this_update = fractional.try_into().unwrap(),
+                1 => single.next_update = Some(fractional.try_into().unwrap()),
                 _ => {
-                    single.cert_status = rasn_ocsp::CertStatus::Revoked(rasn_ocsp::RevokedInfo {
-                        revocation_time: fractional.fixed_offset(),
-                        revocation_reason: None,
-                    });
+                    single.cert_status = crate::crypto::ocsp::asn1::CertStatus::Revoked(
+                        crate::crypto::ocsp::asn1::RevokedInfo {
+                            revocation_time: fractional.try_into().unwrap(),
+                            revocation_reason: None,
+                        },
+                    );
                 }
             }
 
@@ -1757,15 +1772,18 @@ mod tests {
     #[test]
     fn later_good_response_keeps_earlier_revoked_at_but_discards_its_diagnostic() {
         let mut basic = basic_response();
-        basic.tbs_response_data.produced_at =
-            (time::utc_now() - chrono::Duration::hours(1)).fixed_offset();
+        basic.tbs_response_data.produced_at = (time::now() - ::time::Duration::hours(1))
+            .try_into()
+            .unwrap();
         let good = basic.tbs_response_data.responses[0].clone();
         let mut revoked = good.clone();
-        let revoked_at = Utc.with_ymd_and_hms(2023, 2, 1, 0, 0, 0).unwrap();
-        revoked.cert_status = rasn_ocsp::CertStatus::Revoked(rasn_ocsp::RevokedInfo {
-            revocation_time: revoked_at.fixed_offset(),
-            revocation_reason: None,
-        });
+        let revoked_at = datetime!(2023-02-01 00:00:00 UTC);
+        revoked.cert_status = crate::crypto::ocsp::asn1::CertStatus::Revoked(
+            crate::crypto::ocsp::asn1::RevokedInfo {
+                revocation_time: revoked_at.try_into().unwrap(),
+                revocation_reason: None,
+            },
+        );
         basic.tbs_response_data.responses = vec![revoked, good];
         let mut log = StatusTracker::default();
         let parsed = OcspResponse::from_der_checked(

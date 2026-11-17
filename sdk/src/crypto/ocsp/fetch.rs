@@ -297,27 +297,30 @@ mod tests {
 
     #[test]
     fn request_encodes_subject_serial_issuer_hashes_and_null_sha1_parameters() {
+        use der::{Decode, Encode};
+
         let certs = ca_chain();
         for index in [0, 1] {
             let requests = process_ocsp_responders(&certs, index).unwrap();
             let der = base64::decode(&requests[0].request_str).unwrap();
-            let request: rasn_ocsp::OcspRequest = rasn::der::decode(&der).unwrap();
+            let request = crate::crypto::ocsp::asn1::OcspRequest::from_der(&der).unwrap();
             assert!(request.optional_signature.is_none());
             let tbs = request.tbs_request;
             assert!(tbs.requestor_name.is_none());
             assert!(tbs.request_extensions.is_none());
             assert_eq!(tbs.request_list.len(), 1);
             let id = &tbs.request_list[0].req_cert;
-            assert_eq!(id.hash_algorithm.algorithm.to_string(), "1.3.14.3.2.26");
+            assert_eq!(id.hash_algorithm.oid.to_string(), "1.3.14.3.2.26");
             assert_eq!(
-                id.hash_algorithm.parameters.as_ref().unwrap().as_bytes(),
+                id.hash_algorithm
+                    .parameters
+                    .as_ref()
+                    .unwrap()
+                    .to_der()
+                    .unwrap(),
                 &[0x05, 0x00]
             );
-            let id = <crate::crypto::ocsp::asn1::CertId as der::Decode>::from_der(
-                &rasn::der::encode(id).unwrap(),
-            )
-            .unwrap();
-            assert!(super::super::cert_id_matches_signer(&id, &certs[index..]));
+            assert!(super::super::cert_id_matches_signer(id, &certs[index..]));
         }
     }
 
@@ -638,11 +641,16 @@ mod tests {
     }
 
     fn chain_with_two_responders() -> Vec<Vec<u8>> {
-        use rasn::types::Any;
-        use rasn_pkix::Certificate;
+        use x509_cert::{
+            der::{
+                asn1::{Any, OctetString},
+                Decode, Encode,
+            },
+            Certificate,
+        };
 
         let mut certs = ca_chain();
-        let mut leaf: Certificate = rasn::der::decode(&certs[0]).unwrap();
+        let mut leaf = Certificate::from_der(&certs[0]).unwrap();
         let extension = leaf
             .tbs_certificate
             .extensions
@@ -653,10 +661,10 @@ mod tests {
             .unwrap();
 
         // Fetching parses AIA without checking the certificate's signature.
-        let mut responders: Vec<Any> = rasn::der::decode(&extension.extn_value).unwrap();
+        let mut responders = Vec::<Any>::from_der(extension.extn_value.as_bytes()).unwrap();
         responders.push(responders[0].clone());
-        extension.extn_value = rasn::der::encode(&responders).unwrap().into();
-        certs[0] = rasn::der::encode(&leaf).unwrap();
+        extension.extn_value = OctetString::new(responders.to_der().unwrap()).unwrap();
+        certs[0] = leaf.to_der().unwrap();
         assert_eq!(process_ocsp_responders(&certs, 0).unwrap().len(), 2);
         certs
     }
