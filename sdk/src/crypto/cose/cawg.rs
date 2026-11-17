@@ -351,20 +351,22 @@ impl Verifier<'_> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
-    use rasn_pkix::{Certificate, Extension};
+    use der::Encode;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
+    use x509_cert::{
+        der::{
+            asn1::{ObjectIdentifier, OctetString},
+            Decode as Decode07, Encode as Encode07,
+        },
+        ext::Extension,
+        Certificate,
+    };
 
     use super::*;
 
-    fn oid(value: &str) -> rasn::types::ObjectIdentifier {
-        rasn::types::ObjectIdentifier::new(
-            value
-                .split('.')
-                .map(|part| part.parse().unwrap())
-                .collect::<Vec<_>>(),
-        )
-        .unwrap()
+    fn oid(value: &str) -> ObjectIdentifier {
+        ObjectIdentifier::new(value).unwrap()
     }
 
     fn certificate(policies: &[&str], purposes: &[&str]) -> Certificate {
@@ -375,35 +377,40 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        let mut certificate: Certificate = rasn::der::decode(&pem.contents).unwrap();
+        let mut certificate: Certificate = Decode07::from_der(&pem.contents).unwrap();
 
         let extensions = certificate.tbs_certificate.extensions.as_mut().unwrap();
         extensions.retain(|ext| ext.extn_id != oid("2.5.29.32") && ext.extn_id != oid("2.5.29.37"));
         extensions.push(Extension {
             extn_id: oid("2.5.29.37"),
             critical: false,
-            extn_value: rasn::der::encode(&purposes.iter().map(|s| oid(s)).collect::<Vec<_>>())
-                .unwrap()
-                .into(),
+            extn_value: OctetString::new(
+                Encode07::to_der(&purposes.iter().map(|s| oid(s)).collect::<Vec<_>>()).unwrap(),
+            )
+            .unwrap(),
         });
 
         if !policies.is_empty() {
-            #[derive(rasn::AsnType, rasn::Encode)]
+            #[derive(der::Sequence)]
             struct Policy {
-                id: rasn::types::ObjectIdentifier,
+                id: der::asn1::ObjectIdentifier,
             }
 
             extensions.push(Extension {
                 extn_id: oid("2.5.29.32"),
                 critical: false,
-                extn_value: rasn::der::encode(
-                    &policies
-                        .iter()
-                        .map(|s| Policy { id: oid(s) })
-                        .collect::<Vec<_>>(),
+                extn_value: OctetString::new(
+                    Encode::to_der(
+                        &policies
+                            .iter()
+                            .map(|s| Policy {
+                                id: der::asn1::ObjectIdentifier::new(s).unwrap(),
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap(),
                 )
-                .unwrap()
-                .into(),
+                .unwrap(),
             });
         }
 
@@ -423,7 +430,7 @@ mod tests {
     #[test]
     fn all_six_interim_policies_are_accepted() {
         for policy in SMIME_POLICIES {
-            let der = rasn::der::encode(&certificate(&[policy], &[EMAIL])).unwrap();
+            let der = Encode07::to_der(&certificate(&[policy], &[EMAIL])).unwrap();
             assert!(
                 interim_certificate_is_acceptable(
                     &der,
@@ -449,7 +456,7 @@ mod tests {
             vec!["2.23.140.1.5.4.1"],
             vec!["1.2.3.4"],
         ] {
-            let der = rasn::der::encode(&certificate(&policies, &[EMAIL])).unwrap();
+            let der = Encode07::to_der(&certificate(&policies, &[EMAIL])).unwrap();
             assert!(
                 !interim_certificate_is_acceptable(
                     &der,
@@ -476,7 +483,7 @@ mod tests {
         extensions.push(extension);
 
         assert!(interim_certificate_is_acceptable(
-            &rasn::der::encode(&cert).unwrap(),
+            &Encode07::to_der(&cert).unwrap(),
             at(INTERIM_TRUST_END - 1),
             None,
             &CertificateTrustPolicy::default(),
@@ -489,10 +496,10 @@ mod tests {
             .iter_mut()
             .find(|e| e.extn_id == oid("2.5.29.32"))
             .unwrap()
-            .extn_value = vec![0x30, 0x01, 0].into();
+            .extn_value = OctetString::new([0x30, 0x01, 0]).unwrap();
 
         assert!(interim_certificate_is_acceptable(
-            &rasn::der::encode(&cert).unwrap(),
+            &Encode07::to_der(&cert).unwrap(),
             at(INTERIM_TRUST_END - 1),
             None,
             &CertificateTrustPolicy::default(),
@@ -502,7 +509,7 @@ mod tests {
 
     #[test]
     fn cutoff_includes_the_whole_utc_day_and_uses_only_attested_time() {
-        let der = rasn::der::encode(&certificate(&[SMIME_POLICIES[0]], &[EMAIL])).unwrap();
+        let der = Encode07::to_der(&certificate(&[SMIME_POLICIES[0]], &[EMAIL])).unwrap();
         let policy = CertificateTrustPolicy::default();
         for now in [
             INTERIM_TRUST_END - 86_400,
@@ -535,7 +542,7 @@ mod tests {
     #[test]
     fn document_signing_is_not_an_interim_purpose_including_mixed_eku() {
         for purposes in [vec![DOCUMENT_SIGNING], vec![EMAIL, DOCUMENT_SIGNING]] {
-            let der = rasn::der::encode(&certificate(&[], &purposes)).unwrap();
+            let der = Encode07::to_der(&certificate(&[], &purposes)).unwrap();
             assert!(interim_certificate_is_acceptable(
                 &der,
                 at(INTERIM_TRUST_END + 1),
@@ -550,7 +557,7 @@ mod tests {
             "1.3.6.1.5.5.7.3.9",
             "1.3.6.1.4.1.62558.2.1",
         ] {
-            let der = rasn::der::encode(&certificate(&[SMIME_POLICIES[0]], &[purpose])).unwrap();
+            let der = Encode07::to_der(&certificate(&[SMIME_POLICIES[0]], &[purpose])).unwrap();
             assert!(interim_certificate_is_acceptable(
                 &der,
                 at(INTERIM_TRUST_END - 1),
@@ -560,7 +567,7 @@ mod tests {
             .unwrap());
         }
 
-        let der = rasn::der::encode(&certificate(&[], &[EMAIL, DOCUMENT_SIGNING])).unwrap();
+        let der = Encode07::to_der(&certificate(&[], &[EMAIL, DOCUMENT_SIGNING])).unwrap();
 
         let mut policy = CertificateTrustPolicy::new();
         policy.clear_ekus();
@@ -585,7 +592,7 @@ mod tests {
     }
 
     fn signed_cose_with_certificate(certificate: &Certificate, data: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        let der = rasn::der::encode(certificate).unwrap();
+        let der = Encode07::to_der(certificate).unwrap();
 
         let key = c2pa_raw_crypto::signer_from_private_key(
             include_bytes!("../../../tests/fixtures/certs/ed25519.pem"),
@@ -846,9 +853,19 @@ mod tests {
 
         // Expired at validation time, but valid at the manifest's attested time.
         identity_certificate.tbs_certificate.validity.not_before =
-            rasn_pkix::Time::General("2025-01-01T00:00:00Z".parse().unwrap());
+            x509_cert::time::Time::GeneralTime(
+                x509_cert::der::asn1::GeneralizedTime::from_system_time(
+                    ::time::macros::datetime!(2025-01-01 00:00 UTC).into(),
+                )
+                .unwrap(),
+            );
         identity_certificate.tbs_certificate.validity.not_after =
-            rasn_pkix::Time::General("2026-01-02T00:00:00Z".parse().unwrap());
+            x509_cert::time::Time::GeneralTime(
+                x509_cert::der::asn1::GeneralizedTime::from_system_time(
+                    ::time::macros::datetime!(2026-01-02 00:00 UTC).into(),
+                )
+                .unwrap(),
+            );
 
         let (identity_signature, identity_pem) =
             signed_cose_with_certificate(&identity_certificate, &payload_bytes);
