@@ -33,6 +33,16 @@ The following table summarizes the supported media (asset) file formats. This in
 | `wav`           | `audio/wav`                                                                     |
 | `webp`          | `image/webp`                                                                    |
 
+## Experimental feature: Append-only text
+
+With the `unstable_append_only_text` feature, the Rust library validates append-only text files that carry C2PA checkpoint sentinel lines (C2PA "Embedding manifests into append-only text files"). Writing checkpoints is not yet supported.
+
+| Extensions | MIME type                                                                         |
+| ---------- | --------------------------------------------------------------------------------- |
+| `jsonl`    | `application/jsonl`, `application/x-ndjson`, `application/jsonlines`              |
+| `log`      | (detected by extension)                                                           |
+| `txt`      | `text/plain` (checkpoints take precedence over an A.8 wrapper with `unstable_plain_text`) |
+
 ## Experimental feature: Text formats
 
 The Rust library supports the following text formats when the `unstable_structured_text` feature is enabled.

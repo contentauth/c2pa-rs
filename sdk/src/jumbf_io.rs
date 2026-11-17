@@ -17,6 +17,8 @@ use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 use lazy_static::lazy_static;
 
+#[cfg(feature = "unstable_append_only_text")]
+use crate::asset_handlers::append_only_text_io::AppendOnlyTextIO;
 #[cfg(feature = "pdf")]
 use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "unstable_plain_text")]
@@ -55,6 +57,8 @@ lazy_static! {
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
         Box::new(PlainTextIO::new("")),
+        #[cfg(feature = "unstable_append_only_text")]
+        Box::new(AppendOnlyTextIO::new("")),
         Box::new(ZipIO::new("")),
     ];
 

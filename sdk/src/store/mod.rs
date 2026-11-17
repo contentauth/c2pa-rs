@@ -12,6 +12,8 @@
 // each license.
 
 mod invalid_claim;
+#[cfg(feature = "unstable_append_only_text")]
+mod store_append_only;
 mod store_core;
 mod store_io;
 mod store_signature;
