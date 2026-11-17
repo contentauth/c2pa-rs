@@ -157,6 +157,20 @@ pub mod tests {
         Context, SigningAlg,
     };
 
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "asset_io"))]
+    fn test_handler(format: &str) -> C2paIO {
+        C2paIO::new(format)
+    }
+
+    #[cfg(feature = "asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
+
     #[test]
     fn c2pa_io_parse() {
         let context = Context::new();
@@ -166,7 +180,7 @@ pub mod tests {
         let temp_dir = tempdirectory().expect("temp dir");
         let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
 
-        let c2pa_io = C2paIO {};
+        let c2pa_io = test_handler("c2pa");
         let manifest = context
             .io()
             .read_c2pa_from_file(&path)
@@ -204,7 +218,7 @@ pub mod tests {
         use std::io::{empty, Cursor};
         let path = fixture_path("C.jpg");
 
-        let c2pa_io = C2paIO {};
+        let c2pa_io = test_handler("c2pa");
         let context = Context::new();
         let manifest = context
             .io()

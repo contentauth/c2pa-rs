@@ -59,7 +59,7 @@ fn new_write(bytes: &[u8], u: &Updates) -> asset_io::Result<Vec<u8>> {
 /// What the old handler's `get_object_locations` would say, from the layout of a
 /// file that has a manifest chunk.
 fn locations(s: &Structure, total: u64) -> Option<Vec<(u64, u64, ObjectType)>> {
-    let e = s.items_of(ItemKind::Jumbf).next()?;
+    let e = s.items_of(ItemKind::C2pa).next()?;
     let seg = s.segment(e.extents().next()?.segment()).ok()?;
     let (off, len) = (
         seg.range().offset(),
@@ -99,7 +99,7 @@ fn riff_matches_existing_handler() {
         checked += 1;
 
         // 2. Manifest and XMP.
-        let new_store = item(&s, &bytes, ItemKind::Jumbf);
+        let new_store = item(&s, &bytes, ItemKind::C2pa);
         match (&old_read, &new_store) {
             (Ok(a), Some(b)) if a == b => {}
             (Err(crate::Error::JumbfNotFound), None) => {}
@@ -120,7 +120,7 @@ fn riff_matches_existing_handler() {
         let store = vec![0x5au8; 1001];
         match (
             old_write(&io, &bytes, &store),
-            new_write(&bytes, &Updates::new().set_jumbf(store.clone())),
+            new_write(&bytes, &Updates::new().set_c2pa(store.clone())),
         ) {
             (Ok(a), Ok(b)) if a == b => {}
             (Ok(a), Ok(b)) => problems.push(format!(
@@ -155,7 +155,7 @@ fn riff_matches_existing_handler() {
             let probe = if new_store.is_some() {
                 Some(bytes.clone())
             } else {
-                new_write(&bytes, &Updates::new().set_jumbf(vec![1, 2, 3, 4])).ok()
+                new_write(&bytes, &Updates::new().set_c2pa(vec![1, 2, 3, 4])).ok()
             };
             match probe {
                 Some(p) => {

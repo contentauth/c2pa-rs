@@ -209,6 +209,20 @@ pub mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "asset_io"))]
+    fn test_handler(format: &str) -> Mp3IO {
+        Mp3IO::new(format)
+    }
+
+    #[cfg(feature = "asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
     use crate::{
         asset_handlers::id3_helper::test_helpers,
         error::Error,
@@ -223,7 +237,7 @@ pub mod tests {
 
     #[test]
     fn test_write_mp3() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-mp3.mp3");
         test_helpers::run_write_read_roundtrip(&handler, &fixture(), &out);
@@ -231,7 +245,7 @@ pub mod tests {
 
     #[test]
     fn test_patch_write_mp3() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-mp3.mp3");
         test_helpers::run_patch_same_size(&handler, &fixture(), &out);
@@ -239,7 +253,7 @@ pub mod tests {
 
     #[test]
     fn test_patch_size_mismatch() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-mp3.mp3");
         test_helpers::run_patch_size_mismatch(&handler, &fixture(), &out);
@@ -247,7 +261,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-mp3.mp3");
         test_helpers::run_remove_manifest(&handler, &fixture(), &out);
@@ -255,13 +269,13 @@ pub mod tests {
 
     #[test]
     fn test_remote_ref() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         test_helpers::run_remote_ref_xmp(&handler, &handler, &fixture());
     }
 
     #[test]
     fn test_get_object_locations_structure() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-mp3.mp3");
         test_helpers::run_get_object_locations_structure(&handler, &fixture(), &out);
@@ -269,7 +283,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_from_stream() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-mp3.mp3");
         test_helpers::run_remove_from_stream(&handler, &fixture(), &out);
@@ -277,7 +291,7 @@ pub mod tests {
 
     #[test]
     fn test_write_cai_empty_removes() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-mp3.mp3");
         test_helpers::run_write_cai_empty_removes(&handler, &fixture(), &out);
@@ -285,13 +299,13 @@ pub mod tests {
 
     #[test]
     fn test_supported_types() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         test_helpers::run_supported_types(&handler, "mp3", "audio/mpeg");
     }
 
     #[test]
     fn test_embed_reference_file_path() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "embed_ref.mp3");
         test_helpers::run_embed_reference_file_path(&handler, &handler, &fixture(), &out);
@@ -299,7 +313,7 @@ pub mod tests {
 
     #[test]
     fn test_read_cai_success_with_manifest() {
-        let handler = Mp3IO::new("mp3");
+        let handler = test_handler("mp3");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "with_manifest.mp3");
         test_helpers::run_read_cai_success_with_manifest(&handler, &fixture(), &out);
@@ -308,19 +322,19 @@ pub mod tests {
     #[test]
     fn test_read_cai_too_many_manifest_stores() {
         // MP3 does not validate the audio payload, so an empty slice is fine.
-        test_helpers::run_read_cai_too_many_manifest_stores(&Mp3IO::new("mp3"), &[]);
+        test_helpers::run_read_cai_too_many_manifest_stores(&test_handler("mp3"), &[]);
     }
 
     #[test]
     fn test_read_cai_zlib_bomb_rejected() {
         // CAI-13353 / VULN-38328 regression: a compressed ID3v2.4 frame must
         // not be allowed to decompress without bound.
-        test_helpers::run_read_cai_zlib_bomb_rejected(&Mp3IO::new("mp3"), &[]);
+        test_helpers::run_read_cai_zlib_bomb_rejected(&test_handler("mp3"), &[]);
     }
 
     #[test]
     fn test_get_handler_and_reader() {
-        let mp3_io = Mp3IO::new("mp3");
+        let mp3_io = test_handler("mp3");
         let handler = mp3_io.get_handler("audio/mpeg");
         let reader = mp3_io.get_reader();
         let mut f = std::fs::File::open(fixture()).unwrap();
@@ -344,7 +358,7 @@ pub mod tests {
     /// must return cleanly instead of crashing — here, no manifest is present.
     #[test]
     fn read_cai_store_malicious_id3v23_compression_does_not_crash() {
-        let mp3_io = Mp3IO::new("mp3");
+        let mp3_io = test_handler("mp3");
         let result = mp3_io.read_cai_store(&fixture_path("id3v23_compression_underflow.mp3"));
         // The point of the test is that the process survives this call. Without a
         // C2PA GEOB frame the read reports "no manifest".
@@ -357,7 +371,7 @@ pub mod tests {
     /// A bare MPEG stream (MPEG sync word, no ID3 tag) contains no C2PA manifest.
     #[test]
     fn test_read_cai_store_no_id3() {
-        let mp3_io = Mp3IO::new("mp3");
+        let mp3_io = test_handler("mp3");
         // Minimal MPEG frame sync: first 11 bits set (0xFF 0xE0 …).
         let mpeg_stream: Vec<u8> = std::iter::once(0xff_u8)
             .chain(std::iter::once(0xe0_u8))
@@ -366,6 +380,9 @@ pub mod tests {
         let mut cursor = Cursor::new(mpeg_stream);
         match mp3_io.read_c2pa(&mut cursor) {
             Err(Error::JumbfNotFound) => {}
+            // asset-io does not recognize 22 bytes as MPEG audio. A real MP3
+            // without an ID3 tag reads as unsigned.
+            Err(Error::UnsupportedType) if cfg!(feature = "asset_io") => {}
             other => panic!(
                 "expected JumbfNotFound for bare MPEG stream, got {:?}",
                 other
@@ -376,7 +393,7 @@ pub mod tests {
     /// `write_cai` (via `read_header`) returns `UnsupportedType` for unknown magic.
     #[test]
     fn test_write_cai_unsupported_type() {
-        let mp3_io = Mp3IO::new("mp3");
+        let mp3_io = test_handler("mp3");
         let mut input = Cursor::new(b"XXXX\x00\x00\x00\x00\x00\x00".to_vec());
         let mut output = Cursor::new(Vec::new());
         match mp3_io.write_c2pa(&mut input, &mut output, &[1, 2, 3]) {
@@ -391,11 +408,13 @@ pub mod tests {
     /// `write_cai` (via `read_header`) returns `IoError` when the stream is too short.
     #[test]
     fn test_write_cai_io_error_too_short() {
-        let mp3_io = Mp3IO::new("mp3");
+        let mp3_io = test_handler("mp3");
         let mut input = Cursor::new(b"abc".to_vec());
         let mut output = Cursor::new(Vec::new());
         match mp3_io.write_c2pa(&mut input, &mut output, &[1, 2, 3]) {
             Err(Error::IoError(_)) => {}
+            // asset-io rejects it as too small to be audio.
+            Err(Error::InvalidAsset(_)) if cfg!(feature = "asset_io") => {}
             other => panic!("expected IoError for short stream, got {:?}", other),
         }
     }
@@ -404,11 +423,13 @@ pub mod tests {
     /// (version < 2 is not a valid ID3v2 tag).
     #[test]
     fn test_write_cai_invalid_id3_version() {
-        let mp3_io = Mp3IO::new("mp3");
+        let mp3_io = test_handler("mp3");
         let mut input = Cursor::new(test_helpers::id3_header(1, 0).to_vec());
         let mut output = Cursor::new(Vec::new());
         match mp3_io.write_c2pa(&mut input, &mut output, &[1, 2, 3]) {
             Err(Error::UnsupportedType) => {}
+            // asset-io reports an ID3 version it does not support.
+            Err(Error::NotImplemented(_)) if cfg!(feature = "asset_io") => {}
             other => panic!("expected UnsupportedType for ID3v1 header, got {:?}", other),
         }
     }

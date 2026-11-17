@@ -315,7 +315,7 @@ fn check(bytes: &[u8]) -> Outcome {
     let mut r = Report {
         multi: s.subassets().len() > 1,
         trailing: s.trailing().is_some(),
-        manifest: s.items_of(ItemKind::Jumbf).next().is_some(),
+        manifest: s.items_of(ItemKind::C2pa).next().is_some(),
         ..Report::default()
     };
 
@@ -461,13 +461,11 @@ const XMP: &[u8] = b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><!-- corpus --></x:xm
 fn check_edits(s: &Structure, bytes: &[u8], r: &mut Report) {
     let store = fake_store();
     let cases: [(&str, Updates); 4] = [
-        ("set manifest", Updates::new().set_jumbf(store.clone())),
+        ("set manifest", Updates::new().set_c2pa(store.clone())),
         ("set xmp", Updates::new().set_xmp(XMP.to_vec())),
         (
             "set both",
-            Updates::new()
-                .set_jumbf(store.clone())
-                .set_xmp(XMP.to_vec()),
+            Updates::new().set_c2pa(store.clone()).set_xmp(XMP.to_vec()),
         ),
         ("remove all", Updates::remove_all()),
     ];
@@ -506,7 +504,7 @@ fn check_edits(s: &Structure, bytes: &[u8], r: &mut Report) {
         };
         match *name {
             "set manifest" | "set both" => {
-                let found = re.items_of(ItemKind::Jumbf).any(|e| {
+                let found = re.items_of(ItemKind::C2pa).any(|e| {
                     re.read_item(&mut Cursor::new(&out[..]), e)
                         .is_ok_and(|b| b == store)
                 });
@@ -529,7 +527,7 @@ fn check_edits(s: &Structure, bytes: &[u8], r: &mut Report) {
                 )),
             }
         }
-        if *name == "remove all" && re.items_of(ItemKind::Jumbf).next().is_some() {
+        if *name == "remove all" && re.items_of(ItemKind::C2pa).next().is_some() {
             r.failures.push("remove all: a manifest is left".into());
         }
     }
@@ -540,7 +538,7 @@ fn check_edits(s: &Structure, bytes: &[u8], r: &mut Report) {
         let Ok(re) = parse_detect(&edited) else {
             return;
         };
-        match write(&re, &edited, &Updates::new().remove_jumbf()) {
+        match write(&re, &edited, &Updates::new().remove_c2pa()) {
             Ok((back, _, _)) => {
                 if !r.manifest && back != bytes {
                     let detail = if back.len() == bytes.len() {

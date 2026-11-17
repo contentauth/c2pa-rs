@@ -154,8 +154,8 @@ fn same<T: PartialEq + std::fmt::Debug>(
 }
 
 /// A manifest the legacy handler returns that is not JUMBF at all (the SVG fixtures
-/// hold base64 text). The legacy SVG handler takes any `<c2pa:manifest>` for the store;
-/// asset-io, as for every container, takes only a C2PA JUMBF superbox.
+/// hold base64 text). Both readers return a carrier's content as it is, but the
+/// adapter locates the store only through asset-io's typed items.
 fn legacy_reads_non_jumbf(old: &dyn AssetIO, bytes: &[u8]) -> bool {
     old.get_reader()
         .read_c2pa(&mut Cursor::new(bytes))
@@ -182,19 +182,12 @@ fn reads_agree() {
         if declined(&new.get_reader().read_c2pa(&mut Cursor::new(&bytes))) {
             continue;
         }
-        if legacy_reads_non_jumbf(&*old, &bytes) {
-            let n = new.get_reader().read_c2pa(&mut Cursor::new(&bytes));
-            if !matches!(n, Err(Error::JumbfNotFound)) {
-                problems.push(format!("{name} read_c2pa: non-JUMBF manifest gave {n:?}"));
-            }
-        } else {
-            same(
-                &format!("{name} read_c2pa"),
-                old.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
-                new.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
-                &mut problems,
-            );
-        }
+        same(
+            &format!("{name} read_c2pa"),
+            old.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
+            new.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
+            &mut problems,
+        );
         let (ox, nx) = (
             old.get_reader().read_xmp(&mut Cursor::new(&bytes)),
             new.get_reader().read_xmp(&mut Cursor::new(&bytes)),
@@ -274,7 +267,7 @@ fn xmp_locations_follow_item_extents() {
         let Ok(s) = handler.clone().parse(&mut Cursor::new(&bytes)) else {
             continue;
         };
-        if s.items_of(::asset_io::ItemKind::Jumbf).next().is_none() {
+        if s.items_of(::asset_io::ItemKind::C2pa).next().is_none() {
             continue;
         }
         let mut expected = Vec::new();
@@ -420,7 +413,9 @@ fn other_jumbf_is_left_alone() {
             .clone()
             .parse(&mut Cursor::new(data.to_vec()))
             .unwrap();
-        s.items_of(::asset_io::ItemKind::Jumbf)
+        // Every JUMBF item: the C2PA store and any other type.
+        s.items()
+            .filter(|e| e.encoding() == ::asset_io::Encoding::Jumbf)
             .map(|e| {
                 (
                     e.jumbf_type(),
@@ -430,28 +425,21 @@ fn other_jumbf_is_left_alone() {
             .collect::<Vec<_>>()
     };
 
-    // A clean asset, then the other JUMBF added through asset-io directly.
+    // A clean asset, then the other JUMBF added to it.
     let mut clean = Cursor::new(Vec::new());
     writer
         .remove_c2pa(&mut Cursor::new(&bytes), &mut clean)
         .unwrap();
     let clean = clean.into_inner();
-    let reg = ::asset_io::HandlerRegistry::builtin();
-    let s = reg
-        .handler("jpg")
-        .unwrap()
-        .clone()
-        .parse(&mut Cursor::new(clean.clone()))
-        .unwrap();
-    let mut with_other = Cursor::new(Vec::new());
-    s.write(
-        &mut Cursor::new(clean.clone()),
-        &mut with_other,
-        &::asset_io::Updates::new().set_jumbf(other.clone()),
-        &mut ::asset_io::NullSink,
-    )
-    .unwrap();
-    let with_other = with_other.into_inner();
+    // `Updates` only changes the C2PA store, so insert the other JUMBF as a JPEG XT
+    // APP11 segment by hand: marker, length, "JP", box instance, packet sequence,
+    // then the box.
+    assert_eq!(&clean[..2], b"\xff\xd8");
+    let mut app11 = b"\xff\xeb".to_vec();
+    app11.extend_from_slice(&u16::try_from(10 + other.len()).unwrap().to_be_bytes());
+    app11.extend_from_slice(b"JP\x00\x07\x00\x00\x00\x01");
+    app11.extend_from_slice(&other);
+    let with_other = [&clean[..2], &app11, &clean[2..]].concat();
     assert_eq!(
         items(&with_other),
         [(Some([9; 16]), other.clone())],

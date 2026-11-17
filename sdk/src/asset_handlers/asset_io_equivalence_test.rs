@@ -62,7 +62,7 @@ fn merge(mut v: Vec<ByteRange>) -> Vec<(u64, u64)> {
 
 fn manifest_ranges(s: &Structure, whole_extent: bool) -> Vec<(u64, u64)> {
     let mut v = Vec::new();
-    for e in s.items_of(ItemKind::Jumbf) {
+    for e in s.items_of(ItemKind::C2pa) {
         for p in e.extents() {
             let seg = s.segment(p.segment()).unwrap();
             if whole_extent {
@@ -97,22 +97,18 @@ use crate::{
 };
 
 /// JUMBF superbox type UUID of the C2PA Manifest Store ("c2pa"), spec 11.1.4.2.
-const C2PA_STORE_UUID: [u8; 16] = [
-    0x63, 0x32, 0x70, 0x61, 0x00, 0x11, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
-];
-
 /// Box map from the layout model alone. The only format knowledge here is the
 /// name table; the traversal is the same for every container.
-fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
+fn box_map_from_layout(s: &Structure) -> Result<Vec<BoxMap>> {
     let io = |e: asset_io::Error| Error::InvalidAsset(e.to_string());
 
     // Which segments belong to the C2PA Manifest Store (not just any JUMBF).
-    let mut store: HashSet<asset_io::SegmentId> = HashSet::new();
-    for e in s.items_of(ItemKind::Jumbf) {
-        if s.jumbf_type(&mut src, e).map_err(io)? == Some(C2PA_STORE_UUID) {
-            store.extend(e.extents().map(|p| p.segment()));
-        }
-    }
+    let store: HashSet<asset_io::SegmentId> = s
+        .c2pa_item()
+        .map_err(io)?
+        .into_iter()
+        .flat_map(|e| e.extents().map(|p| p.segment()))
+        .collect();
 
     let mut out: Vec<BoxMap> = Vec::new();
     let mut c2pa: Option<usize> = None;
@@ -149,7 +145,7 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
             return Ok(());
         }
         // Unnamed elements (fill bytes, trailing data) are not boxes.
-        let Some(name) = s.box_name(e.name()) else {
+        let Some(name) = s.box_name(id, e) else {
             return Ok(());
         };
         let mut bm = BoxMap::new(vec![name.into_owned()], ext.offset(), ext.len());
@@ -169,7 +165,7 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
     .map_err(io)?;
     if let Some(trailing) = s.trailing() {
         out.push(BoxMap::new(
-            vec![asset_io::AFTER_BOX.to_string()],
+            vec!["c2pa.after".to_string()],
             trailing.offset(),
             trailing.len(),
         ));
@@ -190,7 +186,7 @@ impl AssetBoxHash for LayoutBoxHash {
             containers::png::handler().parse(&mut input)
         }
         .map_err(io)?;
-        box_map_from_layout(&s, input)
+        box_map_from_layout(&s)
     }
 }
 
@@ -287,7 +283,7 @@ fn box_hash_cross_generate_and_verify() {
         }) else {
             continue;
         };
-        if s.items_of(ItemKind::Jumbf).next().is_none()
+        if s.items_of(ItemKind::C2pa).next().is_none()
             || old_h.get_box_map(&mut Cursor::new(bytes.clone())).is_err()
         {
             continue;
@@ -346,7 +342,7 @@ fn sign_flow_through_asset_io_validates() {
             }
         };
         let Ok(s) = parse(&src) else { continue };
-        if s.items_of(ItemKind::Jumbf).next().is_some() {
+        if s.items_of(ItemKind::C2pa).next().is_some() {
             continue; // only clean assets
         }
 
@@ -382,7 +378,7 @@ fn sign_flow_through_asset_io_validates() {
                 .unwrap();
             (out.into_inner(), dest)
         };
-        let (mut out, dest) = write(&s, &src, &Updates::new().set_jumbf(raw_ph.clone()));
+        let (mut out, dest) = write(&s, &src, &Updates::new().set_c2pa(raw_ph.clone()));
 
         // Composition equivalence for the placeholder: asset-io's manifest
         // segments, concatenated, equal c2pa-rs's composed placeholder.
@@ -414,7 +410,7 @@ fn sign_flow_through_asset_io_validates() {
         );
 
         // Patch in place.
-        let item = dest.require_item(ItemKind::Jumbf).unwrap().clone();
+        let item = dest.require_item(ItemKind::C2pa).unwrap().clone();
         let mut cur = Cursor::new(std::mem::take(&mut out));
         dest.patch_exact(&mut cur, &item, &signed_raw).unwrap();
         let out = cur.into_inner();

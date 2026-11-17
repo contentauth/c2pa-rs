@@ -1336,6 +1336,53 @@ pub mod tests {
         );
     }
 
+    /// A read-only format (camera raw) has no writer, but validation must still
+    /// locate its embedded manifest: the data hash exclusion check fails closed.
+    #[test]
+    #[allow(deprecated)]
+    fn test_read_only_format_locates_manifest_for_data_hash() {
+        use crate::{validation_status::ASSERTION_DATAHASH_MATCH, Builder};
+
+        let context = test_context();
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(r#"{"title": "raw"}"#)
+            .unwrap();
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/TUSCANY.TIF").to_vec());
+        let mut signed = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/tiff", &mut source, &mut signed)
+            .unwrap();
+        let signed = signed.into_inner();
+
+        // ARW shares TIFF's structure but cannot be written.
+        assert!(context.io().writer("image/x-sony-arw").is_none());
+        let located = context
+            .io()
+            .object_locations("image/x-sony-arw", &mut Cursor::new(&signed))
+            .unwrap();
+        assert!(located
+            .iter()
+            .any(|o| o.htype == crate::asset_io::ObjectType::C2pa));
+
+        let reader = Reader::from_context(context)
+            .with_stream("image/x-sony-arw", Cursor::new(signed))
+            .unwrap();
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "{:?}",
+            reader.validation_results()
+        );
+        let results = reader.validation_results().unwrap();
+        assert!(results
+            .active_manifest()
+            .unwrap()
+            .success()
+            .iter()
+            .any(|s| s.code() == ASSERTION_DATAHASH_MATCH));
+    }
+
     #[test]
     fn test_reader_embedded() -> Result<()> {
         let reader =

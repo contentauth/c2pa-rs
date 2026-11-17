@@ -278,9 +278,9 @@ fn exclusions_from_items(s: &Structure, v2: bool, free_skip: bool) -> Vec<HashRa
         }
     }
     for (kind, label) in [
-        (ItemKind::Jumbf, "manifest"),
-        (ItemKind::Jumbf, "original"),
-        (ItemKind::Jumbf, "update"),
+        (ItemKind::C2pa, "manifest"),
+        (ItemKind::C2pa, "original"),
+        (ItemKind::C2pa, "update"),
         (ItemKind::Other, "merkle"),
     ] {
         for e in s.items_labelled(kind, label) {
@@ -540,7 +540,7 @@ fn bmff_sign_flow_through_asset_io_validates() {
         let Ok(s) = bmff::handler().parse(&mut Cursor::new(&src)) else {
             continue;
         };
-        if s.items_of(ItemKind::Jumbf).next().is_some() || nodes(&s, &src).is_err() {
+        if s.items_of(ItemKind::C2pa).next().is_some() || nodes(&s, &src).is_err() {
             continue; // only clean, walkable assets
         }
 
@@ -569,10 +569,10 @@ fn bmff_sign_flow_through_asset_io_validates() {
             }
         };
 
-        let out = new_write(&src, &Updates::new().set_jumbf(raw_ph.clone())).unwrap();
+        let out = new_write(&src, &Updates::new().set_c2pa(raw_ph.clone())).unwrap();
         let dest = bmff::handler().parse(&mut Cursor::new(&out)).unwrap();
         let item = dest
-            .items_labelled(ItemKind::Jumbf, "manifest")
+            .items_labelled(ItemKind::C2pa, "manifest")
             .next()
             .unwrap();
         let ext = dest
@@ -680,7 +680,7 @@ fn bmff_set_manifest_matches_existing_writer() {
 
         let mut old_out = Cursor::new(Vec::new());
         let old = BmffIO::new(&ext).write_c2pa(&mut Cursor::new(&bytes), &mut old_out, &store);
-        let new = new_write(&bytes, &Updates::new().set_jumbf(store.clone()));
+        let new = new_write(&bytes, &Updates::new().set_c2pa(store.clone()));
         match (old, new) {
             (Ok(()), Ok(n)) => {
                 let o = old_out.into_inner();
@@ -704,7 +704,7 @@ fn bmff_set_manifest_matches_existing_writer() {
                 // cleanly: removing the manifest restores the input exactly.
                 // (Not remove: the input may carry a manifest of its own.)
                 let other: Vec<u8> = (0..61u32).map(|i| (i * 5 + 1) as u8).collect();
-                let u = Updates::new().set_jumbf(other);
+                let u = Updates::new().set_c2pa(other);
                 let direct = new_write(&bytes, &u);
                 let via = new_write(&n, &u);
                 if direct.is_ok() && direct.as_ref().ok() == via.as_ref().ok() {
@@ -761,7 +761,7 @@ fn bmff_c2pa_boxes_match_existing_handler() {
             }
         };
         checked += 1;
-        let j = ItemKind::Jumbf;
+        let j = ItemKind::C2pa;
         let mut check = |what: &str, ok: bool| {
             if !ok {
                 failures.push(format!("{name}: {what} differs"));
@@ -816,7 +816,7 @@ fn bmff_c2pa_boxes_match_existing_handler() {
             .unwrap_or((0, 0));
         check("xmp box", new_xmp == (o.xmp_box_offset, o.xmp_box_size));
 
-        let any_c2pa = s.items_of(ItemKind::Jumbf).next().is_some() || !new_merkle.is_empty();
+        let any_c2pa = s.items_of(ItemKind::C2pa).next().is_some() || !new_merkle.is_empty();
         check("c2pa presence", any_c2pa == o.c2pa_box_present);
         if any_c2pa {
             with_c2pa += 1;

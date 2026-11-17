@@ -344,6 +344,12 @@ impl BoxHash {
         }
 
         let mut source_bms = bhp.get_box_map(reader)?;
+        // Writers may synthesize a reservation for an embedded store. A
+        // sidecar binding describes only real boxes, so that reservation is
+        // not an unconsumed source box.
+        if !self.boxes.iter().any(|b| b.names == [C2PA_BOXHASH]) {
+            source_bms.retain(|b| !(b.names == [C2PA_BOXHASH] && b.range_len == 0));
+        }
         let mut source_index = 0;
 
         if let Some(first_expected_bms) = source_bms.get(source_index) {

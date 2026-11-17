@@ -758,6 +758,20 @@ pub mod tests {
     };
 
     use super::*;
+
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "asset_io"))]
+    fn test_handler(format: &str) -> SvgIO {
+        SvgIO::new(format)
+    }
+
+    #[cfg(feature = "asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
     use crate::{
         builder::Builder,
         crypto::base64,
@@ -818,16 +832,20 @@ pub mod tests {
 
     #[test]
     fn test_svg_read_rejects_multiple_c2pa_payloads() {
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
         for input in [
             r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVNQkY=</c2pa:manifest><y:manifest xmlns:y="http://c2pa.org/manifest">T1RIRVI=</y:manifest></metadata></svg>"#,
             r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVNQkY=</c2pa:manifest></metadata><metadata><c2pa:manifest>T1RIRVI=</c2pa:manifest></metadata></svg>"#,
             r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVN<!--x-->QkY=</c2pa:manifest></metadata></svg>"#,
         ] {
-            assert!(matches!(
-                svg_io.read_c2pa(&mut Cursor::new(input.as_bytes())),
-                Err(Error::InvalidAsset(_))
-            ));
+            let result = svg_io.read_c2pa(&mut Cursor::new(input.as_bytes()));
+            assert!(
+                matches!(result, Err(Error::InvalidAsset(_)))
+                    // asset-io reports two manifest elements as two stores.
+                    || (cfg!(feature = "asset_io")
+                        && matches!(result, Err(Error::TooManyManifestStores))),
+                "{result:?}"
+            );
             // Removal stays tolerant so ambiguous files can still be cleaned.
             let mut output = Cursor::new(Vec::new());
             svg_io
@@ -845,7 +863,7 @@ pub mod tests {
             r#"xmlns="http://www.w3.org/2000/svg" xmlns:c2pa="http://c2pa.org/manifest""#;
         let remove = |body: &str| {
             let mut output = Cursor::new(Vec::new());
-            SvgIO::new("svg")
+            test_handler("svg")
                 .remove_c2pa(
                     &mut Cursor::new(format!("<svg {NS}>{body}").into_bytes()),
                     &mut output,
@@ -875,7 +893,7 @@ pub mod tests {
     #[test]
     fn test_svg_no_double_metadata_write() {
         let input = r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata></metadata><metadata></metadata></svg>"#;
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
         let mut output = Cursor::new(Vec::new());
         svg_io
             .write_c2pa(&mut Cursor::new(input.as_bytes()), &mut output, b"JUMBF")
@@ -888,13 +906,20 @@ pub mod tests {
 
     #[test]
     fn test_svg_namespaces_resolved_on_manifest_path() {
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
         let shadowed = r#"<s:svg xmlns:s="http://www.w3.org/2000/svg"><s:metadata xmlns:s="urn:x"><c2pa:manifest>c29tZQ==</c2pa:manifest></s:metadata></s:svg>"#;
         assert!(matches!(
             svg_io.read_c2pa(&mut Cursor::new(shadowed.as_bytes())),
             Err(Error::JumbfNotFound)
         ));
         let bad_declaration = r#"<svg xmlns="http://www.w3.org/2000/svg"><g xmlns:xml="urn:bad"><rect/></g><metadata><c2pa:manifest>c29tZQ==</c2pa:manifest></metadata></svg>"#;
+        // asset-io rejects rebinding the reserved `xml` prefix as malformed XML.
+        #[cfg(feature = "asset_io")]
+        assert!(matches!(
+            svg_io.read_c2pa(&mut Cursor::new(bad_declaration.as_bytes())),
+            Err(Error::InvalidAsset(_))
+        ));
+        #[cfg(not(feature = "asset_io"))]
         assert_eq!(
             svg_io
                 .read_c2pa(&mut Cursor::new(bad_declaration.as_bytes()))
@@ -1073,7 +1098,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let svg_io = SvgIO::new("svg");
+                let svg_io = test_handler("svg");
 
                 if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let xml = std::fs::read_to_string(&output).unwrap();
@@ -1099,7 +1124,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample2.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let svg_io = SvgIO::new("svg");
+                let svg_io = test_handler("svg");
 
                 if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let xml = std::fs::read_to_string(&output).unwrap();
@@ -1125,7 +1150,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample3.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let svg_io = SvgIO::new("svg");
+                let svg_io = test_handler("svg");
 
                 if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let xml = std::fs::read_to_string(&output).unwrap();
@@ -1153,7 +1178,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample5.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let svg_io = SvgIO::new("svg");
+                let svg_io = test_handler("svg");
 
                 if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let xml = std::fs::read_to_string(&output).unwrap();
@@ -1180,7 +1205,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let svg_io = SvgIO::new("svg");
+                let svg_io = test_handler("svg");
 
                 if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     if let Ok(()) = svg_io.save_c2pa_store(&output, new_manifest_data) {
@@ -1219,7 +1244,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let svg_io = SvgIO::new("svg");
+                let svg_io = test_handler("svg");
 
                 if let Ok(()) = svg_io.save_c2pa_store(&output, test_data) {
                     if let Ok(source_data) = svg_io.read_cai_store(&output) {
@@ -1248,7 +1273,7 @@ pub mod tests {
         let output = temp_dir_path(&temp_dir, "sample4.svg");
 
         std::fs::copy(source, &output).unwrap();
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
 
         svg_io.remove_c2pa_store(&output).unwrap();
 
@@ -1269,7 +1294,7 @@ pub mod tests {
             let output = temp_dir_path(&temp_dir, "sample1.svg");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let svg_io = SvgIO::new("svg");
+                let svg_io = test_handler("svg");
 
                 if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let mut output_reader = File::open(&output).unwrap();
@@ -1301,7 +1326,7 @@ pub mod tests {
         let source = fixture_path("sample1.svg");
         let mut stream = File::open(&source).unwrap();
 
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
 
         let xmp = svg_io.read_xmp(&mut stream).unwrap();
 
@@ -1317,7 +1342,7 @@ pub mod tests {
         let test_data = "http://mysite.com/somelink";
         let mut output_stream = Cursor::new(Vec::new());
 
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
 
         let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
@@ -1340,7 +1365,7 @@ pub mod tests {
         let test_data = "http://mysite.com/somelink";
         let mut output_stream = Cursor::new(Vec::new());
 
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
 
         let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
@@ -1363,7 +1388,7 @@ pub mod tests {
         let test_data = "http://mysite.com/somelink";
         let mut output_stream = Cursor::new(Vec::new());
 
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
 
         let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
@@ -1383,7 +1408,7 @@ pub mod tests {
     fn test_crash_integer_underflow() {
         let data = [0x22, 0x3c, 0x73, 0x76, 0x67];
         let mut stream = Cursor::new(&data);
-        let svg_io = SvgIO::new("svg");
+        let svg_io = test_handler("svg");
 
         let _ = svg_io.get_object_locations(&mut stream);
     }
