@@ -45,7 +45,7 @@ pub use collection_hash::{CollectionHash, UriHashedDataMap};
 
 #[cfg(feature = "unstable_append_only_text")]
 mod segment_hash;
-#[cfg(all(test, feature = "unstable_append_only_text"))]
+#[cfg(feature = "unstable_append_only_text")]
 pub(crate) use segment_hash::hash_range as segment_hash_range;
 #[cfg(feature = "unstable_append_only_text")]
 pub use segment_hash::{PredecessorSentinel, SegmentHash, SEGMENT_HASH_VERSION};

@@ -37,10 +37,16 @@ use crate::{
 
 /// A read-only view of the first `len` bytes of a stream: the file as it stood when an
 /// earlier checkpoint was the active one.
-struct Prefix<'a> {
+pub(crate) struct Prefix<'a> {
     inner: &'a mut dyn ReadSeek,
     len: u64,
     pos: u64,
+}
+
+impl<'a> Prefix<'a> {
+    pub(crate) fn new(inner: &'a mut dyn ReadSeek, len: u64) -> Self {
+        Self { inner, len, pos: 0 }
+    }
 }
 
 impl Read for Prefix<'_> {
@@ -178,11 +184,7 @@ impl Store {
             };
 
             let mut sub_log = StatusTracker::default();
-            let mut prefix = Prefix {
-                inner: &mut *stream,
-                len: end,
-                pos: 0,
-            };
+            let mut prefix = Prefix::new(&mut *stream, end);
             let next = if _sync {
                 Self::verify_checkpoint_manifest(
                     &manifest,
@@ -207,6 +209,12 @@ impl Store {
                 .iter()
                 .find(|item| item.kind == LogKind::Failure)
                 .cloned();
+            let next = next.map(|store| {
+                store
+                    .provenance_claim()
+                    .and_then(segment_hash_of)
+                    .map(|(_, sh)| sh)
+            });
             match (next, failure) {
                 (Ok(Some(sh)), None) => {
                     verified += 1;
@@ -254,8 +262,8 @@ impl Store {
     }
 
     /// Validates one earlier checkpoint's Manifest Store against `prefix`, the file as it
-    /// stood when that checkpoint was written. Returns its segment hash binding so the
-    /// caller can continue to the checkpoint before it.
+    /// stood when that checkpoint was written: its claim signature and its segment hash
+    /// binding, without re-checking its ingredients. Returns the loaded store.
     #[async_generic(async_signature(
         manifest: &[u8],
         format: &str,
@@ -263,13 +271,13 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ))]
-    fn verify_checkpoint_manifest(
+    pub(crate) fn verify_checkpoint_manifest(
         manifest: &[u8],
         format: &str,
         prefix: &mut dyn ReadSeek,
         validation_log: &mut StatusTracker,
         context: &Context,
-    ) -> Result<Option<SegmentHash>> {
+    ) -> Result<Store> {
         let store = Store::from_jumbf_with_context(manifest, validation_log, context)?;
         let claim = store.provenance_claim().ok_or(Error::ProvenanceMissing)?;
         let mut asset_data = ClaimAssetData::Stream(prefix, format);
@@ -286,7 +294,7 @@ impl Store {
                 .await?;
         }
         Claim::verify_hash_binding(claim, &mut asset_data, &svi, validation_log, context)?;
-        Ok(segment_hash_of(claim).map(|(_, sh)| sh))
+        Ok(store)
     }
 }
 
@@ -518,6 +526,126 @@ mod tests {
         );
     }
 
+    mod writer {
+        use super::*;
+        use crate::{Builder, BuilderIntent, CheckpointPlacement, Relationship};
+
+        fn builder() -> Builder {
+            let mut builder = Builder::from_context(context());
+            builder.set_intent(BuilderIntent::Create(
+                crate::assertions::DigitalSourceType::TrainedAlgorithmicData,
+            ));
+            builder
+        }
+
+        fn append(file: &mut Cursor<Vec<u8>>, text: &str) {
+            file.seek(SeekFrom::End(0)).unwrap();
+            std::io::Write::write_all(file, text.as_bytes()).unwrap();
+        }
+
+        /// Writes three inline JSONL checkpoints with the public API.
+        fn inline_log() -> Vec<u8> {
+            let mut builder = builder();
+            let mut file = Cursor::new(Vec::new());
+            for batch in [
+                "{\"event\":1}\n{\"event\":2}\n",
+                "{\"event\":3}\n",
+                "{\"event\":4}\n",
+            ] {
+                append(&mut file, batch);
+                builder
+                    .sign_checkpoint(JSONL, &mut file, CheckpointPlacement::Inline, None)
+                    .unwrap();
+            }
+            file.into_inner()
+        }
+
+        #[test]
+        fn inline_checkpoints_validate_and_chain_through_parent_of() {
+            let file = inline_log();
+            let reader = read(JSONL, &file);
+            assert_eq!(failures(&reader), Vec::<String>::new());
+            assert_ne!(reader.validation_state(), ValidationState::Invalid);
+
+            // The newest checkpoint's parent is the previous one, which carries its own
+            // parent: the store holds all three manifests, as the specification has it.
+            let active = reader.active_manifest().unwrap();
+            let parents: Vec<_> = active
+                .ingredients()
+                .iter()
+                .filter(|i| *i.relationship() == Relationship::ParentOf)
+                .collect();
+            assert_eq!(parents.len(), 1);
+            assert!(parents[0].active_manifest().is_some());
+            assert_eq!(reader.iter_manifests().count(), 3);
+
+            // Each line is either an event or a checkpoint.
+            let text = String::from_utf8(file).unwrap();
+            assert_eq!(
+                text.lines()
+                    .filter(|l| l.contains("c2pa:checkpoint"))
+                    .count(),
+                3
+            );
+        }
+
+        #[test]
+        fn crlf_plain_text_keeps_the_file_line_ending() {
+            let mut builder = builder();
+            let mut file = Cursor::new(b"alpha\r\nbravo\r\n".to_vec());
+            builder
+                .sign_checkpoint("text/plain", &mut file, CheckpointPlacement::Inline, None)
+                .unwrap();
+            append(&mut file, "charlie\r\n");
+            builder
+                .sign_checkpoint("text/plain", &mut file, CheckpointPlacement::Inline, None)
+                .unwrap();
+            let file = file.into_inner();
+            assert!(file.ends_with(format!("{END_CHECKPOINT}\r\n").as_bytes()));
+            let reader = read("text/plain", &file);
+            assert_eq!(failures(&reader), Vec::<String>::new());
+        }
+
+        #[test]
+        fn misuse_is_rejected() {
+            let mut no_intent = Builder::from_context(context());
+            let mut first = Cursor::new(b"{\"event\":1}\n".to_vec());
+            assert!(matches!(
+                no_intent.sign_checkpoint(JSONL, &mut first, CheckpointPlacement::Inline, None),
+                Err(Error::BadParam(_))
+            ));
+
+            let mut builder = builder();
+
+            let mut partial = Cursor::new(b"{\"event\":1}".to_vec());
+            assert!(matches!(
+                builder.sign_checkpoint(JSONL, &mut partial, CheckpointPlacement::Inline, None),
+                Err(Error::BadParam(_))
+            ));
+
+            let mut external = Cursor::new(b"{\"event\":1}\n".to_vec());
+            builder
+                .sign_checkpoint(
+                    JSONL,
+                    &mut external,
+                    CheckpointPlacement::External("https://example.com/1.c2pa"),
+                    None,
+                )
+                .unwrap();
+            append(&mut external, "{\"event\":2}\n");
+            assert!(matches!(
+                builder.sign_checkpoint(JSONL, &mut external, CheckpointPlacement::Inline, None),
+                Err(Error::BadParam(_)) // previous checkpoint is external: its store is needed
+            ));
+
+            let mut png = Cursor::new(Vec::new());
+            assert!(matches!(
+                builder.sign_checkpoint("image/png", &mut png, CheckpointPlacement::Inline, None),
+                Err(Error::UnsupportedType)
+            ));
+        }
+    }
+
     #[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
     mod remote {
         use httpmock::prelude::*;
@@ -558,6 +686,46 @@ mod tests {
             let mut w = plain_text_log(&server);
             serve(&server, &mut w, None);
             let reader = read("text/plain", &w.file);
+            assert_eq!(failures(&reader), Vec::<String>::new());
+            assert!(codes(&reader, |m| m.success())
+                .contains(&validation_status::ASSERTION_SEGMENTHASH_MATCH.to_string()));
+        }
+
+        #[test]
+        fn external_checkpoints_written_by_the_builder_validate() {
+            use crate::{Builder, BuilderIntent, CheckpointPlacement};
+
+            let server = MockServer::start();
+            let mut builder = Builder::from_context(context());
+            builder.set_intent(BuilderIntent::Create(
+                crate::assertions::DigitalSourceType::TrainedAlgorithmicData,
+            ));
+            let mut file = Cursor::new(Vec::new());
+            let mut previous: Option<Vec<u8>> = None;
+            for (i, batch) in ["alpha\nbravo\n", "charlie\n", "delta\n"]
+                .iter()
+                .enumerate()
+            {
+                file.seek(SeekFrom::End(0)).unwrap();
+                std::io::Write::write_all(&mut file, batch.as_bytes()).unwrap();
+                let path = format!("/log/chk{i}.c2pa");
+                let url = server.url(&path);
+                let store = builder
+                    .sign_checkpoint(
+                        "text/plain",
+                        &mut file,
+                        CheckpointPlacement::External(&url),
+                        previous.as_deref(),
+                    )
+                    .unwrap();
+                let body = store.clone();
+                server.mock(move |when, then| {
+                    when.method(GET).path(path);
+                    then.status(200).body(body);
+                });
+                previous = Some(store);
+            }
+            let reader = read("text/plain", &file.into_inner());
             assert_eq!(failures(&reader), Vec::<String>::new());
             assert!(codes(&reader, |m| m.success())
                 .contains(&validation_status::ASSERTION_SEGMENTHASH_MATCH.to_string()));

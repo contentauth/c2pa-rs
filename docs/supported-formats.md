@@ -35,7 +35,7 @@ The following table summarizes the supported media (asset) file formats. This in
 
 ## Experimental feature: Append-only text
 
-With the `unstable_append_only_text` feature, the Rust library validates append-only text files that carry C2PA checkpoint sentinel lines (C2PA "Embedding manifests into append-only text files"). Writing checkpoints is not yet supported.
+With the `unstable_append_only_text` feature, the Rust library validates append-only text files that carry C2PA checkpoint sentinel lines (C2PA "Embedding manifests into append-only text files"). `Builder::sign_checkpoint` appends a signed checkpoint covering the lines added since the previous one.
 
 | Extensions | MIME type                                                                         |
 | ---------- | --------------------------------------------------------------------------------- |

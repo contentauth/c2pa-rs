@@ -162,6 +162,22 @@ fn classify_line(line: &[u8], form: SentinelForm) -> Candidate {
     }
 }
 
+/// Formats a complete sentinel line for `reference`, terminated by `eol`.
+pub(crate) fn sentinel_line(form: SentinelForm, reference: &str, eol: &str) -> Vec<u8> {
+    match form {
+        SentinelForm::Armour => format!("{BEGIN_CHECKPOINT} {reference} {END_CHECKPOINT}{eol}"),
+        SentinelForm::Json => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                JSONL_CHECKPOINT_KEY.to_string(),
+                serde_json::Value::String(reference.to_string()),
+            );
+            format!("{}{eol}", serde_json::Value::Object(map))
+        }
+    }
+    .into_bytes()
+}
+
 /// Splits a trailing `\n` or `\r\n` off a line, returning the content.
 fn strip_line_ending(line: &[u8]) -> &[u8] {
     let line = line.strip_suffix(b"\n").unwrap_or(line);

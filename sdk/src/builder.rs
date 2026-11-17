@@ -3941,6 +3941,232 @@ fn rewrite_action_ingredient_urls(
     Ok(())
 }
 
+/// Where [`Builder::sign_checkpoint`] puts a checkpoint's Manifest Store.
+#[cfg(feature = "unstable_append_only_text")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckpointPlacement<'a> {
+    /// The sentinel line references the Manifest Store at this URI. The caller stores the
+    /// returned bytes there.
+    External(&'a str),
+    /// The Manifest Store is embedded in the sentinel line as a `data:` URI.
+    Inline,
+}
+
+#[cfg(feature = "unstable_append_only_text")]
+impl Builder {
+    /// Appends a signed checkpoint to an append-only text file (a log or JSON Lines
+    /// stream), following "Embedding manifests into append-only text files".
+    ///
+    /// The checkpoint covers every byte added since the file's last checkpoint, or the
+    /// whole file if it has none; `file` must end with a complete line. A sentinel line is
+    /// appended in a single write, so the procedure works with append-only and write-once
+    /// storage. The manifest carries a `c2pa.hash.segment` hard binding and, after the first
+    /// checkpoint, the previous checkpoint as its `parentOf` ingredient.
+    ///
+    /// `previous_manifest` is the Manifest Store of the file's last checkpoint, as returned
+    /// by the previous call. It is required when that checkpoint references its store by
+    /// URI, and ignored when the store is inline. The previous checkpoint is validated
+    /// against the file before the new one is signed, and the result is recorded in the
+    /// ingredient.
+    ///
+    /// Set a [`BuilderIntent::Create`] intent once and reuse the `Builder` for every
+    /// checkpoint: the first checkpoint gets `c2pa.created` with that source type, and each
+    /// later one is signed as [`BuilderIntent::Edit`], with `c2pa.opened` referencing its
+    /// parent. The builder's intent is left as it was.
+    ///
+    /// Returns the signed Manifest Store. For [`CheckpointPlacement::External`], store it
+    /// at the URI before anyone validates the file.
+    pub fn sign_checkpoint<S>(
+        &mut self,
+        format: &str,
+        file: &mut S,
+        placement: CheckpointPlacement<'_>,
+        previous_manifest: Option<&[u8]>,
+    ) -> Result<Vec<u8>>
+    where
+        S: Read + Write + Seek + MaybeSend,
+    {
+        use crate::{
+            assertions::{
+                segment_hash_range, PredecessorSentinel, SegmentHash, SEGMENT_HASH_VERSION,
+            },
+            asset_handlers::append_only_text_io::{
+                find_active_sentinel, is_append_only_format, sentinel_line, ManifestReference,
+                SentinelForm,
+            },
+            status_tracker::StatusTracker,
+            store::Prefix,
+            utils::io_utils::stream_len,
+        };
+
+        const ALG: &str = "sha256";
+
+        if !is_append_only_format(format) {
+            return Err(Error::UnsupportedType);
+        }
+        if self.definition.ingredients.iter().any(|i| i.is_parent()) {
+            return Err(Error::BadParam(
+                "a checkpoint's parent is its previous checkpoint; remove the parentOf ingredient"
+                    .to_string(),
+            ));
+        }
+        let form = SentinelForm::for_format(format);
+        let file_len = stream_len(file)?;
+        let previous = find_active_sentinel(file, form, file_len)?;
+        let intent = if previous.is_some() {
+            BuilderIntent::Edit
+        } else {
+            match self.intent() {
+                Some(intent @ BuilderIntent::Create(_)) => intent,
+                _ => {
+                    return Err(Error::BadParam(
+                        "the first checkpoint needs a BuilderIntent::Create intent".to_string(),
+                    ))
+                }
+            }
+        };
+        let segment_start = previous.as_ref().map_or(0, |p| p.start + p.len);
+
+        // The sentinel follows the segment's last complete line, using the file's own line
+        // ending.
+        let tail_from = file_len
+            .saturating_sub(2)
+            .max(segment_start.saturating_sub(2));
+        let tail = {
+            let mut buf = Vec::new();
+            file.seek(std::io::SeekFrom::Start(tail_from))?;
+            file.read_to_end(&mut buf)?;
+            buf
+        };
+        if file_len > 0 && tail.last() != Some(&b'\n') {
+            return Err(Error::BadParam(
+                "an append-only text file must end with a complete line before a checkpoint"
+                    .to_string(),
+            ));
+        }
+        let eol = if tail.ends_with(b"\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+
+        let predecessor = match &previous {
+            None => {
+                if previous_manifest.is_some() {
+                    return Err(Error::BadParam(
+                        "previous_manifest given, but the file has no checkpoint".to_string(),
+                    ));
+                }
+                None
+            }
+            Some(p) => {
+                let bytes = match &p.reference {
+                    ManifestReference::Inline(bytes) => bytes.clone(),
+                    ManifestReference::External(_) => previous_manifest
+                        .ok_or_else(|| {
+                            Error::BadParam(
+                                "previous_manifest is required when the last checkpoint is \
+                                 stored by URI"
+                                    .to_string(),
+                            )
+                        })?
+                        .to_vec(),
+                };
+                let hash = segment_hash_range(file, ALG, p.start, p.len)?;
+                Some((p.clone(), bytes, hash))
+            }
+        };
+
+        // Validate the previous checkpoint against the file as it stood when it was written,
+        // and record it as the parent ingredient.
+        if let Some((p, bytes, _)) = &predecessor {
+            let mut validation_log = StatusTracker::default();
+            let result = {
+                let mut prefix = Prefix::new(file, p.start + p.len);
+                Store::verify_checkpoint_manifest(
+                    bytes,
+                    format,
+                    &mut prefix,
+                    &mut validation_log,
+                    &self.context,
+                )
+            };
+            let title = match &p.reference {
+                ManifestReference::External(uri) => uri.clone(),
+                ManifestReference::Inline(_) => {
+                    format!("checkpoint ending at byte {}", p.start + p.len)
+                }
+            };
+            let mut ingredient = Ingredient::from_json(
+                &json!({ "title": title, "format": format, "relationship": "parentOf" })
+                    .to_string(),
+            )?;
+            ingredient.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
+            ingredient.update_validation_status(
+                result,
+                Some(bytes.clone()),
+                &validation_log,
+                &self.context,
+            )?;
+            self.definition.ingredients.push(ingredient);
+        }
+
+        let mut segment_hash = SegmentHash {
+            version: SEGMENT_HASH_VERSION,
+            alg: Some(ALG.to_string()),
+            hash: segment_hash_range(file, ALG, segment_start, file_len - segment_start)?,
+            segment_start,
+            segment_end: file_len,
+            sentinel_length: None,
+            predecessor_sentinel: predecessor
+                .as_ref()
+                .map(|(p, _, hash)| PredecessorSentinel {
+                    start: p.start,
+                    length: p.len,
+                    hash: hash.clone(),
+                }),
+        };
+
+        let external_line = match placement {
+            CheckpointPlacement::External(uri) => {
+                let line = sentinel_line(form, uri, eol);
+                segment_hash.sentinel_length = Some(line.len() as u64);
+                // The sentinel is appended before signing, in one write.
+                file.seek(std::io::SeekFrom::End(0))?;
+                file.write_all(&line)?;
+                file.flush()?;
+                Some(line)
+            }
+            CheckpointPlacement::Inline => None,
+        };
+
+        let saved_intent = self.intent.replace(intent);
+        let signed = (|| {
+            let mut claim = self.to_claim()?;
+            claim.add_assertion(&segment_hash)?;
+            self.verify_redactions_applied(&claim)?;
+            let mut store = self.to_store_with_claim(claim)?;
+            store.sign_manifest(&self.context, None)
+        })();
+        self.intent = saved_intent;
+        if predecessor.is_some() {
+            self.definition.ingredients.pop();
+        }
+        let manifest = signed?;
+
+        if external_line.is_none() {
+            let reference = format!(
+                "data:application/c2pa;base64,{}",
+                crate::crypto::base64::encode(&manifest)
+            );
+            file.seek(std::io::SeekFrom::End(0))?;
+            file.write_all(&sentinel_line(form, &reference, eol))?;
+            file.flush()?;
+        }
+        Ok(manifest)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]

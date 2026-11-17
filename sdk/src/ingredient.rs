@@ -646,7 +646,7 @@ impl Ingredient {
 
     // Utility method to set the validation status from store result and log
     // Also sets the thumbnail from the claim if valid and it exists
-    fn update_validation_status(
+    pub(crate) fn update_validation_status(
         &mut self,
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
