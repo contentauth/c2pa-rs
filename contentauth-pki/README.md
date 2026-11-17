@@ -361,11 +361,13 @@ crate. SDK packaging/publication is intentionally unsupported on this branch.
 No release automation, crate publication, or repository move is authorized.
 The crate's name, API, and compatibility feature are experimental.
 
-**Source-breaking SDK change:** `TimeStampError` is now `#[non_exhaustive]`,
-as is the new crate's `AcquisitionError`. Downstream exhaustive matches on
-`TimeStampError` must add a wildcard arm. Existing variants and their typed
-mappings remain unchanged; an unknown future acquisition failure is surfaced
-as an SDK internal error with its diagnostic, not treated as success.
+**Source-breaking SDK changes:** `TimeStampError` and `CoseError` are now
+`#[non_exhaustive]`, as are the new crate's public error enums. Downstream
+exhaustive matches must add a wildcard arm. Existing variants and their typed
+mappings remain unchanged; unknown future failures are surfaced as SDK errors
+with their diagnostics, not treated as success. Constructible public error
+structs (`timestamp::verification::VerificationError`, `x509::profile::ProfileError`,
+and `ocsp::InvalidStatusTime`) retain their existing fields and construction syntax.
 
 ## Subsequent bounded layers
 
