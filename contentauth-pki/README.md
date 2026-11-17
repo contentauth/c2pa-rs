@@ -119,7 +119,11 @@ compatibility. CMS SHA-1 digests remain distinct from SHA-256/384/512-only messa
 imprints. No supported algorithm profile is expanded by this layer.
 
 `VerificationError` carries a typed failure kind, stage, and diagnostic, without
-SDK status codes. The SDK preserves signer iteration, temporal-before-imprint
+SDK status codes. `VerificationErrorKind` is non-exhaustive: downstream matches
+must include a wildcard arm. The SDK maps unknown future kinds to an internal
+error retaining the kind's display text, stage, and diagnostic; known mappings
+remain unchanged. The public `VerificationError` struct remains constructible.
+The SDK preserves signer iteration, temporal-before-imprint
 failure precedence, C2PA/CAWG reporting, and timestamp-only diagnostic isolation.
 It still chooses profile/EKU policy, orders candidate chains, uses only TSA trust
 anchors (not private/claim anchors), and decides legacy acceptance. Successful
