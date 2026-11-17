@@ -117,7 +117,7 @@ impl From<contentauth_pki::cose::VerificationError> for CoseError {
                 Self::CborParsingError("missing embedded payload".to_string())
             }
 
-            _ => Self::InternalError(error.to_string()),
+            error => Self::InternalError(format!("unrecognized COSE verification error: {error}")),
         }
     }
 }
