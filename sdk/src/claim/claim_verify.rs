@@ -1713,6 +1713,8 @@ impl Claim {
                     }
                 }
             }
+            // A reported profile rejection is not a cryptographic mismatch.
+            Err(Error::CertificateProfileError(_)) if credential_rejected => {}
             Err(parse_err) => {
                 // handle case where lower level failed to log
                 log_item!(
