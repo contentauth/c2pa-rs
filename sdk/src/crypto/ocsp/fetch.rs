@@ -14,9 +14,11 @@
 use std::io::{self, Read};
 
 use async_generic::async_generic;
+use der::{
+    asn1::{Any, Int, ObjectIdentifier, OctetString},
+    Encode,
+};
 use http::header;
-use rasn::prelude::*;
-use rasn_pkix::Certificate;
 use x509_parser::{
     der_parser::{oid, Oid},
     extensions::ParsedExtension,
@@ -25,7 +27,10 @@ use x509_parser::{
 
 use crate::{
     context::{Context, ProgressPhase},
-    crypto::base64,
+    crypto::{
+        base64,
+        ocsp::asn1::{CertId, OcspRequest, Request, TbsRequest},
+    },
     http::HttpResolverError,
 };
 
@@ -103,57 +108,53 @@ fn build_ocsp_request(
     issuer_der: &[u8],
     responder_url: &str,
 ) -> Option<OcspRequestData> {
-    let subject: Certificate = rasn::der::decode(subject_der).ok()?;
-    let issuer: Certificate = rasn::der::decode(issuer_der).ok()?;
+    let (subject_remaining, subject) = X509Certificate::from_der(subject_der).ok()?;
+    let (issuer_remaining, issuer) = X509Certificate::from_der(issuer_der).ok()?;
+    if !subject_remaining.is_empty() || !issuer_remaining.is_empty() {
+        return None;
+    }
 
-    let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
-    let issuer_key_raw = &issuer
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .as_raw_slice();
+    let issuer_name_raw = issuer.subject().as_raw();
+    let issuer_key_raw = &issuer.public_key().subject_public_key.data;
 
-    let issuer_name_hash = OctetString::from(crate::crypto::hash::sha1(&issuer_name_raw));
-    let issuer_key_hash = OctetString::from(crate::crypto::hash::sha1(issuer_key_raw));
-    let serial_number = subject.tbs_certificate.serial_number;
+    let issuer_name_hash = OctetString::new(crate::crypto::hash::sha1(issuer_name_raw)).ok()?;
+    let issuer_key_hash = OctetString::new(crate::crypto::hash::sha1(issuer_key_raw)).ok()?;
+    let serial_number = Int::new(subject.raw_serial()).ok()?;
 
     // Build request structures
-    let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?;
-    let alg = rasn::types::ObjectIdentifier::from(sha1_oid);
-
-    let sha1_ai = rasn_pkix::AlgorithmIdentifier {
-        algorithm: alg,
-        parameters: Some(Any::new(rasn::der::encode(&()).ok()?)),
+    let sha1_ai = spki::AlgorithmIdentifierOwned {
+        oid: ObjectIdentifier::new_unwrap("1.3.14.3.2.26"),
+        parameters: Some(Any::null()),
         // Many OCSP responders expect this to be NULL not None.
     };
 
-    let req_cert = rasn_ocsp::CertId {
+    let req_cert = CertId {
         hash_algorithm: sha1_ai,
         issuer_name_hash,
         issuer_key_hash,
         serial_number,
     };
 
-    let ocsp_req = rasn_ocsp::Request {
+    let ocsp_req = Request {
         req_cert,
         single_request_extensions: None,
     };
 
     let request_list = vec![ocsp_req];
 
-    let tbs_request = rasn_ocsp::TbsRequest {
-        version: rasn_ocsp::Version::from(0u8),
+    let tbs_request = TbsRequest {
+        version: None,
         requestor_name: None,
         request_list,
         request_extensions: None,
     };
 
-    let ocsp_request = rasn_ocsp::OcspRequest {
+    let ocsp_request = OcspRequest {
         tbs_request,
         optional_signature: None,
     };
 
-    let request_der = rasn::der::encode(&ocsp_request).ok()?;
+    let request_der = ocsp_request.to_der().ok()?;
     let request_str = base64::encode(&request_der);
     let url = url::Url::parse(responder_url).ok()?;
 
@@ -312,7 +313,11 @@ mod tests {
                 id.hash_algorithm.parameters.as_ref().unwrap().as_bytes(),
                 &[0x05, 0x00]
             );
-            assert!(super::super::cert_id_matches_signer(id, &certs[index..]));
+            let id = <crate::crypto::ocsp::asn1::CertId as der::Decode>::from_der(
+                &rasn::der::encode(id).unwrap(),
+            )
+            .unwrap();
+            assert!(super::super::cert_id_matches_signer(&id, &certs[index..]));
         }
     }
 
@@ -633,6 +638,9 @@ mod tests {
     }
 
     fn chain_with_two_responders() -> Vec<Vec<u8>> {
+        use rasn::types::Any;
+        use rasn_pkix::Certificate;
+
         let mut certs = ca_chain();
         let mut leaf: Certificate = rasn::der::decode(&certs[0]).unwrap();
         let extension = leaf
