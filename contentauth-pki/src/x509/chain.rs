@@ -135,6 +135,7 @@ pub fn validate_chain_to_anchors<'a>(
 
 /// Errors from certificate signature and chain mechanics, without SDK statuses.
 #[derive(Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
 pub enum ChainError {
     /// No valid path was established to the supplied anchor set.
     #[error("no valid chain to the supplied anchor set")]

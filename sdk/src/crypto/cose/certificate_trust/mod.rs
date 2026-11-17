@@ -64,6 +64,7 @@ impl From<ChainError> for CertificateTrustError {
             ChainError::InvalidCertificate => Self::InvalidCertificate,
             ChainError::CryptoLibraryError(error) => Self::CryptoLibraryError(error),
             ChainError::InternalError(error) => Self::InternalError(error),
+            error => Self::InternalError(format!("unrecognized X.509 chain error: {error}")),
         }
     }
 }
