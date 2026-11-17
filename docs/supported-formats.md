@@ -27,6 +27,7 @@ The following table summarizes the supported media (asset) file formats. This in
 | `mov`           | `video/quicktime`                                                               |
 | `pdf`           | `application/pdf`                                                               |
 | `png`           | `image/png`                                                                     |
+| `safetensors`   | (none registered) <br/>The manifest is stored Base64-encoded as `c2pa:manifest` in the JSON header's `__metadata__`. |
 | `svg`           | `image/svg+xml`                                                                 |
 | `tif`, `tiff`   | `image/tiff`                                                                    |
 | `txt`           | `text/plain`                                                                    |
