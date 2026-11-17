@@ -1233,7 +1233,11 @@ pub enum VerificationStage {
 }
 
 /// Typed cryptographic/codec failure, without a profile or trust verdict.
+///
+/// Additional failure kinds may be introduced; downstream matches must include
+/// a wildcard arm.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum VerificationErrorKind {
     /// The encoded data could not be interpreted.
     #[error("decode error ({0})")]
