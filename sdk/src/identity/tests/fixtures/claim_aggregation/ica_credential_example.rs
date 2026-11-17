@@ -19,10 +19,10 @@
 
 use std::str::FromStr;
 
-use chrono::{DateTime, FixedOffset};
 use iref::UriBuf;
 use non_empty_string::NonEmptyString;
 use nonempty_collections::{nev, NEVec};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::identity::{
     claim_aggregation::{IdentityClaimsAggregationVc, IdentityProvider, VerifiedIdentity},
@@ -53,9 +53,7 @@ pub(crate) fn ica_example_identities() -> NEVec<VerifiedIdentity> {
             address: None,
             uri: None,
             username: None,
-            verified_at: "2024-07-26T22:30:15Z"
-                .parse::<DateTime<FixedOffset>>()
-                .unwrap(),
+            verified_at: OffsetDateTime::parse("2024-07-26T22:30:15Z", &Rfc3339).unwrap(),
         },
         VerifiedIdentity {
             name: None,
@@ -67,9 +65,7 @@ pub(crate) fn ica_example_identities() -> NEVec<VerifiedIdentity> {
             address: None,
             uri: None,
             username: None,
-            verified_at: "2024-07-26T22:29:57Z"
-                .parse::<DateTime<FixedOffset>>()
-                .unwrap(),
+            verified_at: OffsetDateTime::parse("2024-07-26T22:29:57Z", &Rfc3339).unwrap(),
         },
         VerifiedIdentity {
             type_: NonEmptyString::new("cawg.social_media".to_string()).unwrap(),
@@ -81,9 +77,7 @@ pub(crate) fn ica_example_identities() -> NEVec<VerifiedIdentity> {
                 name: NonEmptyString::new("Example Social Network".to_string()).unwrap(),
             },
             address: None,
-            verified_at: "2024-05-27T08:40:39.569856Z"
-                .parse::<DateTime<FixedOffset>>()
-                .unwrap(),
+            verified_at: OffsetDateTime::parse("2024-05-27T08:40:39.569856Z", &Rfc3339).unwrap(),
         },
         VerifiedIdentity {
             type_: NonEmptyString::new("cawg.crypto_wallet".to_string()).unwrap(),
@@ -95,9 +89,7 @@ pub(crate) fn ica_example_identities() -> NEVec<VerifiedIdentity> {
                 name: NonEmptyString::new("Example Crypto Wallet".to_string()).unwrap(),
             },
             address: None,
-            verified_at: "2024-05-27T08:40:39.569856Z"
-                .parse::<DateTime<FixedOffset>>()
-                .unwrap(),
+            verified_at: OffsetDateTime::parse("2024-05-27T08:40:39.569856Z", &Rfc3339).unwrap(),
         }
     ]
 }

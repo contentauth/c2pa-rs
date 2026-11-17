@@ -187,9 +187,9 @@ mod tests {
     };
 
     use c2pa_macros::c2pa_test_async;
-    use chrono::{DateTime, FixedOffset};
     use iref::UriBuf;
     use non_empty_string::NonEmptyString;
+    use time::{format_description::well_known::Rfc3339, OffsetDateTime};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -350,10 +350,7 @@ mod tests {
                 username: Some(NonEmptyString::new("testuser23".to_string(),).unwrap(),),
                 address: None,
                 uri: Some(UriBuf::from_str("https://net.s2stagehance.com/testuser23").unwrap(),),
-                verified_at: DateTime::<FixedOffset>::parse_from_rfc3339(
-                    "2025-04-09T22:45:26+00:00"
-                )
-                .unwrap(),
+                verified_at: OffsetDateTime::parse("2025-04-09T22:45:26+00:00", &Rfc3339).unwrap(),
                 provider: IdentityProvider {
                     id: UriBuf::from_str("https://behance.net").unwrap(),
                     name: NonEmptyString::new("behance".to_string(),).unwrap(),

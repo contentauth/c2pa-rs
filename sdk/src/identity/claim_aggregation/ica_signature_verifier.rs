@@ -773,7 +773,7 @@ impl<'a> IcaSignatureVerifier<'a> {
             ));
         };
 
-        let now = Utc::now().fixed_offset();
+        let now = crate::crypto::internal::time::now();
 
         if now < valid_from {
             return Err((
@@ -786,7 +786,8 @@ impl<'a> IcaSignatureVerifier<'a> {
 
         if let Some(tst_info) = maybe_tst_info {
             let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-            let cawg_signer_time = cawg_signer_time.fixed_offset();
+            let cawg_signer_time =
+                time::OffsetDateTime::from(std::time::SystemTime::from(cawg_signer_time));
 
             if cawg_signer_time < valid_from {
                 return Err((
@@ -815,7 +816,7 @@ impl<'a> IcaSignatureVerifier<'a> {
             return Ok(());
         };
 
-        let now = Utc::now().fixed_offset();
+        let now = crate::crypto::internal::time::now();
 
         if now > valid_until {
             return Err((
@@ -828,7 +829,8 @@ impl<'a> IcaSignatureVerifier<'a> {
 
         if let Some(tst_info) = maybe_tst_info {
             let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-            let cawg_signer_time = cawg_signer_time.fixed_offset();
+            let cawg_signer_time =
+                time::OffsetDateTime::from(std::time::SystemTime::from(cawg_signer_time));
 
             if cawg_signer_time > valid_until {
                 return Err((
