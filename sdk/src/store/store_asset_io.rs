@@ -8,8 +8,8 @@ use ::asset_io::{
 use crate::{
     assertions::{
         asset_binding::{
-            asset_io_error, binding_from_claim, default_binding, AssetBinding, BindingDefaults,
-            BuiltAssertion, PlannedAsset, SpanHasher,
+            asset_io_error, binding_from_claim, default_binding, AssetBinding, BuiltAssertion,
+            PlannedAsset, SpanHasher,
         },
         DataHash,
     },
@@ -31,15 +31,6 @@ const MAX_SETTLE_PASSES: usize = 8;
 
 /// Buffer size for copying an asset no handler understands.
 const COPY_BUFFER_LEN: usize = 64 * 1024;
-
-/// Options for a direct save.
-#[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct DirectSaveOptions {
-    /// The defaults a claim without a hard binding may get. Turning off the
-    /// box-hash default gives the data hash `save_to_stream` uses, so the two
-    /// saves can be compared side by side.
-    pub defaults: BindingDefaults,
-}
 
 /// What the provenance claim asks of a save.
 struct SaveRequest {
@@ -179,26 +170,6 @@ impl Store {
         signer: &dyn Signer,
         context: &Context,
     ) -> Result<Vec<u8>> {
-        self.save_to_stream_asset_io_with(
-            format,
-            input,
-            output,
-            signer,
-            context,
-            DirectSaveOptions::default(),
-        )
-    }
-
-    /// [`save_to_stream_asset_io`](Self::save_to_stream_asset_io) with `options`.
-    pub(crate) fn save_to_stream_asset_io_with(
-        &mut self,
-        format: &str,
-        input: &mut dyn ReadSeek,
-        output: &mut dyn ReadWriteSeek,
-        signer: &dyn Signer,
-        context: &Context,
-        options: DirectSaveOptions,
-    ) -> Result<Vec<u8>> {
         let io = context.io();
         let handler = io.container_handler(format);
         if handler.is_none() && io.handler(format).is_some() {
@@ -242,7 +213,7 @@ impl Store {
             Some(binding) => binding,
             None => {
                 let claim = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                default_binding(&structure, context, claim, &request.alg, &options.defaults)?
+                default_binding(&structure, context, claim, &request.alg)?
             }
         };
         binding.check_structure(&structure)?;
@@ -587,13 +558,10 @@ mod tests {
 
     use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
-    use super::{open_structure, DirectSaveOptions};
+    use super::open_structure;
     use crate::{
         assertion::AssertionBase,
-        assertions::{
-            asset_binding::BindingDefaults, Action, Actions, BmffHash, BoxHash, DataHash,
-            Ingredient,
-        },
+        assertions::{Action, Actions, BmffHash, BoxHash, DataHash, Ingredient},
         claim::Claim,
         error::Error,
         hashed_uri::HashedUri,
@@ -1042,17 +1010,15 @@ mod tests {
         format: &str,
         source: &[u8],
         context: &Context,
-        options: DirectSaveOptions,
     ) -> (Store, Vec<u8>, StatusTracker) {
         let mut output = Cursor::new(Vec::new());
         store
-            .save_to_stream_asset_io_with(
+            .save_to_stream_asset_io(
                 format,
                 &mut Cursor::new(source),
                 &mut output,
                 context.signer().unwrap(),
                 context,
-                options,
             )
             .unwrap_or_else(|error| panic!("{format}: {error}"));
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
@@ -1067,7 +1033,6 @@ mod tests {
     /// size (a box hash); with any other binding it is saved uncompressed.
     #[test]
     fn direct_asset_io_saves_compressed_manifests() {
-        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         let bmff = bmff_fixture();
         let cases: [(&str, &[u8], bool, bool); 6] = [
             (FIXTURES[0].0, FIXTURES[0].1, true, true),
@@ -1083,17 +1048,18 @@ mod tests {
             ),
         ];
         for (format, source, box_default, compressed) in cases {
+            let context = test_context()
+                .with_settings(
+                    format!(r#"{{"builder":{{"prefer_box_hash":{box_default}}}}}"#).as_str(),
+                )
+                .unwrap()
+                .with_signer(test_signer(SigningAlg::Ed25519));
             let mut store = unsigned_store(&context);
             store
                 .provenance_claim_mut()
                 .unwrap()
                 .set_compressed_manifest(true);
-            let options = DirectSaveOptions {
-                defaults: BindingDefaults {
-                    named_boxes: box_default,
-                },
-            };
-            let (read, _, _) = save_and_read(store, format, source, &context, options);
+            let (read, _, _) = save_and_read(store, format, source, &context);
             let claim = read.provenance_claim().unwrap();
             assert_eq!(claim.compressed(), compressed, "{format}");
             assert_eq!(
@@ -1104,20 +1070,42 @@ mod tests {
         }
     }
 
-    /// The box-hash default can be turned off to compare with `save_to_stream`.
     #[test]
-    fn direct_asset_io_box_hash_default_can_be_turned_off() {
-        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
-        for (named_boxes, box_hash) in [(true, true), (false, false)] {
-            let options = DirectSaveOptions {
-                defaults: BindingDefaults { named_boxes },
-            };
-            let (format, source) = FIXTURES[0];
-            let (read, _, _) =
-                save_and_read(unsigned_store(&context), format, source, &context, options);
-            let claim = read.provenance_claim().unwrap();
-            assert_eq!(!claim.box_hash_assertions().is_empty(), box_hash);
-            assert_eq!(claim.data_hash_assertions().is_empty(), box_hash);
+    fn direct_asset_io_respects_prefer_box_hash() {
+        let bmff = bmff_fixture();
+        for preference in [None, Some(false), Some(true)] {
+            let context = test_context()
+                .with_settings(
+                    match preference {
+                        None => "{}".to_owned(),
+                        Some(value) => format!(r#"{{"builder":{{"prefer_box_hash":{value}}}}}"#),
+                    }
+                    .as_str(),
+                )
+                .unwrap()
+                .with_signer(test_signer(SigningAlg::Ed25519));
+            for (format, source) in FIXTURES.into_iter().chain([("video/mp4", bmff.as_slice())]) {
+                let (read, _, _) =
+                    save_and_read(unsigned_store(&context), format, source, &context);
+                let claim = read.provenance_claim().unwrap();
+                let box_hash =
+                    preference.unwrap_or(false) && matches!(format, "image/jpeg" | "image/png");
+                assert_eq!(
+                    !claim.box_hash_assertions().is_empty(),
+                    box_hash,
+                    "{format}"
+                );
+                assert_eq!(
+                    !claim.bmff_hash_assertions().is_empty(),
+                    format == "video/mp4",
+                    "{format}"
+                );
+                assert_eq!(
+                    !claim.data_hash_assertions().is_empty(),
+                    !box_hash && format != "video/mp4",
+                    "{format}"
+                );
+            }
         }
     }
 
@@ -1128,13 +1116,8 @@ mod tests {
         let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         let bmff = bmff_fixture();
         for (format, source) in [FIXTURES[0], FIXTURES[1], ("video/mp4", bmff.as_slice())] {
-            let (signed_store, signed, _) = save_and_read(
-                unsigned_store(&context),
-                format,
-                source,
-                &context,
-                DirectSaveOptions::default(),
-            );
+            let (signed_store, signed, _) =
+                save_and_read(unsigned_store(&context), format, source, &context);
             let parent = signed_store.provenance_claim().unwrap();
 
             let mut claim = Claim::new("direct asset-io", Some("update_manifest"), 1);
@@ -1154,13 +1137,7 @@ mod tests {
             claim.add_assertion(&ingredient).unwrap();
             update.commit_update_manifest(claim).unwrap();
 
-            let (read, updated, _) = save_and_read(
-                update,
-                format,
-                &signed,
-                &context,
-                DirectSaveOptions::default(),
-            );
+            let (read, updated, _) = save_and_read(update, format, &signed, &context);
             let claim = read.provenance_claim().unwrap();
             assert!(claim.update_manifest(), "{format}");
             assert!(claim.hash_assertions().is_empty(), "{format}");
@@ -1245,15 +1222,18 @@ mod tests {
             }
         }
 
-        let context = test_context().with_signer(DynamicSigner(test_signer(SigningAlg::Ed25519)));
         let bmff = bmff_fixture();
         for (format, source) in FIXTURES.into_iter().chain([("video/mp4", bmff.as_slice())]) {
-            for named_boxes in [true, false] {
-                let options = DirectSaveOptions {
-                    defaults: BindingDefaults { named_boxes },
-                };
+            for prefer_box_hash in [true, false] {
+                let context = test_context()
+                    .with_settings(
+                        format!(r#"{{"builder":{{"prefer_box_hash":{prefer_box_hash}}}}}"#)
+                            .as_str(),
+                    )
+                    .unwrap()
+                    .with_signer(DynamicSigner(test_signer(SigningAlg::Ed25519)));
                 let (read, _, _) =
-                    save_and_read(unsigned_store(&context), format, source, &context, options);
+                    save_and_read(unsigned_store(&context), format, source, &context);
                 assert!(
                     read.provenance_claim()
                         .unwrap()
@@ -1519,6 +1499,11 @@ mod tests {
         let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
         let (format, source) = FIXTURES[0];
         let mut first = unsigned_store(&context);
+        first
+            .provenance_claim_mut()
+            .unwrap()
+            .add_assertion(&BoxHash { boxes: Vec::new() })
+            .unwrap();
         first
             .save_to_stream_asset_io(
                 format,
@@ -1996,8 +1981,8 @@ mod tests {
                         "default" if format == "video/mp4" => {
                             assert_eq!(claim.bmff_hash_assertions().len(), 1)
                         }
-                        "default" if matches!(format, "image/jpeg" | "image/png") => {
-                            assert_eq!(claim.box_hash_assertions().len(), 1)
+                        "default" => {
+                            assert_eq!(claim.data_hash_assertions().len(), 1)
                         }
                         _ => {}
                     }

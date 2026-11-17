@@ -17,9 +17,9 @@ write-time hash does not require rereading the output.
 
 This path preserves an explicitly supplied DataHash, BoxHash, or BMFF binding and its
 hash algorithm. Without a binding it chooses: BMFF for ISO BMFF, BoxHash for a
-container made entirely of named boxes, otherwise DataHash. The BoxHash default
-can be turned off (`DirectSaveOptions`) to compare with `save_to_stream`, which
-uses DataHash. Container-owned DataHash exclusions are recalculated for the
+container made entirely of named boxes when `builder.prefer_box_hash` is `true`,
+otherwise DataHash. The setting defaults to `false`, as with `save_to_stream`.
+Container-owned DataHash exclusions are recalculated for the
 output; requested box maps and BMFF selectors must be supported rather than
 silently replaced.
 

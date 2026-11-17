@@ -155,20 +155,6 @@ pub(crate) trait AssetBinding {
     }
 }
 
-/// Which defaults [`default_binding`] may choose.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct BindingDefaults {
-    /// Whether a container made entirely of named boxes defaults to a box hash.
-    /// Without it, such a container gets a data hash, as `save_to_stream` gives it.
-    pub named_boxes: bool,
-}
-
-impl Default for BindingDefaults {
-    fn default() -> Self {
-        Self { named_boxes: true }
-    }
-}
-
 /// A binding, if one applies.
 pub(crate) type MaybeBinding = Result<Option<Box<dyn AssetBinding>>>;
 
@@ -179,9 +165,8 @@ pub(crate) struct BindingKind {
     /// saving supports.
     pub from_claim: fn(&Claim) -> MaybeBinding,
     /// A new binding of this kind for a structure, using the context's settings,
-    /// the claim, the default algorithm and the allowed defaults, if it is the
-    /// right default.
-    pub default_for: fn(&Structure, &Context, &Claim, &str, &BindingDefaults) -> MaybeBinding,
+    /// the claim and the default algorithm, if it is the right default.
+    pub default_for: fn(&Structure, &Context, &Claim, &str) -> MaybeBinding,
 }
 
 /// Every binding direct saving supports, in the order a default is chosen: the
@@ -219,10 +204,9 @@ pub(crate) fn default_binding(
     context: &Context,
     claim: &Claim,
     alg: &str,
-    defaults: &BindingDefaults,
 ) -> Result<Box<dyn AssetBinding>> {
     for kind in BINDINGS {
-        if let Some(binding) = (kind.default_for)(structure, context, claim, alg, defaults)? {
+        if let Some(binding) = (kind.default_for)(structure, context, claim, alg)? {
             return Ok(binding);
         }
     }

@@ -20,8 +20,7 @@ use super::{BoxHash, BoxMap};
 use crate::{
     assertion::{Assertion, AssertionBase},
     assertions::asset_binding::{
-        asset_io_error, AssetBinding, BindingDefaults, BindingKind, HashSpan, MaybeBinding,
-        PlannedAsset,
+        asset_io_error, AssetBinding, BindingKind, HashSpan, MaybeBinding, PlannedAsset,
     },
     asset_handlers::asset_io_adapter::box_map_from_structure,
     asset_io::C2PA_BOXHASH,
@@ -144,18 +143,17 @@ fn from_claim(claim: &Claim) -> MaybeBinding {
 }
 
 /// The default for a container made entirely of named boxes, except ISO BMFF,
-/// whose binding C2PA defines separately, unless the defaults rule it out.
+/// whose binding C2PA defines separately, when the settings prefer a box hash.
 fn default_for(
     structure: &Structure,
-    _context: &Context,
+    context: &Context,
     _claim: &Claim,
     _alg: &str,
-    defaults: &BindingDefaults,
 ) -> MaybeBinding {
-    Ok(
-        (defaults.named_boxes && !is_bmff(structure) && structure.supports_named_boxes())
-            .then(|| Box::new(BoxHash { boxes: Vec::new() }) as Box<dyn AssetBinding>),
-    )
+    Ok((context.settings().builder.prefer_box_hash
+        && !is_bmff(structure)
+        && structure.supports_named_boxes())
+    .then(|| Box::new(BoxHash { boxes: Vec::new() }) as Box<dyn AssetBinding>))
 }
 
 fn is_bmff(structure: &Structure) -> bool {
