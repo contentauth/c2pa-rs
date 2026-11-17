@@ -2709,6 +2709,9 @@ impl AssertionBase for BmffHash {
     }
 }
 
+#[cfg(feature = "asset_io")]
+mod asset_io_binding;
+
 #[cfg(test)]
 mod bmff_hash_tests {
     #![allow(clippy::expect_used)]

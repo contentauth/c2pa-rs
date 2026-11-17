@@ -14,7 +14,7 @@
 //! [`BmffHash`](super::BmffHash)'s view of an asset through asset-io: the box
 //! tree from [`Structure::walk`], and the C2PA Merkle proof boxes from the
 //! structure's items. Exclusion selectors are C2PA semantics and are evaluated
-//! here for verification.
+//! here, for both verification and a planned write.
 
 use std::io::{Read, Seek, SeekFrom};
 
@@ -22,26 +22,10 @@ use ::asset_io::{containers::bmff, labels::MERKLE, ByteRange, ItemKind, Name, St
 
 use super::{BmffLayout, BmffMerkleMap, BoxInfoLite};
 use crate::{
-    assertions::ExclusionsMap,
+    assertions::{asset_binding::asset_io_error, ExclusionsMap},
     error::{Error, Result},
     utils::hash_utils::HashRange,
 };
-
-fn asset_io_error(error: ::asset_io::Error) -> Error {
-    match error {
-        ::asset_io::Error::Io(error) => Error::IoError(error),
-        ::asset_io::Error::UserCanceled => Error::OperationCancelled,
-        ::asset_io::Error::Callback(error) => match error.downcast::<Error>() {
-            Ok(error) => *error,
-            Err(error) => Error::InvalidAsset(error.to_string()),
-        },
-        ::asset_io::Error::UnsupportedFormat => Error::UnsupportedType,
-        ::asset_io::Error::UnsupportedFeature(feature) => {
-            Error::NotImplemented(feature.to_string())
-        }
-        other => Error::InvalidAsset(other.to_string()),
-    }
-}
 
 /// The asset's top-level boxes and C2PA Merkle proof boxes.
 pub(crate) fn layout<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<BmffLayout> {

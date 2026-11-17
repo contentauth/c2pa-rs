@@ -663,6 +663,12 @@ impl AssetIO for AssetIoAdapter {
         C2paWriter::get_object_locations(self, input)
     }
 
+    fn container_handler(&self, asset_type: &str) -> Option<Arc<dyn ContainerHandler>> {
+        self.handler
+            .clone()
+            .filter(|_| !self.is_read_only(asset_type))
+    }
+
     fn supported_types(&self) -> &[&str] {
         &self.types
     }
@@ -842,12 +848,13 @@ mod tests {
             "mov", "heic", "avif", "m4a", "c2pa",
         ] {
             assert!(
-                context.io().handler(format).is_some(),
+                context.io().container_handler(format).is_some(),
                 "{format} is served by asset-io"
             );
         }
         for format in ["jxl", "zip", "docx"] {
             assert!(context.io().handler(format).is_some(), "{format} is served");
+            assert!(context.io().container_handler(format).is_none(), "{format}");
         }
         // Read-only camera raw formats are read through the TIFF container.
         assert!(context.io().handler("arw").is_some());

@@ -788,6 +788,10 @@ impl AssertionBase for BoxHash {
     }
 }
 
+#[cfg(feature = "asset_io")]
+#[path = "box_hash_asset_io.rs"]
+mod asset_io_binding;
+
 #[cfg(feature = "file_io")]
 #[cfg(test)]
 mod tests {

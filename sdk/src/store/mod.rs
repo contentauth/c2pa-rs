@@ -12,6 +12,10 @@
 // each license.
 
 mod invalid_claim;
+#[cfg(feature = "asset_io")]
+// Kept separate from save_to_stream until the direct flow reaches parity.
+#[cfg_attr(not(test), allow(dead_code))]
+mod store_asset_io;
 mod store_core;
 mod store_io;
 mod store_signature;
