@@ -171,7 +171,7 @@ zip = { version = "9.3.0", default-features = false }
 
 # lopdf's rayon needs real threads: native always has them, WASM only with atomics.
 [target.'cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))'.dependencies]
-lopdf = { version = "0.45.0", optional = true }
+lopdf = { version = "0.45.0", optional = true, default-features = false, features = ["rayon"] }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.28", default-features = false, features = [
