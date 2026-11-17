@@ -83,3 +83,38 @@ pub enum CoseError {
     #[error("internal error ({0})")]
     InternalError(String),
 }
+
+impl From<contentauth_pki::cose::VerificationError> for CoseError {
+    fn from(error: contentauth_pki::cose::VerificationError) -> Self {
+        use contentauth_pki::cose::VerificationError;
+
+        match error {
+            VerificationError::CborParsingError(error) => Self::CborParsingError(error),
+            VerificationError::UnsupportedSigningAlgorithm => Self::UnsupportedSigningAlgorithm,
+            VerificationError::MissingSigningCertificateChain => {
+                Self::MissingSigningCertificateChain
+            }
+            VerificationError::MultipleSigningCertificateChains => {
+                Self::MultipleSigningCertificateChains
+            }
+
+            VerificationError::InvalidEcdsaSignature => Self::InvalidEcdsaSignature,
+            VerificationError::InvalidCertificate => {
+                Self::CborParsingError("invalid X509 certificate".to_string())
+            }
+
+            VerificationError::IncompatibleCertificateKey => {
+                Self::RawSignatureValidationError(RawSignatureValidationError::InvalidPublicKey)
+            }
+
+            VerificationError::RawSignatureValidationError(error) => {
+                Self::RawSignatureValidationError(error)
+            }
+
+            // The SDK always supplies a detached payload, including an empty one.
+            VerificationError::MissingPayload => {
+                Self::CborParsingError("missing embedded payload".to_string())
+            }
+        }
+    }
+}

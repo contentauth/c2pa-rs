@@ -13,15 +13,14 @@
 
 use std::{borrow::Cow, io::Write};
 
-use asn1_rs::FromDer;
 use async_generic::async_generic;
-use c2pa_raw_crypto::{
-    ec_utils::parse_ec_der_sig, validator_for_signing_alg, RawSignatureValidationError, SigningAlg,
+use c2pa_raw_crypto::RawSignatureValidationError;
+use contentauth_pki::{
+    cose::{CertificateHeaderPolicy, VerificationError},
+    sdk_compat::cose as pki_cose,
 };
 use coset::CoseSign1;
-use x509_parser::{
-    der_parser::oid, oid_registry::Oid, prelude::X509Certificate, x509::AlgorithmIdentifier,
-};
+use x509_parser::num_bigint::BigUint;
 
 use crate::{
     crypto::{
@@ -68,40 +67,6 @@ pub enum Verifier<'a> {
 
     /// Ignore both trust configuration and trust lists.
     IgnoreProfileAndTrustPolicy,
-}
-
-const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
-const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
-const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
-const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
-const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
-const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
-const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
-
-// Does the certificate's key match the algorithm -- and, for EC, the curve --
-// implied by the COSE `SigningAlg` (RFC 8152: Es256/384/512 are P-256/384/521)?
-// Fails closed: an unmapped future `SigningAlg` is rejected so this map must be
-// updated when a new algorithm is added.
-fn spki_matches_signing_alg(alg: SigningAlg, spki: &AlgorithmIdentifier) -> bool {
-    let key_alg = &spki.algorithm;
-    let ec_named_curve_is = |curve: &Oid| {
-        *key_alg == EC_PUBLICKEY_OID
-            && spki
-                .parameters
-                .as_ref()
-                .and_then(|p| p.as_oid().ok())
-                .is_some_and(|c| c == *curve)
-    };
-    match alg {
-        SigningAlg::Es256 => ec_named_curve_is(&PRIME256V1_OID),
-        SigningAlg::Es384 => ec_named_curve_is(&SECP384R1_OID),
-        SigningAlg::Es512 => ec_named_curve_is(&SECP521R1_OID),
-        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
-            *key_alg == RSA_OID || *key_alg == RSASSA_PSS_OID
-        }
-        SigningAlg::Ed25519 => *key_alg == ED25519_OID,
-        _ => false,
-    }
 }
 
 impl Verifier<'_> {
@@ -171,7 +136,7 @@ impl Verifier<'_> {
         tst_info: Option<&TstInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
-        let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
+        let sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
 
         let Ok(alg) = signing_alg_from_sign1(&sign1) else {
             log_item!(
@@ -185,9 +150,7 @@ impl Verifier<'_> {
             return Err(CoseError::UnsupportedSigningAlgorithm);
         };
 
-        if let (SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512, true) =
-            (alg, parse_ec_der_sig(&sign1.signature).is_some())
-        {
+        if pki_cose::check_signature_encoding(&sign1, alg).is_err() {
             // Should have been in P1363 format, not DER.
             log_item!(
                 "Cose_Sign1",
@@ -245,73 +208,39 @@ impl Verifier<'_> {
             validation_log.remove_status_since(trust_log_start, SIGNING_CREDENTIAL_TRUSTED);
         }
 
-        // Reconstruct payload and additional data as it should have been at time of
-        // signing.
-        sign1.payload = Some(data.to_vec());
-        let tbs = sign1.tbs_data(additional_data);
-
         let certs = cert_chain_from_sign1(&sign1)?;
-        let end_entity_cert_der = &certs[0];
+        let verified = pki_cose::verify_signature(
+            &sign1,
+            data,
+            additional_data,
+            CertificateHeaderPolicy::C2pa,
+        )
+        .map_err(|error| {
+            if matches!(error, VerificationError::IncompatibleCertificateKey) {
+                log_item!(
+                    "Cose_Sign1",
+                    "certificate key algorithm does not match COSE signing algorithm",
+                    "verify_cose"
+                )
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
+                .failure_no_throw(
+                    validation_log,
+                    CoseError::RawSignatureValidationError(
+                        RawSignatureValidationError::InvalidPublicKey,
+                    ),
+                );
+            }
 
-        let (_rem, sign_cert) = X509Certificate::from_der(end_entity_cert_der)
-            .map_err(|_| CoseError::CborParsingError("invalid X509 certificate".to_string()))?;
-        let pk = sign_cert.public_key();
-        let pk_der = pk.raw;
-
-        // Reject a certificate whose key algorithm does not match the declared
-        // COSE signing algorithm (e.g. an Ed448 key under the Ed25519 selection).
-        if !spki_matches_signing_alg(alg, &pk.algorithm) {
-            log_item!(
-                "Cose_Sign1",
-                "certificate key algorithm does not match COSE signing algorithm",
-                "verify_cose"
-            )
-            .validation_status(SIGNING_CREDENTIAL_INVALID)
-            .failure_no_throw(
-                validation_log,
-                CoseError::RawSignatureValidationError(
-                    RawSignatureValidationError::InvalidPublicKey,
-                ),
-            );
-
-            return Err(RawSignatureValidationError::InvalidPublicKey.into());
-        }
-
-        // The built-in validators are pure-Rust and synchronous on every target
-        // (including WASM), so the synchronous validator is used directly even on
-        // the async path.
-        let Some(validator) = validator_for_signing_alg(alg) else {
-            return Err(CoseError::UnsupportedSigningAlgorithm);
-        };
-
-        validator.validate(&sign1.signature, &tbs, pk_der)?;
-
-        // Use the last Organization attribute if `as_str()` can decode it. Deliberately
-        // leave `issuer_org` unset for either an absent attribute or a decoding error
-        // (including invalid UTF-8 or an unsupported ASN.1 string type; see #2540).
-        // The common-name extraction below uses the same last-attribute/decoding behavior.
-        let subject = sign_cert
-            .subject()
-            .iter_organization()
-            .map(|attr| attr.as_str())
-            .last()
-            .and_then(|attr| attr.ok())
-            .map(|a| a.to_string());
-
-        let common_name = sign_cert
-            .subject()
-            .iter_common_name()
-            .map(|attr| attr.as_str())
-            .last()
-            .and_then(|attr| attr.ok())
-            .map(|a| a.to_string());
+            CoseError::from(error)
+        })?;
+        let sign_cert = verified.signer_certificate();
 
         Ok(CertificateInfo {
             alg: Some(alg),
             date: tst_info.map(|t| t.gen_time.clone().into()),
-            cert_serial_number: Some(sign_cert.serial.clone()),
-            issuer_org: subject,
-            common_name,
+            cert_serial_number: Some(BigUint::from_bytes_be(sign_cert.serial_number())),
+            issuer_org: sign_cert.subject_organization(),
+            common_name: sign_cert.subject_common_name(),
             validated: true,
             cert_chain: dump_cert_chain(&certs)?,
             // No revocation check runs here, so the status is unknown.
@@ -504,54 +433,6 @@ mod tests {
     use c2pa_raw_crypto::SigningAlg;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
-    use x509_parser::prelude::{FromDer, Pem, X509Certificate};
-
-    use super::spki_matches_signing_alg;
-
-    const ES256: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/es256.pub");
-    const ES384: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/es384.pub");
-    const ES512: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/es512.pub");
-    const PS256: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps256.pub");
-    const PS384: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps384.pub");
-    const ED25519: &[u8] = include_bytes!("../../../tests/fixtures/certs/ed25519.pub");
-    const ED448: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/ed448.pub");
-
-    fn key_matches(cert_pem: &[u8], alg: SigningAlg) -> bool {
-        let pem = Pem::iter_from_buffer(cert_pem).next().unwrap().unwrap();
-        let (_, cert) = X509Certificate::from_der(&pem.contents).unwrap();
-        spki_matches_signing_alg(alg, &cert.public_key().algorithm)
-    }
-
-    #[test]
-    fn matching_keys_accepted() {
-        assert!(key_matches(ED25519, SigningAlg::Ed25519));
-        assert!(key_matches(ES256, SigningAlg::Es256));
-        assert!(key_matches(ES384, SigningAlg::Es384));
-        assert!(key_matches(ES512, SigningAlg::Es512));
-        assert!(key_matches(PS256, SigningAlg::Ps256));
-        assert!(key_matches(PS384, SigningAlg::Ps384));
-    }
-
-    #[test]
-    fn wrong_key_type_rejected() {
-        // The reported bypass: an Ed448 key must not match Ed25519.
-        assert!(!key_matches(ED448, SigningAlg::Ed25519));
-        // EC vs RSA vs Ed in either direction.
-        assert!(!key_matches(ES256, SigningAlg::Ed25519));
-        assert!(!key_matches(ED25519, SigningAlg::Es256));
-        assert!(!key_matches(PS256, SigningAlg::Es256));
-        assert!(!key_matches(ES256, SigningAlg::Ps256));
-        assert!(!key_matches(PS256, SigningAlg::Ed25519));
-    }
-
-    #[test]
-    fn wrong_ec_curve_rejected() {
-        // Right key type (EC) but the wrong curve for the declared alg.
-        assert!(!key_matches(ES256, SigningAlg::Es384));
-        assert!(!key_matches(ES256, SigningAlg::Es512));
-        assert!(!key_matches(ES384, SigningAlg::Es256));
-        assert!(!key_matches(ES512, SigningAlg::Es256));
-    }
 
     /// A chain whose end-entity certificate carries no `O=` (Organization) attribute.
     const ES256_NO_ORG_CHAIN: &[u8] =
@@ -655,6 +536,115 @@ mod tests {
                 .await
                 .is_err());
             assert!(log.has_status(expected_status));
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn detached_payload_and_failure_mappings_remain_compatible() {
+        use coset::{cbor::value::Value, Label, TaggedCborSerializable};
+
+        use super::*;
+        use crate::crypto::cose::{cose_signer::tests::TestSigner, sign, TimeStampStorage};
+
+        let signer = TestSigner::new(SigningAlg::Es256);
+        let signature = sign(
+            &signer,
+            b"data",
+            None,
+            TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(),
+        )
+        .unwrap();
+        let mut sign1 = CoseSign1::from_tagged_slice(&signature).unwrap();
+        sign1.payload = Some(b"ignored embedded payload".to_vec());
+        let signature = sign1.clone().to_tagged_vec().unwrap();
+        let verifier = Verifier::IgnoreProfileAndTrustPolicy;
+
+        for result in [
+            verifier.verify_signature(
+                &signature,
+                b"data",
+                b"",
+                None,
+                &mut StatusTracker::default(),
+            ),
+            verifier
+                .verify_signature_async(
+                    &signature,
+                    b"data",
+                    b"",
+                    None,
+                    &mut StatusTracker::default(),
+                )
+                .await,
+        ] {
+            let info = result.unwrap();
+            assert!(info.validated);
+            assert_eq!(info.alg, Some(SigningAlg::Es256));
+            assert_eq!(info.revocation_status, None);
+            assert!(info.date.is_none());
+            assert!(info.cert_serial_number.is_some());
+            assert!(!info.cert_chain.is_empty());
+        }
+
+        for (payload, aad) in [(b"changed".as_slice(), b"".as_slice()), (b"data", b"aad")] {
+            let mut log = StatusTracker::default();
+            assert!(matches!(
+                verifier.verify_signature(&signature, payload, aad, None, &mut log),
+                Err(CoseError::RawSignatureValidationError(
+                    RawSignatureValidationError::SignatureMismatch
+                ))
+            ));
+            assert!(log.logged_items().is_empty());
+            assert!(matches!(
+                verifier
+                    .verify_signature_async(&signature, payload, aad, None, &mut log)
+                    .await,
+                Err(CoseError::RawSignatureValidationError(
+                    RawSignatureValidationError::SignatureMismatch
+                ))
+            ));
+            assert!(log.logged_items().is_empty());
+        }
+
+        sign1.protected.header.rest.clear();
+        sign1.protected.original_data = None;
+        sign1.unprotected.rest.clear();
+
+        for certificate in [None, Some(Value::Bytes(vec![]))] {
+            let mut malformed = sign1.clone();
+
+            if let Some(certificate) = certificate {
+                malformed
+                    .unprotected
+                    .rest
+                    .push((Label::Int(33), certificate));
+            }
+
+            let encoded = malformed.clone().to_tagged_vec().unwrap();
+            let mut log = StatusTracker::default();
+            let error = verifier
+                .verify_signature(&encoded, b"data", b"", None, &mut log)
+                .unwrap_err();
+
+            if malformed.unprotected.rest.is_empty() {
+                assert!(matches!(error, CoseError::MissingSigningCertificateChain));
+            } else {
+                assert!(matches!(
+                    error,
+                    CoseError::CborParsingError(message) if message == "invalid X509 certificate"
+                ));
+            }
+
+            assert!(log.logged_items().is_empty());
+
+            malformed.signature = vec![0x30, 6, 2, 1, 1, 2, 1, 2];
+            let encoded = malformed.to_tagged_vec().unwrap();
+            assert!(matches!(
+                verifier.verify_signature(&encoded, b"data", b"", None, &mut log),
+                Err(CoseError::InvalidEcdsaSignature)
+            ));
+            assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
         }
     }
 

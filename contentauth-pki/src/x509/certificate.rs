@@ -55,6 +55,38 @@ impl<'a> ParsedCertificate<'a> {
         self.der
     }
 
+    /// Unsigned big-endian serial number, without any authenticity guarantee.
+    pub fn serial_number(&self) -> &[u8] {
+        self.certificate.raw_serial()
+    }
+
+    /// Last subject organization, if its ASN.1 string can be decoded.
+    ///
+    /// An absent or undecodable last attribute yields `None`; earlier attributes
+    /// are not used as a fallback. This is decoded metadata, not a trusted identity.
+    pub fn subject_organization(&self) -> Option<String> {
+        self.certificate
+            .subject()
+            .iter_organization()
+            .map(|attribute| attribute.as_str())
+            .last()
+            .and_then(Result::ok)
+            .map(str::to_owned)
+    }
+
+    /// Last subject common name, with the same decoding rules as the organization.
+    ///
+    /// This is decoded metadata, not a trusted identity.
+    pub fn subject_common_name(&self) -> Option<String> {
+        self.certificate
+            .subject()
+            .iter_common_name()
+            .map(|attribute| attribute.as_str())
+            .last()
+            .and_then(Result::ok)
+            .map(str::to_owned)
+    }
+
     /// Reject certificate purposes explicitly forbidden by a host-selected role.
     ///
     /// This checks exclusions only, not a full profile. Missing EKUs are
@@ -180,7 +212,7 @@ impl<'a> ParsedCertificate<'a> {
             .is_ok()
     }
 
-    pub(super) fn parsed(&self) -> &X509Certificate<'a> {
+    pub(crate) fn parsed(&self) -> &X509Certificate<'a> {
         &self.certificate
     }
 }
