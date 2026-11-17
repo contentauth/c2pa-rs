@@ -22,7 +22,6 @@ use bcder::{
     encode::{self, PrimitiveContent, Values},
     Captured, Mode, Oid, Tag,
 };
-use chrono::{TimeZone, Timelike};
 // Use der crate for time types to avoid custom date parsing
 use der::{Decode, Encode};
 
@@ -292,23 +291,23 @@ impl GeneralizedTime {
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
         let month = time_str
             .get(4..6)
-            .and_then(|s| s.parse::<u32>().ok())
+            .and_then(|s| s.parse::<u8>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
         let day = time_str
             .get(6..8)
-            .and_then(|s| s.parse::<u32>().ok())
+            .and_then(|s| s.parse::<u8>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
         let hour = time_str
             .get(8..10)
-            .and_then(|s| s.parse::<u32>().ok())
+            .and_then(|s| s.parse::<u8>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
         let minute = time_str
             .get(10..12)
-            .and_then(|s| s.parse::<u32>().ok())
+            .and_then(|s| s.parse::<u8>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
         let second = time_str
             .get(12..14)
-            .and_then(|s| s.parse::<u32>().ok())
+            .and_then(|s| s.parse::<u8>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
 
         // Parse fractional seconds if present (between position 14 and 'Z')
@@ -353,13 +352,12 @@ impl GeneralizedTime {
             0
         };
 
-        // Create a chrono DateTime
-        let dt = chrono::Utc
-            .with_ymd_and_hms(year, month, day, hour, minute, second)
-            .single()
-            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?
-            .with_nanosecond(nanoseconds)
-            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+        let month =
+            time::Month::try_from(month).map_err(|_| der::Tag::GeneralizedTime.value_error())?;
+        let dt = time::Date::from_calendar_date(year, month, day)
+            .and_then(|date| date.with_hms_nano(hour, minute, second, nanoseconds))
+            .map_err(|_| der::Tag::GeneralizedTime.value_error())?
+            .assume_utc();
 
         // Convert to SystemTime for der crate compatibility
         let system_time: std::time::SystemTime = dt.into();
@@ -440,42 +438,31 @@ impl GeneralizedTime {
     }
 }
 
-impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
+impl From<GeneralizedTime> for time::OffsetDateTime {
     fn from(gt: GeneralizedTime) -> Self {
-        // Use der's conversion to SystemTime, then to chrono
-        let system_time = gt.der_time.to_system_time();
-        let mut dt: chrono::DateTime<chrono::Utc> = system_time.into();
+        let datetime = Self::from(gt.der_time.to_system_time());
 
-        // Add the fractional seconds that were parsed but not stored in der_time
-        // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280)
-        if gt.nanoseconds > 0 {
-            // SAFETY: nanoseconds is validated to be < 1_000_000_000 during parsing in
-            // from_der_bytes_rfc3161 (line 350-351). If with_nanosecond returns None here,
-            // it indicates a serious internal error that should never happen.
-            dt = dt
-                .with_nanosecond(gt.nanoseconds)
-                .unwrap_or_else(|| unreachable!("nanoseconds value was validated during parsing"));
-        }
-
-        dt
+        datetime
+            .replace_nanosecond(gt.nanoseconds)
+            .unwrap_or_else(|_| unreachable!("nanoseconds were validated during parsing"))
     }
 }
 
-// Fallible: der's GeneralizedTime only supports 1970-9999, so a DateTime outside
-// that range (e.g. a pre-1970 signing time attacker-supplied in a timestamp token)
-// must return an error rather than panic.
-impl TryFrom<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
+// DER GeneralizedTime supports 1970-9999; reject dates outside that range.
+impl TryFrom<time::OffsetDateTime> for GeneralizedTime {
     type Error = der::Error;
 
-    fn try_from(dt: chrono::DateTime<chrono::Utc>) -> Result<Self, Self::Error> {
-        // Convert chrono to SystemTime, then to der's GeneralizedTime
+    fn try_from(dt: time::OffsetDateTime) -> Result<Self, Self::Error> {
         let system_time: std::time::SystemTime = dt.into();
-
-        // der supports 1970-9999; out-of-range dates error here instead of panicking
         let der_time = der::asn1::GeneralizedTime::from_system_time(system_time)?;
 
-        // Convert to our wrapper type
         Self::from_der_time(der_time)
+    }
+}
+
+impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
+    fn from(value: GeneralizedTime) -> Self {
+        std::time::SystemTime::from(time::OffsetDateTime::from(value)).into()
     }
 }
 
@@ -712,11 +699,11 @@ mod tests {
     }
 
     #[test]
-    fn test_generalized_time_from_chrono() {
-        use chrono::{Datelike, TimeZone, Timelike, Utc};
+    fn test_generalized_time_from_offset_datetime() {
+        use time::{macros::datetime, Month, OffsetDateTime};
 
         // Create a known timestamp: 2023-01-15 12:30:45 UTC
-        let dt = Utc.with_ymd_and_hms(2023, 1, 15, 12, 30, 45).unwrap();
+        let dt = datetime!(2023-01-15 12:30:45 UTC);
 
         // Convert to GeneralizedTime
         let gt = GeneralizedTime::try_from(dt).unwrap();
@@ -726,10 +713,9 @@ mod tests {
         assert!(time_str.starts_with("20230115"));
         assert!(time_str.contains("123045"));
 
-        // Convert back to chrono and verify
-        let dt_back: chrono::DateTime<chrono::Utc> = gt.into();
+        let dt_back: OffsetDateTime = gt.into();
         assert_eq!(dt_back.year(), 2023);
-        assert_eq!(dt_back.month(), 1);
+        assert_eq!(dt_back.month(), Month::January);
         assert_eq!(dt_back.day(), 15);
         assert_eq!(dt_back.hour(), 12);
         assert_eq!(dt_back.minute(), 30);
@@ -746,8 +732,8 @@ mod tests {
         assert!(!cert_der.is_empty(), "Certificate DER should not be empty");
 
         // Create a GeneralizedTime from a known timestamp and test roundtrip
-        use chrono::{Datelike, TimeZone, Utc};
-        let test_time = Utc.with_ymd_and_hms(2022, 6, 10, 18, 46, 40).unwrap();
+        use time::{macros::datetime, Month, OffsetDateTime};
+        let test_time = datetime!(2022-06-10 18:46:40 UTC);
         let gt = GeneralizedTime::try_from(test_time).unwrap();
 
         // Get DER bytes and parse them back
@@ -758,9 +744,9 @@ mod tests {
         assert_eq!(gt, gt_parsed);
 
         // Convert back to DateTime
-        let dt_back: chrono::DateTime<chrono::Utc> = gt_parsed.into();
+        let dt_back: OffsetDateTime = gt_parsed.into();
         assert_eq!(dt_back.year(), 2022);
-        assert_eq!(dt_back.month(), 6);
+        assert_eq!(dt_back.month(), Month::June);
         assert_eq!(dt_back.day(), 10);
     }
 
@@ -768,7 +754,7 @@ mod tests {
     fn test_generalized_time_with_multiple_cert_types() {
         // Test that we can load and parse certificates with different algorithms
         // This verifies the der/bcder integration works across all supported cert types
-        use chrono::{TimeZone, Utc};
+        use time::macros::datetime;
 
         let cert_types = vec![
             "es256.pub",
@@ -796,7 +782,7 @@ mod tests {
         }
 
         // Test GeneralizedTime roundtrip with a timestamp
-        let test_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let test_time = datetime!(2024-01-01 00:00:00 UTC);
         let gt = GeneralizedTime::try_from(test_time).unwrap();
         let der_bytes = gt.as_der_bytes();
         let gt_parsed = GeneralizedTime::from_der_bytes(der_bytes).unwrap();
@@ -961,9 +947,9 @@ mod tests {
 
     #[test]
     fn test_generalized_time_encode_decode_roundtrip() {
-        use chrono::{TimeZone, Utc};
+        use time::{macros::datetime, OffsetDateTime};
 
-        let original_dt = Utc.with_ymd_and_hms(2025, 10, 29, 14, 30, 0).unwrap();
+        let original_dt = datetime!(2025-10-29 14:30:00 UTC);
         let gt1 = GeneralizedTime::try_from(original_dt).unwrap();
 
         // Get the DER bytes directly
@@ -975,15 +961,8 @@ mod tests {
         // Verify equality
         assert_eq!(gt1, decoded);
 
-        // Also verify conversion back to chrono works
-        let dt_back: chrono::DateTime<chrono::Utc> = decoded.into();
-        // Times should be close (within 1 second due to potential precision loss)
-        let diff = if original_dt > dt_back {
-            original_dt.signed_duration_since(dt_back)
-        } else {
-            dt_back.signed_duration_since(original_dt)
-        };
-        assert!(diff.num_seconds().abs() <= 1);
+        let dt_back: OffsetDateTime = decoded.into();
+        assert_eq!(original_dt, dt_back);
     }
 
     #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
@@ -994,12 +973,11 @@ mod tests {
         // Create a SystemTime 1 day after epoch
         let system_time = UNIX_EPOCH + Duration::from_secs(86400);
 
-        // Convert to chrono, then to GeneralizedTime
-        let dt: chrono::DateTime<chrono::Utc> = system_time.into();
+        let dt: time::OffsetDateTime = system_time.into();
         let gt = GeneralizedTime::try_from(dt).unwrap();
 
         // Convert back and verify
-        let dt_back: chrono::DateTime<chrono::Utc> = gt.into();
+        let dt_back: time::OffsetDateTime = gt.into();
         let system_time_back: SystemTime = dt_back.into();
 
         // Should be within 1 second (due to potential precision loss)
@@ -1011,21 +989,22 @@ mod tests {
 
     #[test]
     fn test_generalized_time_try_from_out_of_range() {
-        use chrono::TimeZone;
+        use time::macros::datetime;
 
         // der's GeneralizedTime only supports 1970-9999. Dates outside that range
         // (e.g. a pre-1970 signing time attacker-supplied in a timestamp token) must
         // return an error rather than panic. Regression test for the DoS where an
         // infallible `From` impl called `.expect()` on `from_system_time`.
-        let pre_1970 = chrono::Utc.with_ymd_and_hms(1950, 1, 1, 0, 0, 0).unwrap();
+        let pre_1970 = datetime!(1950-01-01 00:00:00 UTC);
         assert!(GeneralizedTime::try_from(pre_1970).is_err());
 
         // A date past der's upper bound (year 9999) must also error rather than panic.
-        let post_9999 = chrono::Utc.with_ymd_and_hms(10000, 1, 1, 0, 0, 0).unwrap();
-        assert!(GeneralizedTime::try_from(post_9999).is_err());
+        let post_9999 = reconstruct_der_bytes(0x18, b"100000101000000Z").unwrap();
+        assert!(GeneralizedTime::from_der_bytes_rfc3161(&post_9999).is_err());
+        assert!(GeneralizedTime::try_from(datetime!(9999-12-31 23:59:59 UTC)).is_ok());
 
         // A valid in-range date still succeeds.
-        let in_range = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let in_range = datetime!(2024-01-01 00:00:00 UTC);
         assert!(GeneralizedTime::try_from(in_range).is_ok());
     }
 
@@ -1296,18 +1275,17 @@ mod tests {
         // Verify that the original DER bytes are preserved (important for signature validation)
         assert_eq!(gen_time.as_der_bytes(), TIME_DER_FRACTIONAL);
 
-        // Convert to chrono DateTime
-        let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
+        let dt: time::OffsetDateTime = gen_time.into();
 
         // Verify the parsed time
         assert_eq!(
-            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-            "2025-11-21 12:58:23"
+            dt.replace_nanosecond(0).unwrap(),
+            time::macros::datetime!(2025-11-21 12:58:23 UTC)
         );
 
         // Verify fractional seconds: .643 seconds = 643 milliseconds = 643,000,000 nanoseconds
-        assert_eq!(dt.timestamp_subsec_millis(), 643);
-        assert_eq!(dt.timestamp_subsec_nanos(), 643_000_000);
+        assert_eq!(dt.millisecond(), 643);
+        assert_eq!(dt.nanosecond(), 643_000_000);
     }
 
     /// Test that RFC 5280 strict format still works and is compatible
@@ -1335,12 +1313,9 @@ mod tests {
         assert_eq!(gen_time_strict, gen_time_rfc3161);
 
         // Convert to DateTime and verify
-        let dt: chrono::DateTime<chrono::Utc> = gen_time_rfc3161.into();
-        assert_eq!(
-            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-            "2025-11-21 12:58:23"
-        );
-        assert_eq!(dt.timestamp_subsec_nanos(), 0); // No fractional seconds
+        let dt: time::OffsetDateTime = gen_time_rfc3161.into();
+        assert_eq!(dt, time::macros::datetime!(2025-11-21 12:58:23 UTC));
+        assert_eq!(dt.nanosecond(), 0); // No fractional seconds
     }
 
     /// Test various fractional second precisions
@@ -1365,11 +1340,24 @@ mod tests {
             let gen_time = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
                 .unwrap_or_else(|_| panic!("Failed to parse: {desc}"));
 
-            let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
-            assert_eq!(
-                dt.timestamp_subsec_nanos(),
-                expected_nanos,
-                "Mismatch for: {desc}"
+            let dt: time::OffsetDateTime = gen_time.into();
+            assert_eq!(dt.nanosecond(), expected_nanos, "Mismatch for: {desc}");
+        }
+    }
+
+    #[test]
+    fn rfc3161_rejects_leap_seconds_and_invalid_calendar_values() {
+        for value in [
+            "20161231235960Z",
+            "20161231235960.1Z",
+            "20230229000000Z",
+            "20250101240000Z",
+        ] {
+            let encoded = reconstruct_der_bytes(0x18, value.as_bytes()).unwrap();
+
+            assert!(
+                GeneralizedTime::from_der_bytes_rfc3161(&encoded).is_err(),
+                "{value}"
             );
         }
     }

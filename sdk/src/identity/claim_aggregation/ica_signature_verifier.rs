@@ -14,7 +14,6 @@
 use async_generic::async_generic;
 use async_trait::async_trait;
 use base64::{prelude::BASE64_URL_SAFE, Engine};
-use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
@@ -785,9 +784,7 @@ impl<'a> IcaSignatureVerifier<'a> {
         }
 
         if let Some(tst_info) = maybe_tst_info {
-            let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-            let cawg_signer_time =
-                time::OffsetDateTime::from(std::time::SystemTime::from(cawg_signer_time));
+            let cawg_signer_time: time::OffsetDateTime = tst_info.gen_time.clone().into();
 
             if cawg_signer_time < valid_from {
                 return Err((
@@ -828,9 +825,7 @@ impl<'a> IcaSignatureVerifier<'a> {
         }
 
         if let Some(tst_info) = maybe_tst_info {
-            let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-            let cawg_signer_time =
-                time::OffsetDateTime::from(std::time::SystemTime::from(cawg_signer_time));
+            let cawg_signer_time: time::OffsetDateTime = tst_info.gen_time.clone().into();
 
             if cawg_signer_time > valid_until {
                 return Err((

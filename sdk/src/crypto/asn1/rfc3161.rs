@@ -362,6 +362,31 @@ pub struct TstInfo {
 }
 
 impl TstInfo {
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
+    pub(crate) fn for_test_at(seconds: i64) -> Self {
+        Self {
+            version: 1.into(),
+            policy: "1.2.3".parse().unwrap(),
+            message_imprint: MessageImprint {
+                hash_algorithm: AlgorithmIdentifier {
+                    algorithm: "2.16.840.1.101.3.4.2.1".parse().unwrap(),
+                },
+                hashed_message: OctetString::new(bytes::Bytes::from_static(&[0; 32])),
+            },
+            serial_number: 1.into(),
+            gen_time: time::OffsetDateTime::from_unix_timestamp(seconds)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            accuracy: None,
+            ordering: None,
+            nonce: None,
+            tsa: None,
+            extensions: None,
+        }
+    }
+
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = Integer::take_from(cons)?;
@@ -469,7 +494,7 @@ mod tests {
     use std::str::FromStr;
 
     use bcder::Mode;
-    use chrono::{TimeZone, Utc};
+    use time::OffsetDateTime;
 
     use super::*;
 
@@ -550,9 +575,7 @@ mod tests {
             policy: Oid::from_str("1.2.3.4").unwrap(),
             message_imprint: imprint(),
             serial_number: u64::MAX.into(),
-            gen_time: Utc
-                .timestamp_opt(1_577_836_800, 0)
-                .single()
+            gen_time: OffsetDateTime::from_unix_timestamp(1_577_836_800)
                 .unwrap()
                 .try_into()
                 .unwrap(),

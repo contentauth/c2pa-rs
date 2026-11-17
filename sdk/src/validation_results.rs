@@ -16,7 +16,6 @@ use std::{
     fmt::{self, Display},
 };
 
-use chrono::Utc;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -361,7 +360,9 @@ impl ValidationResults {
                 results.add_status(status);
             }
         }
-        results.validation_time = Some(Utc::now().to_rfc3339());
+        results.validation_time = Some(crate::crypto::internal::time::format_with_offset(
+            crate::crypto::internal::time::now(),
+        ));
         results
     }
 

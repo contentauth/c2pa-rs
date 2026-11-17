@@ -335,8 +335,8 @@ impl Verifier<'_> {
         let chain_der = &certs[1..];
 
         let signing_time_epoch = tst_info_res.map(|tst_info| {
-            let dt: chrono::DateTime<chrono::Utc> = tst_info.gen_time.clone().into();
-            dt.timestamp()
+            let dt: time::OffsetDateTime = tst_info.gen_time.clone().into();
+            dt.unix_timestamp()
         });
 
         let verify_result = if _sync {

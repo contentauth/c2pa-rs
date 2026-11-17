@@ -162,7 +162,7 @@ static-iref = "3.0"
 spki = "0.8.1"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
-time = { version = "0.3.55", features = ["formatting", "parsing", "serde"] }
+time = { version = "0.3.55", features = ["formatting", "macros", "parsing", "serde"] }
 toml = "1.1.2"
 url = "2.5.8"
 unicode-normalization = { version = "0.1", optional = true }

@@ -13,7 +13,7 @@
 
 //! Signature validation info.
 
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 use x509_parser::num_bigint::BigUint;
 
 use crate::SigningAlg;
@@ -25,8 +25,11 @@ pub struct CertificateInfo {
     /// Algorithm used to validate the signature
     pub alg: Option<SigningAlg>,
 
-    /// Date the signature was created
-    pub date: Option<DateTime<Utc>>,
+    /// Date the signature was created, in UTC.
+    ///
+    /// The Rust API now uses `time::OffsetDateTime` instead of chrono.
+    /// Serialized signature reports retain their existing RFC 3339 format.
+    pub date: Option<OffsetDateTime>,
 
     /// Certificate serial number
     pub cert_serial_number: Option<BigUint>,

@@ -125,7 +125,9 @@ impl ManifestReport {
                 alg: info.alg.map_or_else(String::new, |a| a.to_string()),
                 issuer: info.issuer_org,
                 common_name: info.common_name,
-                time: info.date.map(|d| d.to_rfc3339()),
+                time: info
+                    .date
+                    .map(crate::crypto::internal::time::format_with_offset),
             },
             None => SignatureReport::default(),
         };

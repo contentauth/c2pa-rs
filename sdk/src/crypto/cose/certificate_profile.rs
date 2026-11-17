@@ -1354,41 +1354,7 @@ mod tests {
     }
 
     fn timestamp_at(seconds: i64) -> crate::crypto::asn1::rfc3161::TstInfo {
-        use bcder::decode::Constructed;
-        #[derive(rasn::AsnType, rasn::Encode)]
-        struct Imprint {
-            algorithm: rasn_pkix::AlgorithmIdentifier,
-            digest: rasn::types::OctetString,
-        }
-        #[derive(rasn::AsnType, rasn::Encode)]
-        struct Timestamp {
-            version: rasn::types::Integer,
-            policy: rasn::types::ObjectIdentifier,
-            imprint: Imprint,
-            serial: rasn::types::Integer,
-            time: rasn::types::GeneralizedTime,
-        }
-
-        let bytes = rasn::der::encode(&Timestamp {
-            version: 1.into(),
-            policy: oid(&[1, 2, 3]),
-            imprint: Imprint {
-                algorithm: rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid(&[2, 16, 840, 1, 101, 3, 4, 2, 1]),
-                    parameters: None,
-                },
-                digest: vec![0; 32].into(),
-            },
-            serial: 1.into(),
-            time: chrono::DateTime::from_timestamp(seconds, 0).unwrap().into(),
-        })
-        .unwrap();
-        Constructed::decode(
-            bytes.as_slice(),
-            bcder::Mode::Der,
-            crate::crypto::asn1::rfc3161::TstInfo::take_from,
-        )
-        .unwrap()
+        crate::crypto::asn1::rfc3161::TstInfo::for_test_at(seconds)
     }
 
     #[test]

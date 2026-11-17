@@ -68,11 +68,9 @@ impl UtcTime {
         })
     }
 
-    /// Convert to chrono DateTime
-    pub fn to_datetime(&self) -> chrono::DateTime<chrono::Utc> {
-        // Convert der's time to SystemTime, then to chrono
-        let system_time = self.der_time.to_system_time();
-        system_time.into()
+    /// Convert to a UTC date and time.
+    pub fn to_datetime(&self) -> time::OffsetDateTime {
+        self.der_time.to_system_time().into()
     }
 }
 
@@ -1465,12 +1463,18 @@ impl Time {
     }
 }
 
-impl From<Time> for chrono::DateTime<chrono::Utc> {
+impl From<Time> for time::OffsetDateTime {
     fn from(t: Time) -> Self {
         match t {
             Time::UtcTime(utc) => utc.to_datetime(),
             Time::GeneralizedTime(gt) => gt.into(),
         }
+    }
+}
+
+impl From<Time> for chrono::DateTime<chrono::Utc> {
+    fn from(value: Time) -> Self {
+        std::time::SystemTime::from(time::OffsetDateTime::from(value)).into()
     }
 }
 

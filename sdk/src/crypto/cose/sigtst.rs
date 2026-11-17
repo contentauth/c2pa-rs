@@ -562,15 +562,9 @@ mod tests {
             )
             .await
             .unwrap();
-            let expected = chrono::DateTime::<chrono::Utc>::from_timestamp(1577836800, 0).unwrap();
-            assert_eq!(
-                chrono::DateTime::<chrono::Utc>::from(sync.gen_time),
-                expected
-            );
-            assert_eq!(
-                chrono::DateTime::<chrono::Utc>::from(asynchronous.gen_time),
-                expected
-            );
+            let expected = time::OffsetDateTime::from_unix_timestamp(1577836800).unwrap();
+            assert_eq!(time::OffsetDateTime::from(sync.gen_time), expected);
+            assert_eq!(time::OffsetDateTime::from(asynchronous.gen_time), expected);
             assert_eq!(
                 signing_time_from_sign1(&sign1, b"payload", false),
                 Some(expected)

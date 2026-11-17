@@ -228,7 +228,10 @@ impl X509SignatureReport {
                 alg: info.cert_info.alg,
                 issuer: info.cert_info.issuer_org.clone(),
                 common_name: info.cert_info.common_name.clone(),
-                time: info.cert_info.date.map(|d| d.to_rfc3339()),
+                time: info
+                    .cert_info
+                    .date
+                    .map(crate::crypto::internal::time::format_with_offset),
                 cert_serial_number: info
                     .cert_info
                     .cert_serial_number

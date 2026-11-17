@@ -13,8 +13,8 @@
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
-use chrono::{DateTime, Utc};
 use coset::CoseSign1;
+use time::OffsetDateTime;
 use x509_parser::{
     der_parser::oid,
     extensions::{ExtendedKeyUsage, ParsedExtension},
@@ -50,7 +50,7 @@ const SMIME_POLICIES: [&str; 6] = [
 
 fn interim_certificate_is_acceptable(
     certificate_der: &[u8],
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     trusted_timestamp: Option<&TstInfo>,
     policy: &CertificateTrustPolicy,
 ) -> Result<bool, CoseError> {
@@ -88,10 +88,10 @@ fn interim_certificate_is_acceptable(
         return Ok(true);
     }
 
-    if !(now.timestamp() < INTERIM_TRUST_END
+    if !(now.unix_timestamp() < INTERIM_TRUST_END
         || trusted_timestamp.is_some_and(|tst| {
-            let time: DateTime<Utc> = tst.gen_time.clone().into();
-            time.timestamp() < INTERIM_TRUST_END
+            let time: OffsetDateTime = tst.gen_time.clone().into();
+            time.unix_timestamp() < INTERIM_TRUST_END
         }))
     {
         return Ok(false);
@@ -314,7 +314,7 @@ impl Verifier<'_> {
 
             let acceptable = interim_certificate_is_acceptable(
                 &certificates[0],
-                Utc::now(),
+                crate::crypto::internal::time::now(),
                 timestamp,
                 &effective_policy,
             );
@@ -410,42 +410,12 @@ mod tests {
         certificate
     }
 
-    fn at(seconds: i64) -> DateTime<Utc> {
-        DateTime::from_timestamp(seconds, 0).unwrap()
+    fn at(seconds: i64) -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(seconds).unwrap()
     }
 
     fn timestamp_at(seconds: i64) -> TstInfo {
-        #[derive(rasn::AsnType, rasn::Encode)]
-        struct Imprint {
-            algorithm: rasn_pkix::AlgorithmIdentifier,
-            digest: rasn::types::OctetString,
-        }
-        #[derive(rasn::AsnType, rasn::Encode)]
-        struct Timestamp {
-            version: rasn::types::Integer,
-            policy: rasn::types::ObjectIdentifier,
-            imprint: Imprint,
-            serial: rasn::types::Integer,
-            time: rasn::types::GeneralizedTime,
-        }
-
-        let bytes = rasn::der::encode(&Timestamp {
-            version: 1.into(),
-            policy: oid("1.2.3"),
-            imprint: Imprint {
-                algorithm: rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid("2.16.840.1.101.3.4.2.1"),
-                    parameters: None,
-                },
-                digest: vec![0; 32].into(),
-            },
-            serial: 1.into(),
-            time: at(seconds).into(),
-        })
-        .unwrap();
-
-        bcder::decode::Constructed::decode(bytes.as_slice(), bcder::Mode::Der, TstInfo::take_from)
-            .unwrap()
+        TstInfo::for_test_at(seconds)
     }
 
     const EMAIL: &str = "1.3.6.1.5.5.7.3.4";
@@ -827,8 +797,8 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let time: DateTime<Utc> = timestamp.gen_time.into();
-        assert_eq!(time.timestamp(), INTERIM_TRUST_END - 1);
+        let time: OffsetDateTime = timestamp.gen_time.into();
+        assert_eq!(time.unix_timestamp(), INTERIM_TRUST_END - 1);
         assert!(store
             .trusted_cawg_timestamp_for_assertion(&claim, "cawg.identity", &mut log)
             .unwrap()
@@ -876,9 +846,9 @@ mod tests {
 
         // Expired at validation time, but valid at the manifest's attested time.
         identity_certificate.tbs_certificate.validity.not_before =
-            rasn_pkix::Time::General(at(1_735_689_600).into());
+            rasn_pkix::Time::General("2025-01-01T00:00:00Z".parse().unwrap());
         identity_certificate.tbs_certificate.validity.not_after =
-            rasn_pkix::Time::General(at(1_767_312_000).into());
+            rasn_pkix::Time::General("2026-01-02T00:00:00Z".parse().unwrap());
 
         let (identity_signature, identity_pem) =
             signed_cose_with_certificate(&identity_certificate, &payload_bytes);

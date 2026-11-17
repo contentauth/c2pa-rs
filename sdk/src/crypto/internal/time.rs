@@ -31,6 +31,42 @@ pub(crate) fn now() -> OffsetDateTime {
     }
 }
 
+/// Format report timestamps with an explicit UTC offset and 0/3/6/9 fractional digits.
+pub(crate) fn format_with_offset(timestamp: OffsetDateTime) -> String {
+    let year = timestamp.year();
+    let year = if year < 0 {
+        format!("-{:04}", year.unsigned_abs())
+    } else {
+        format!("{year:04}")
+    };
+    let mut formatted = format!(
+        "{year}-{:02}-{:02}T{:02}:{:02}:{:02}",
+        timestamp.month() as u8,
+        timestamp.day(),
+        timestamp.hour(),
+        timestamp.minute(),
+        timestamp.second(),
+    );
+
+    let nanoseconds = timestamp.nanosecond();
+    if nanoseconds != 0 {
+        if nanoseconds.is_multiple_of(1_000_000) {
+            formatted.push_str(&format!(".{:03}", nanoseconds / 1_000_000));
+        } else if nanoseconds.is_multiple_of(1_000) {
+            formatted.push_str(&format!(".{:06}", nanoseconds / 1_000));
+        } else {
+            formatted.push_str(&format!(".{nanoseconds:09}"));
+        }
+    }
+
+    let offset = timestamp.offset();
+    let minutes = (offset.whole_seconds().unsigned_abs() + 30) / 60;
+    formatted.push(if offset.is_negative() { '-' } else { '+' });
+    formatted.push_str(&format!("{:02}:{:02}", minutes / 60, minutes % 60));
+
+    formatted
+}
+
 /// RFC 3339 serialization with the SDK's existing 0/3/6/9 fractional digits.
 pub(crate) mod rfc3339 {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -124,6 +160,38 @@ mod tests {
         value: ::time::OffsetDateTime,
         #[serde(default, with = "super::rfc3339::option")]
         optional: Option<::time::OffsetDateTime>,
+    }
+
+    #[test]
+    fn report_format_preserves_legacy_offsets_and_fractional_precision() {
+        for (seconds, local, offset) in [
+            (0, "1970-01-01T00:00:00", "+00:00"),
+            (29, "1970-01-01T00:00:29", "+00:00"),
+            (30, "1970-01-01T00:00:30", "+00:01"),
+            (90, "1970-01-01T00:01:30", "+00:02"),
+            (-29, "1969-12-31T23:59:31", "-00:00"),
+            (-30, "1969-12-31T23:59:30", "-00:01"),
+            (-90, "1969-12-31T23:58:30", "-00:02"),
+            (19_800, "1970-01-01T05:30:00", "+05:30"),
+            (-25_200, "1969-12-31T17:00:00", "-07:00"),
+        ] {
+            for (nanoseconds, fraction) in [
+                (0, ""),
+                (100_000_000, ".100"),
+                (123_400_000, ".123400"),
+                (123_456_789, ".123456789"),
+            ] {
+                let timestamp = ::time::OffsetDateTime::UNIX_EPOCH
+                    .replace_nanosecond(nanoseconds)
+                    .unwrap()
+                    .to_offset(::time::UtcOffset::from_whole_seconds(seconds).unwrap());
+                assert_eq!(
+                    time::format_with_offset(timestamp),
+                    format!("{local}{fraction}{offset}"),
+                    "offset {seconds}, nanoseconds {nanoseconds}"
+                );
+            }
+        }
     }
 
     #[test]

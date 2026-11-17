@@ -204,6 +204,7 @@ pub(crate) fn tst_info_from_signed_data(
 pub(crate) mod tests {
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     use cms::content_info::ContentInfo;
     use der::Encode;
 

@@ -40,12 +40,11 @@ impl<'a> DecodeValue<'a> for GeneralizedTime {
         }
 
         let text = std::str::from_utf8(value).map_err(|_| Self::TAG.value_error())?;
-        let format = time::format_description::parse_borrowed::<2>(
-            "[year][month][day][hour][minute][second]",
+        let datetime = PrimitiveDateTime::parse(
+            &text[..14],
+            time::macros::format_description!("[year][month][day][hour][minute][second]"),
         )
         .map_err(|_| Self::TAG.value_error())?;
-        let datetime =
-            PrimitiveDateTime::parse(&text[..14], &format).map_err(|_| Self::TAG.value_error())?;
         let fraction = &text[14..text.len() - 1];
         let nanoseconds = if fraction.is_empty() {
             0

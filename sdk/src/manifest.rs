@@ -707,7 +707,9 @@ impl Manifest {
                 alg: signature_info.alg,
                 issuer: signature_info.issuer_org,
                 common_name: signature_info.common_name,
-                time: signature_info.date.map(|d| d.to_rfc3339()),
+                time: signature_info
+                    .date
+                    .map(crate::crypto::internal::time::format_with_offset),
                 cert_serial_number: signature_info.cert_serial_number.map(|s| s.to_string()),
                 cert_chain: String::from_utf8(signature_info.cert_chain)
                     .map_err(|_e| Error::CoseInvalidCert)?,

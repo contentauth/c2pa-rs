@@ -17,7 +17,6 @@ use asn1_rs::FromDer;
 use async_generic::async_generic;
 use bcder::OctetString;
 use c2pa_raw_crypto::validator_for_sig_and_hash_algs;
-use chrono::{DateTime, Utc};
 use cms::signed_data::{SignerIdentifier, SignerInfo};
 use der::{
     asn1::{Any, ObjectIdentifier, OctetString as DerOctetString},
@@ -27,6 +26,7 @@ use der::{
 use rasn::{prelude::*, types};
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
+use time::OffsetDateTime;
 
 use crate::{
     crypto::{
@@ -301,7 +301,7 @@ pub fn verify_time_stamp(
         // Check for time stamp expiration.
         // The attested time is the TSTInfo genTime (C2PA validation, RFC 3161). A CMS
         // signingTime attribute is not the attested time and is not used.
-        let signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
+        let signing_time = generalized_time_to_datetime(tst.gen_time.clone()).unix_timestamp();
 
         // Check the signer info's signed attributes.
         if let Some(attributes) = &signer_info.signed_attrs {
@@ -990,7 +990,7 @@ fn timestamp_signature_algorithm(
     bcder::Oid::from_str(validator_algorithm).map_err(|_| TimeStampError::UnsupportedAlgorithm)
 }
 
-fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> {
+fn generalized_time_to_datetime<T: Into<OffsetDateTime>>(gt: T) -> OffsetDateTime {
     gt.into()
 }
 
@@ -1118,10 +1118,10 @@ impl AsRef<[u8]> for HasherOutput {
 }
 
 #[cfg(test)]
-fn time_to_datetime(t: rasn_pkix::Time) -> DateTime<Utc> {
+fn time_to_datetime(t: rasn_pkix::Time) -> chrono::DateTime<chrono::Utc> {
     match t {
         rasn_pkix::Time::Utc(u) => u,
-        rasn_pkix::Time::General(gt) => generalized_time_to_datetime(gt),
+        rasn_pkix::Time::General(gt) => gt.into(),
     }
 }
 
@@ -1674,7 +1674,7 @@ pub(crate) mod message_imprint_regression {
             let tst = result.unwrap();
 
             assert_eq!(
-                generalized_time_to_datetime(tst.gen_time.clone()).timestamp(),
+                generalized_time_to_datetime(tst.gen_time.clone()).unix_timestamp(),
                 1_577_836_800,
                 "{name}"
             );
@@ -1955,7 +1955,7 @@ pub(crate) mod message_imprint_regression {
         )
         .unwrap();
         assert_eq!(
-            generalized_time_to_datetime(tst.gen_time).timestamp(),
+            generalized_time_to_datetime(tst.gen_time).unix_timestamp(),
             1_577_836_800
         );
     }
@@ -2164,7 +2164,7 @@ pub(crate) mod message_imprint_regression {
             .unwrap();
 
             assert_eq!(
-                generalized_time_to_datetime(tst.gen_time).timestamp(),
+                generalized_time_to_datetime(tst.gen_time).unix_timestamp(),
                 1_577_836_800
             );
         }
@@ -2646,7 +2646,7 @@ pub(crate) mod message_imprint_regression {
             let mut log = StatusTracker::default();
             let trusted_tst = verify_time_stamp(&token, DATA, &policy, &mut log, true).unwrap();
             assert_eq!(
-                generalized_time_to_datetime(trusted_tst.gen_time).timestamp(),
+                generalized_time_to_datetime(trusted_tst.gen_time).unix_timestamp(),
                 1_577_836_800
             );
             assert!(log.has_status(TIMESTAMP_TRUSTED));
@@ -3244,7 +3244,7 @@ mod signed_attrs_tests {
         )
         .unwrap();
 
-        let gen_time = generalized_time_to_datetime(tst.gen_time).timestamp();
+        let gen_time = generalized_time_to_datetime(tst.gen_time).unix_timestamp();
         assert_eq!(gen_time, 1_735_689_600); // 2025-01-01T00:00:00Z
         assert!(log.has_status(TIMESTAMP_VALIDATED));
         assert!(!log.has_status(TIMESTAMP_OUTSIDE_VALIDITY));
