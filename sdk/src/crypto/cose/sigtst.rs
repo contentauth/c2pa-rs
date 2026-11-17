@@ -17,6 +17,7 @@ use bcder::decode::Constructed;
 use coset::{
     cbor::value::Value, sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext,
 };
+use der::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -25,8 +26,7 @@ use crate::{
         asn1::rfc3161::{TimeStampResp, TstInfo},
         cose::{AsyncCoseSigner, CertificateTrustPolicy, CoseError, CoseSigner, TimeStampStorage},
         time_stamp::{
-            verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
-            TimeStampResponse,
+            verify_time_stamp, verify_time_stamp_async, TimeStampError, TimeStampResponse,
         },
     },
     log_item,
@@ -307,23 +307,15 @@ pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
         .time_stamp_token
         .ok_or_else(|| CoseError::InternalError("invalid timestamp token".to_string()))?;
 
-    let a = tst
-        .content_type
-        .iter()
-        .map(|v| {
-            v.to_u32()
-                .ok_or(CoseError::InternalError("invalid component".to_string()))
-        })
-        .collect::<Result<Vec<u32>, CoseError>>()?;
-
-    let ci = ContentInfo {
-        content_type: rasn::types::ObjectIdentifier::new(a).ok_or(CoseError::InternalError(
-            "invalid object identifier for timestamp response".to_string(),
-        ))?,
-        content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
+    let token = cms::content_info::ContentInfo {
+        content_type: der::asn1::ObjectIdentifier::new(&tst.content_type.to_string()).map_err(
+            |err| CoseError::InternalError(format!("invalid timestamp content type: {err}")),
+        )?,
+        content: der::asn1::Any::from_der(tst.content.as_bytes())
+            .map_err(|err| CoseError::InternalError(format!("invalid timestamp content: {err}")))?,
     };
 
-    Ok(rasn::der::encode(&ci).map_err(|err| {
+    Ok(token.to_der().map_err(|err| {
         CoseError::InternalError(format!("failed to encode timestamp token: {err:?}"))
     })?)
 }

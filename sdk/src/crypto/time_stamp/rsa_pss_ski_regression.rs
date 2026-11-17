@@ -12,7 +12,36 @@
 
 #![allow(clippy::unwrap_used)]
 
+use rasn_cms::{CertificateChoices, SignerIdentifier};
+
 use super::*;
+
+fn timestamp_signature_algorithm(
+    signer: &rasn_cms::SignerInfo,
+    key: &rasn_pkix::AlgorithmIdentifier,
+) -> Result<bcder::Oid, TimeStampError> {
+    let signer = cms::signed_data::SignerInfo::from_der(&rasn::der::encode(signer).unwrap())
+        .map_err(|error| TimeStampError::DecodeError(error.to_string()))?;
+    let key = spki::AlgorithmIdentifierOwned::from_der(&rasn::der::encode(key).unwrap())
+        .map_err(|error| TimeStampError::DecodeError(error.to_string()))?;
+
+    super::timestamp_signature_algorithm(&signer, &key)
+}
+
+fn signed_attributes_digested_content(
+    signer: &rasn_cms::SignerInfo,
+) -> Result<Option<Vec<u8>>, der::Error> {
+    let signer = cms::signed_data::SignerInfo::from_der(&rasn::der::encode(signer).unwrap())?;
+
+    super::signed_attributes_digested_content(&signer)
+}
+
+fn pss_parameters(parameters: &types::Any) -> Result<PssParameters, TimeStampError> {
+    let parameters = der::asn1::Any::from_der(parameters.as_bytes())
+        .map_err(|error| TimeStampError::DecodeError(error.to_string()))?;
+
+    super::pss_parameters(&parameters)
+}
 
 const DATA: &[u8] = b"RSA timestamp regression";
 const SHA256: &str = "2.16.840.1.101.3.4.2.1";
@@ -71,9 +100,11 @@ fn pss(hash: &str, mgf_hash: &str, salt: u8, trailer: Option<u8>) -> Vec<u8> {
 }
 
 fn decode(token: &[u8]) -> rasn_cms::SignedData {
-    signed_data_from_time_stamp_response(token)
+    let decoded = signed_data_from_time_stamp_response(token)
         .unwrap()
-        .unwrap()
+        .unwrap();
+
+    rasn::der::decode(&decoded.to_der().unwrap()).unwrap()
 }
 
 fn encode(sd: &rasn_cms::SignedData) -> Vec<u8> {

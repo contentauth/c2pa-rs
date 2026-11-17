@@ -11,9 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use ::rasn::prelude::*;
 use bcder::{decode::Constructed, encode::Values};
-use rasn_cms::SignedData;
+use der::{
+    asn1::{Any as DerAny, SetOfVec},
+    Decode,
+};
 
 use crate::crypto::{
     asn1::{
@@ -22,6 +24,27 @@ use crate::crypto::{
     },
     time_stamp::TimeStampError,
 };
+
+// Keep certificate dates opaque here: `der`'s typed certificate parser does not
+// support pre-1970 dates. Verification parses these certificates with x509-parser.
+#[derive(Clone, Debug, Eq, PartialEq, der::Sequence)]
+pub(crate) struct SignedData {
+    pub(crate) version: cms::content_info::CmsVersion,
+    pub(crate) digest_algorithms: cms::signed_data::DigestAlgorithmIdentifiers,
+    pub(crate) encap_content_info: EncapsulatedContentInfo,
+    #[asn1(context_specific = "0", tag_mode = "IMPLICIT", optional = "true")]
+    pub(crate) certificates: Option<SetOfVec<DerAny>>,
+    #[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
+    pub(crate) crls: Option<SetOfVec<DerAny>>,
+    pub(crate) signer_infos: cms::signed_data::SignerInfos,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, der::Sequence)]
+pub(crate) struct EncapsulatedContentInfo {
+    pub(crate) econtent_type: der::asn1::ObjectIdentifier,
+    #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
+    pub(crate) econtent: Option<der::asn1::OctetString>,
+}
 
 pub(crate) struct TimeStampResponse(pub TimeStampResp);
 
@@ -56,7 +79,7 @@ impl TimeStampResponse {
                     })?;
 
                 // decode ContentInfo as SignedData
-                match rasn::der::decode(&sd_bytes) {
+                match SignedData::from_der(&sd_bytes) {
                     Ok(signed_data) => Ok(Some(signed_data)),
                     Err(_) => Err(TimeStampError::DecodeError(
                         "time stamp invalid".to_string(),
@@ -74,12 +97,12 @@ impl TimeStampResponse {
 
     pub(crate) fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
         if let Some(signed_data) = self.signed_data()? {
-            if signed_data.encap_content_info.content_type
-                == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO
+            if signed_data.encap_content_info.econtent_type
+                == der::asn1::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4")
             {
-                if let Some(content) = signed_data.encap_content_info.content {
+                if let Some(content) = signed_data.encap_content_info.econtent {
                     Ok(Some(
-                        Constructed::decode(content.as_ref(), bcder::Mode::Der, |cons| {
+                        Constructed::decode(content.as_bytes(), bcder::Mode::Der, |cons| {
                             TstInfo::take_from(cons)
                         })
                         .map_err(|e| TimeStampError::DecodeError(e.to_string()))?,
@@ -96,21 +119,13 @@ impl TimeStampResponse {
     }
 }
 
-#[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct ContentInfo {
-    pub(crate) content_type: rasn::types::ObjectIdentifier,
-
-    #[rasn(tag(explicit(0)))]
-    pub(crate) content: rasn::types::Any,
-}
-
 pub(crate) fn signed_data_from_time_stamp_response(
     ts_resp: &[u8],
 ) -> Result<Option<SignedData>, TimeStampError> {
     Ok(signed_data_and_bytes_from_time_stamp_response(ts_resp)?.map(|(sd, _)| sd))
 }
 
-// Keep the exact SignedData encoding supplied to rasn so timestamp verification
+// Keep the exact SignedData encoding supplied to the decoder so timestamp verification
 // can bind the signature input to the decoded attributes without reparsing the
 // outer TimeStampResp/ContentInfo envelope with a different parser.
 pub(crate) fn signed_data_and_bytes_from_time_stamp_response(
@@ -156,7 +171,7 @@ pub(crate) fn signed_data_and_bytes_from_time_stamp_response(
         .map_err(|_err| TimeStampError::DecodeError("time stamp invalid".to_string()))?;
 
     // decode ContentInfo DER as SignedData
-    match rasn::der::decode(&sd_bytes) {
+    match SignedData::from_der(&sd_bytes) {
         Ok(signed_data) => Ok(Some((signed_data, sd_bytes))),
         Err(_) => Err(TimeStampError::DecodeError(
             "time stamp invalid".to_string(),
@@ -167,18 +182,18 @@ pub(crate) fn signed_data_and_bytes_from_time_stamp_response(
 pub(crate) fn tst_info_from_signed_data(
     signed_data: &SignedData,
 ) -> Result<Option<TstInfo>, TimeStampError> {
-    if signed_data.encap_content_info.content_type
-        != Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO
+    if signed_data.encap_content_info.econtent_type
+        != der::asn1::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4")
     {
         return Ok(None);
     }
 
-    let Some(content) = &signed_data.encap_content_info.content else {
+    let Some(content) = &signed_data.encap_content_info.econtent else {
         return Ok(None);
     };
 
     Ok(Some(
-        Constructed::decode(content.as_ref(), bcder::Mode::Der, |cons| {
+        Constructed::decode(content.as_bytes(), bcder::Mode::Der, |cons| {
             TstInfo::take_from(cons)
         })
         .map_err(|err| TimeStampError::DecodeError(err.to_string()))?,
@@ -189,24 +204,26 @@ pub(crate) fn tst_info_from_signed_data(
 pub(crate) mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use cms::content_info::ContentInfo;
+    use der::Encode;
+
     use super::*;
 
     pub(crate) fn response_der(status: u8, token: Option<&[u8]>) -> Vec<u8> {
-        #[derive(AsnType, Encode)]
+        #[derive(der::Sequence)]
         struct Status {
-            status: rasn::types::Integer,
+            status: u8,
         }
-        #[derive(AsnType, Encode)]
+        #[derive(der::Sequence)]
         struct Response {
             status: Status,
-            token: Option<Any>,
+            token: Option<DerAny>,
         }
-        rasn::der::encode(&Response {
-            status: Status {
-                status: status.into(),
-            },
-            token: token.map(|token| Any::new(token.to_vec())),
-        })
+        Response {
+            status: Status { status },
+            token: token.map(|token| DerAny::from_der(token).unwrap()),
+        }
+        .to_der()
         .unwrap()
     }
 
@@ -263,21 +280,22 @@ pub(crate) mod tests {
             expected
         );
         let mut missing = signed_data.clone();
-        missing.encap_content_info.content = None;
+        missing.encap_content_info.econtent = None;
         assert!(tst_info_from_signed_data(&missing).unwrap().is_none());
         let mut unrelated = signed_data.clone();
-        unrelated.encap_content_info.content_type = ObjectIdentifier::new(vec![1, 2, 3]).unwrap();
+        unrelated.encap_content_info.econtent_type =
+            der::asn1::ObjectIdentifier::new_unwrap("1.2.3");
         assert!(tst_info_from_signed_data(&unrelated).unwrap().is_none());
         let mut malformed = signed_data;
-        malformed.encap_content_info.content = Some(vec![0].into());
+        malformed.encap_content_info.econtent = Some(der::asn1::OctetString::new([0]).unwrap());
         assert!(tst_info_from_signed_data(&malformed).is_err());
-        for content_type in [vec![1, 2, 3], vec![1, 2, 840, 113549, 1, 7, 2]] {
+        for content_type in ["1.2.3", "1.2.840.113549.1.7.2"] {
             let malformed = ContentInfo {
-                content_type: ObjectIdentifier::new(content_type).unwrap(),
-                content: Any::new(vec![0x30, 0]),
+                content_type: der::asn1::ObjectIdentifier::new(content_type).unwrap(),
+                content: DerAny::from_der(&[0x30, 0]).unwrap(),
             };
 
-            let token = rasn::der::encode(&malformed).unwrap();
+            let token = malformed.to_der().unwrap();
             let response = decode(&response_der(0, Some(&token)));
             assert!(response.signed_data().is_err());
             assert!(response.tst_info().is_err());

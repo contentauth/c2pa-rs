@@ -112,7 +112,8 @@ chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.78.0"
 c2pa_raw_crypto = { version = "0.3.0", default-features = false, features = ["serde"] }
 coset = "0.4.2"
-der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
+cms = { version = "0.3.0-rc.2", default-features = false, features = ["std"] }
+der = { version = "0.8.1", features = ["alloc", "std", "oid", "derive"] }
 extfmt = "0.2.0"
 getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
 glob = "0.3.3"
@@ -158,6 +159,7 @@ serde-transcode = "1.1.1"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
 static-iref = "3.0"
+spki = "0.8.1"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
 time = { version = "0.3.55", features = ["formatting", "parsing", "serde"] }
