@@ -15,10 +15,10 @@
 
 use std::{collections::HashSet, error::Error, fmt, io::BufRead, str::FromStr};
 
-use asn1_rs::{oid, Oid};
+use asn1_rs::{oid, FromDer, Oid};
 use async_generic::async_generic;
 use thiserror::Error;
-use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
+use x509_parser::{certificate::X509Certificate, extensions::ExtendedKeyUsage, pem::Pem};
 
 use crate::{
     crypto::{base64, hash::sha256},
@@ -511,6 +511,49 @@ impl CertificateTrustPolicy {
             .filter(move |a| anchor_type.is_none_or(|t| a.trust_anchor_type == t))
     }
 
+    /// Select only anchor sets whose effective EKU policy accepts this leaf.
+    pub(crate) fn anchor_sets_for_certificate(
+        &self,
+        anchor_type: Option<TrustAnchorType>,
+        certificate_der: &[u8],
+    ) -> Result<Vec<&TrustAnchor>, CertificateTrustError> {
+        let anchors: Vec<_> = self.anchor_sets_of_type(anchor_type).collect();
+
+        if anchors.is_empty() {
+            return Err(CertificateTrustError::CertificateNotTrusted);
+        }
+
+        let certificate = X509Certificate::from_der(certificate_der)
+            .map_err(|_| CertificateTrustError::InvalidCertificate)?
+            .1;
+
+        let eku = certificate
+            .extended_key_usage()
+            .map_err(|_| CertificateTrustError::InvalidEku)?
+            .ok_or(CertificateTrustError::InvalidEku)?;
+
+        let anchors: Vec<_> = anchors
+            .into_iter()
+            .filter(|anchor| {
+                if let Some(config) = &anchor.trust_config {
+                    let mut policy = Self::new();
+                    policy.additional_ekus.clone_from(&self.additional_ekus);
+                    policy.add_valid_ekus(config.as_bytes());
+
+                    policy.has_allowed_eku(eku.value).is_some()
+                } else {
+                    self.has_allowed_eku(eku.value).is_some()
+                }
+            })
+            .collect();
+
+        if anchors.is_empty() {
+            return Err(CertificateTrustError::InvalidEku);
+        }
+
+        Ok(anchors)
+    }
+
     /// Returns the anchors set by name and type
     pub(crate) fn get_anchor_set(&self, kind: TrustAnchorType, uri: &str) -> Option<&TrustAnchor> {
         self.trust_anchors
@@ -567,8 +610,10 @@ impl CertificateTrustPolicy {
     ///
     /// Claim-signing EKUs follow the configured set, including any built-in
     /// defaults that were loaded. For legacy compatibility, emailProtection is
-    /// also allowed when that set is empty. timeStamping and OCSPSigning remain
-    /// allowed here; end-entity role checks additionally require mandatory EKUs.
+    /// also allowed when that set is empty. This shared profile matcher accepts
+    /// timeStamping and OCSPSigning for their own roles; claim-signing boundaries
+    /// reject both independently, even if explicitly configured. TSA and
+    /// delegated OCSP profiles additionally require their mandatory EKUs.
     pub(crate) fn has_allowed_eku<'a>(&self, eku: &'a ExtendedKeyUsage) -> Option<Oid<'a>> {
         if eku.email_protection
             && (self.additional_ekus.is_empty()
