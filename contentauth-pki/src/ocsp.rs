@@ -31,6 +31,7 @@ use crate::x509::ParsedCertificate;
 
 /// A failure to interpret the response or its signature algorithm.
 #[derive(Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
 pub enum ParseError {
     /// The response envelope or basic response could not be decoded.
     #[error("Malformed OCSP response")]
@@ -51,6 +52,7 @@ pub enum ParseError {
 
 /// A failure to authenticate a response's signer.
 #[derive(Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
 pub enum VerificationError {
     /// A candidate certificate could not be decoded or encoded.
     #[error("Invalid certificate detected")]
