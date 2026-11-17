@@ -19,8 +19,12 @@ use crate::http::HttpResolverError;
 /// Describes errors that can occur when requesting or verifying an [RFC 3161]
 /// time stamp.
 ///
+/// Additional failure variants may be introduced; downstream matches must
+/// include a wildcard arm.
+///
 /// [RFC 3161]: https://www.ietf.org/rfc/rfc3161.txt
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum TimeStampError {
     /// The time stamp uses a certificate that was not valid at the time of
     /// signing.
@@ -100,6 +104,9 @@ impl From<AcquisitionError> for TimeStampError {
             AcquisitionError::Transport(error) => Self::HttpConnectionError(error),
             AcquisitionError::NonceMismatch => Self::NonceMismatch,
             AcquisitionError::ResponseTooLarge => Self::ResponseTooLarge,
+            error => {
+                Self::InternalError(format!("unrecognized timestamp acquisition error: {error}"))
+            }
         }
     }
 }

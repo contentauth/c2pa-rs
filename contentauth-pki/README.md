@@ -97,6 +97,12 @@ crate. SDK packaging/publication is intentionally unsupported on this branch.
 No release automation, crate publication, or repository move is authorized.
 The crate's name, API, and compatibility feature are experimental.
 
+**Source-breaking SDK change:** `TimeStampError` is now `#[non_exhaustive]`,
+as is the new crate's `AcquisitionError`. Downstream exhaustive matches on
+`TimeStampError` must add a wildcard arm. Existing variants and their typed
+mappings remain unchanged; an unknown future acquisition failure is surfaced
+as an SDK internal error with its diagnostic, not treated as success.
+
 ## Subsequent bounded layers
 
 1. Extract timestamp cryptographic verification and shared X.509 facts behind
