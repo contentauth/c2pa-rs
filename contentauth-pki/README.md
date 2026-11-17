@@ -93,6 +93,11 @@ evidence. Neither evidence type means Good is accepted, fresh, trusted, or valid
 for a host-selected role. ASN.1 codecs remain private; no new `sdk-compat` bridge
 or deprecation is needed for this extraction.
 
+OCSP `ParseError` and `VerificationError` are non-exhaustive. Hosts must handle
+future categories without treating them as authenticated evidence or acceptance.
+The SDK retains unknown verification errors as failures with their diagnostics;
+its mappings for known categories remain unchanged.
+
 ```rust
 use contentauth_pki::ocsp::ParsedOcspResponse;
 

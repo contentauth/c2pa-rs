@@ -119,6 +119,7 @@ impl OcspResponse {
             Err(VerificationError::UnauthenticatedResponse) => {
                 return Ok(OcspResponse::default());
             }
+            Err(err) => return Err(OcspError::Verification(err)),
         };
 
         let mut internal_validation_log = StatusTracker::default();
@@ -305,6 +306,10 @@ pub(crate) fn certificate_issued_by(cert_der: &[u8], issuer_der: &[u8]) -> bool 
 #[derive(Debug, Eq, Error, PartialEq)]
 #[allow(unused)] // InvalidSystemTime may not exist on all platforms.
 pub(crate) enum OcspError {
+    /// An unrecognized verification failure, retaining the underlying diagnostic.
+    #[error("OCSP verification failed: {0}")]
+    Verification(#[source] VerificationError),
+
     /// An invalid certificate was detected.
     #[error("Invalid certificate detected")]
     InvalidCertificate,
