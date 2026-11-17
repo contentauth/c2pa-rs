@@ -29,6 +29,8 @@ pub mod svg_io;
 #[cfg(feature = "unstable_structured_text")]
 pub(crate) mod text_common;
 pub mod tiff_io;
+#[cfg(feature = "unstable_warc")]
+pub mod warc_io;
 pub mod zip_io;
 
 #[cfg(feature = "pdf")]
