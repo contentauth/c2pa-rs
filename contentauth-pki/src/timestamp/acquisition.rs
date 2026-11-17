@@ -101,6 +101,7 @@ pub const MAX_RESPONSE_BYTES: usize = 1_000_000;
 
 /// Acquisition failures, never signature, profile, or trust verdicts.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AcquisitionError {
     /// Invalid workflow interaction.
     #[error(transparent)]
