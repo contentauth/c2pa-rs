@@ -12,11 +12,15 @@
 // each license.
 
 mod invalid_claim;
+#[cfg(feature = "unstable_append_only_text")]
+mod store_append_only;
 mod store_core;
 mod store_io;
 mod store_signature;
 mod store_verify;
 
+#[cfg(feature = "unstable_append_only_text")]
+pub(crate) use self::store_append_only::Prefix;
 pub(crate) use self::store_verify::StoreValidationInfo;
 pub use self::{invalid_claim::InvalidClaimError, store_core::Store};
 

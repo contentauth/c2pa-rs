@@ -1132,6 +1132,102 @@ impl Claim {
         }
     }
 
+    #[cfg(feature = "unstable_append_only_text")]
+    fn is_segment_hash(label: &str) -> bool {
+        label.starts_with(crate::assertions::SegmentHash::LABEL)
+    }
+
+    #[cfg(not(feature = "unstable_append_only_text"))]
+    fn is_segment_hash(_label: &str) -> bool {
+        false
+    }
+
+    /// Checks a `c2pa.hash.segment` binding as the asset's active checkpoint.
+    #[cfg(feature = "unstable_append_only_text")]
+    fn verify_segment_hash_binding(
+        claim: &Claim,
+        assertion: &crate::assertion::Assertion,
+        label: &str,
+        asset_data: &mut ClaimAssetData<'_>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
+        use crate::{
+            assertions::SegmentHash,
+            asset_handlers::append_only_text_io::{find_active_sentinel, SentinelForm},
+            utils::io_utils::stream_len,
+        };
+
+        let check = |stream: &mut dyn ReadSeek, format: &str| -> Result<()> {
+            let sh = SegmentHash::from_assertion(assertion).map_err(|_| {
+                Error::C2PAValidation(
+                    validation_status::ASSERTION_SEGMENTHASH_MALFORMED.to_string(),
+                )
+            })?;
+            let file_len = stream_len(stream)?;
+            let sentinel =
+                find_active_sentinel(stream, SentinelForm::for_format(format), file_len)?
+                    .ok_or_else(|| {
+                        Error::C2PAValidation(
+                            validation_status::ASSERTION_SEGMENTHASH_MISMATCH.to_string(),
+                        )
+                    })?;
+            sh.verify_checkpoint(stream, file_len, &sentinel, claim.alg())
+        };
+
+        let result = match asset_data {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(asset_path) => {
+                let asset_path: &std::path::Path = asset_path;
+                let format = crate::format_from_path(asset_path).unwrap_or_default();
+                let mut file = std::fs::File::open(asset_path)?;
+                check(&mut file, &format)
+            }
+            ClaimAssetData::Bytes(asset_bytes, format) => {
+                check(&mut std::io::Cursor::new(*asset_bytes), format)
+            }
+            ClaimAssetData::Stream(stream, format) => check(*stream, format),
+            _ => Err(Error::UnsupportedType),
+        };
+
+        match result {
+            Ok(()) => {
+                log_item!(
+                    claim.assertion_uri(label),
+                    "segment hash valid",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::ASSERTION_SEGMENTHASH_MATCH)
+                .success(validation_log);
+                Ok(())
+            }
+            Err(e) => {
+                let code = match &e {
+                    Error::C2PAValidation(code) => [
+                        validation_status::ASSERTION_SEGMENTHASH_MALFORMED,
+                        validation_status::ASSERTION_SEGMENTHASH_PARTIAL_COVERAGE,
+                        validation_status::ASSERTION_SEGMENTHASH_PREDECESSOR_MISMATCH,
+                        validation_status::MANIFEST_APPEND_ONLY_TEXT_NO_SENTINEL,
+                    ]
+                    .into_iter()
+                    .find(|known| known == code)
+                    .unwrap_or(validation_status::ASSERTION_SEGMENTHASH_MISMATCH),
+                    _ => validation_status::ASSERTION_SEGMENTHASH_MISMATCH,
+                };
+                log_item!(
+                    claim.assertion_uri(label),
+                    format!("segment hash error: {e}"),
+                    "verify_internal"
+                )
+                .validation_status(code)
+                .failure(
+                    validation_log,
+                    Error::HashMismatch(format!("asset hash failure: {e}")),
+                )?;
+                Ok(())
+            }
+        }
+    }
+
     pub(crate) fn verify_hash_binding(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1626,6 +1722,15 @@ impl Claim {
                             )?;
                         }
                     }
+                } else if Self::is_segment_hash(&hash_binding_assertion.label_raw()) {
+                    #[cfg(feature = "unstable_append_only_text")]
+                    Self::verify_segment_hash_binding(
+                        claim,
+                        hash_binding_assertion.assertion(),
+                        &hash_binding_assertion.label(),
+                        asset_data,
+                        validation_log,
+                    )?;
                 } else {
                     log_item!(
                         claim.assertion_uri(&hash_binding_assertion.label()),
@@ -1766,7 +1871,14 @@ impl Claim {
                 }
 
                 // check for disallowed hash redactions
-                if labels::HASH_LABELS.iter().any(|label| r.contains(label)) {
+                #[cfg(feature = "unstable_append_only_text")]
+                let redacts_hash = labels::HASH_LABELS
+                    .iter()
+                    .chain(std::iter::once(&labels::SEGMENT_HASH))
+                    .any(|label| r.contains(label));
+                #[cfg(not(feature = "unstable_append_only_text"))]
+                let redacts_hash = labels::HASH_LABELS.iter().any(|label| r.contains(label));
+                if redacts_hash {
                     log_item!(
                         r.to_owned(),
                         "redaction of disallowed hash assertion",

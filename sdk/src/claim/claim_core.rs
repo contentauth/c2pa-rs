@@ -1243,7 +1243,7 @@ impl Claim {
         add_as_created_assertion: bool,
     ) -> ClaimAssertionType {
         if self.version() > 1 {
-            if labels::HASH_LABELS.contains(&base_label) || add_as_created_assertion {
+            if labels::is_hash_label(base_label) || add_as_created_assertion {
                 ClaimAssertionType::Created
             } else if let Some(created_assertions) = self
                 .context
@@ -1766,6 +1766,16 @@ impl Claim {
             None,
             dummy_collection_data,
         );
+        #[cfg(feature = "unstable_append_only_text")]
+        {
+            let dummy_segment_hash = Assertion::new(
+                assertions::labels::SEGMENT_HASH,
+                None,
+                AssertionData::Cbor(Vec::new()),
+            );
+            data_hashes
+                .append(&mut self.assertions_by_type(&dummy_segment_hash, assertion_type.clone()));
+        }
         data_hashes.append(&mut self.assertions_by_type(&dummy_collection_hash, assertion_type));
 
         // remove any multipart hashes, those are handled elsewhere

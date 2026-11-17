@@ -240,6 +240,8 @@ pub mod validation_status;
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
+#[cfg(feature = "unstable_append_only_text")]
+pub use builder::CheckpointPlacement;
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use c2pa_raw_crypto::{RawSignatureValidationError, RawSigner, RawSignerError, SigningAlg};
 pub use callback_signer::{CallbackFunc, CallbackSigner};

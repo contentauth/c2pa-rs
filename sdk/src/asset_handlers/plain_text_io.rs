@@ -407,6 +407,16 @@ pub struct PlainTextIO {
 
 impl C2paReader for PlainTextIO {
     fn read_c2pa(&self, reader: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+        // The checkpoint delimiters select the append-only method over the A.8 wrapper.
+        #[cfg(feature = "unstable_append_only_text")]
+        {
+            use crate::asset_handlers::append_only_text_io::{
+                read_active_inline_store, SentinelForm,
+            };
+            if let Some(store) = read_active_inline_store(reader, SentinelForm::Armour)? {
+                return Ok(store);
+            }
+        }
         let text = read_text_stream(reader)?;
         let w = wrapper::extract(&text).ok_or(Error::JumbfNotFound)?;
         if w.payload.is_empty() {
