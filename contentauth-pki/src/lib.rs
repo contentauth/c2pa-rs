@@ -34,6 +34,9 @@
 //! - **[OCSP mechanics](ocsp):** parse unverified claims, authenticate responder
 //!   signatures, and bind claims to a host-supplied leaf and issuer. Responder
 //!   authorization, freshness, signing-time policy, and acceptance remain host-side.
+//! - **[COSE verification](cose):** parse tagged Sign1, decode a host-selected
+//!   certificate header, and verify a payload using the signing certificate's key.
+//!   Parsing, signature validity, profile validity, and trust are distinct.
 //!
 //! # Driving a workflow
 //!
@@ -52,7 +55,8 @@
 //! cryptographic checks, then apply host profile/trust policy before acceptance.
 //!
 //! This crate is an unpublished experiment. Timestamp acquisition, cryptographic
-//! verification, X.509 mechanics, and deterministic OCSP checks are provided.
+//! verification, X.509 mechanics, deterministic OCSP checks, and certificate-backed
+//! COSE verification are provided.
 //! Application role/policy selection, trust reporting, OCSP acquisition and
 //! acceptance, and COSE orchestration remain host-side.
 //! COSE is supporting machinery, not a general-purpose COSE environment.
@@ -62,6 +66,7 @@
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
 
+pub mod cose;
 pub mod ocsp;
 pub mod timestamp;
 pub mod x509;
