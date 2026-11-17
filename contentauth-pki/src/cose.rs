@@ -81,7 +81,10 @@ pub enum Payload<'a> {
 }
 
 /// A parsing or cryptographic failure, without application reporting or policy.
+///
+/// Additional failure categories may be introduced as the verifier evolves.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum VerificationError {
     /// Tagged Sign1 or its CBOR headers could not be decoded.
     #[error("error while parsing CBOR ({0})")]

@@ -24,6 +24,7 @@ use crate::crypto::{
 ///
 /// [COSE]: https://datatracker.ietf.org/doc/rfc9052/
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum CoseError {
     /// No signing certificate chain was found.
     #[error("missing signing certificate chain")]
@@ -115,6 +116,8 @@ impl From<contentauth_pki::cose::VerificationError> for CoseError {
             VerificationError::MissingPayload => {
                 Self::CborParsingError("missing embedded payload".to_string())
             }
+
+            _ => Self::InternalError(error.to_string()),
         }
     }
 }
