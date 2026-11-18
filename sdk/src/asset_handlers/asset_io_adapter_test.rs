@@ -364,18 +364,33 @@ fn written_manifests_read_back_with_either_reader() {
         // Replacing, then removing.
         let s2 = store(b"a different, longer payload");
         let mut replaced = Cursor::new(Vec::new());
-        new.get_writer(&asset_type)
-            .unwrap()
-            .write_c2pa(&mut Cursor::new(&out), &mut replaced, &s2)
-            .unwrap();
-        let replaced = replaced.into_inner();
+        let replacement = new.get_writer(&asset_type).unwrap().write_c2pa(
+            &mut Cursor::new(&out),
+            &mut replaced,
+            &s2,
+        );
+        let (replaced, expected) = if asset_type == "pdf" {
+            // PDF updates must preserve earlier manifests rather than replace them.
+            assert!(
+                matches!(
+                    &replacement,
+                    Err(Error::NotImplemented(message))
+                        if message == "a new PDF C2PA store must extend the existing store: earlier manifests cannot be rewritten or repeated"
+                ),
+                "{name}: expected PDF history protection, got {replacement:?}"
+            );
+            (out, &s)
+        } else {
+            replacement.unwrap_or_else(|e| panic!("{name}: replace failed: {e}"));
+            (replaced.into_inner(), &s2)
+        };
         let reader = if name == "id3v23_compression_underflow.mp3" {
             &new
         } else {
             &old
         };
         match reader.get_reader().read_c2pa(&mut Cursor::new(&replaced)) {
-            Ok(got) if got == s2 => {}
+            Ok(got) if &got == expected => {}
             other => problems.push(format!("{name}: replace: {:?}", other.map(|v| v.len()))),
         }
         let mut removed = Cursor::new(Vec::new());

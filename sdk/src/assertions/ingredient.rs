@@ -1222,20 +1222,16 @@ pub mod tests {
 
     #[test]
     fn test_from_stream() {
-        use std::io::Cursor;
-
-        // Create a simple test stream with minimal valid data
-        let test_data = vec![0u8; 1024]; // Empty/minimal data
-        let stream = Cursor::new(test_data);
+        use crate::utils::test::create_test_stream;
 
         let context = Context::default();
         let relationship = Relationship::ComponentOf;
-        let format = "image/jpeg";
+        let (format, stream) = create_test_stream("earth_apollo17.jpg");
 
         let result = Ingredient::from_stream(relationship.clone(), format, stream, &context);
 
         // Should succeed even with no C2PA data
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{result:?}");
 
         let (ingredient, manifest_bytes) = result.unwrap();
 
@@ -1250,15 +1246,13 @@ pub mod tests {
 
     #[test]
     fn test_from_stream_with_c2pa_data() {
-        use std::io::Cursor;
+        use crate::utils::test::create_test_stream;
 
         // Use a test image that contains C2PA data
-        const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
-        let stream = Cursor::new(TEST_IMAGE);
+        let (format, stream) = create_test_stream("CA.jpg");
 
         let context = Context::default();
         let relationship = Relationship::ParentOf;
-        let format = "image/jpeg";
 
         let result = Ingredient::from_stream(relationship.clone(), format, stream, &context);
 
