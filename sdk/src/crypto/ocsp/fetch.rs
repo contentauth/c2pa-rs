@@ -258,7 +258,15 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
+    use der::{Decode, Encode};
     use http::{Request, Response};
+    use x509_cert::{
+        der::{
+            asn1::{Any, OctetString},
+            Decode as DecodeDer, Encode as EncodeDer,
+        },
+        Certificate,
+    };
 
     use super::*;
     use crate::{
@@ -297,8 +305,6 @@ mod tests {
 
     #[test]
     fn request_encodes_subject_serial_issuer_hashes_and_null_sha1_parameters() {
-        use der::{Decode, Encode};
-
         let certs = ca_chain();
         for index in [0, 1] {
             let requests = process_ocsp_responders(&certs, index).unwrap();
@@ -641,14 +647,6 @@ mod tests {
     }
 
     fn chain_with_two_responders() -> Vec<Vec<u8>> {
-        use x509_cert::{
-            der::{
-                asn1::{Any, OctetString},
-                Decode, Encode,
-            },
-            Certificate,
-        };
-
         let mut certs = ca_chain();
         let mut leaf = Certificate::from_der(&certs[0]).unwrap();
         let extension = leaf
