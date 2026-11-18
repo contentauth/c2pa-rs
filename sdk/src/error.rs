@@ -219,6 +219,9 @@ pub enum Error {
     #[error("PDF read error")]
     PdfReadError,
 
+    #[error("PDF resource limit exceeded: {0}")]
+    PdfResourceLimit(String),
+
     #[error(transparent)]
     InvalidClaim(#[from] InvalidClaimError),
 
