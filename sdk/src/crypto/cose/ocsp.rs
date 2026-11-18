@@ -905,7 +905,7 @@ mod tests {
     use der::{Any, Decode, Encode};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
-    use x509_cert::der::{Decode as Decode07, Encode as Encode07};
+    use x509_cert::der::{Decode as DecodeDer, Encode as EncodeDer};
 
     use super::*;
     use crate::crypto::cert_chain_pem_to_der;
@@ -1274,8 +1274,8 @@ mod tests {
         }
 
         let mut chain = leaf_and_intermediate();
-        let mut leaf: Certificate = Decode07::from_der(&chain[0]).unwrap();
-        let online_leaf: Certificate = Decode07::from_der(&ca_chain()[0]).unwrap();
+        let mut leaf: Certificate = DecodeDer::from_der(&chain[0]).unwrap();
+        let online_leaf: Certificate = DecodeDer::from_der(&ca_chain()[0]).unwrap();
         // Add a fixture AIA without changing the certificate ID matched by OCSP.
         // This isolates the fetch path; COSE certificate-chain verification is separate.
         let aia = online_leaf
@@ -2937,7 +2937,7 @@ mod tests {
 
         for future in [false, true] {
             let mut chain = responder.chain.clone();
-            let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
+            let mut issuer: x509_cert::Certificate = DecodeDer::from_der(&chain[1]).unwrap();
             if future {
                 issuer.tbs_certificate.validity.not_before =
                     issuer.tbs_certificate.validity.not_after;

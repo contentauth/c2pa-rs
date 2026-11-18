@@ -53,7 +53,7 @@ impl IssuerResponder {
         use x509_cert::{
             der::{
                 asn1::{BitString, ObjectIdentifier, OctetString},
-                Decode as Decode07, Encode as Encode07,
+                Decode as DecodeDer, Encode as EncodeDer,
             },
             spki::AlgorithmIdentifierOwned,
             Certificate,
@@ -152,7 +152,7 @@ impl IssuerResponder {
     pub(crate) fn delegated_response(&self, mut basic: BasicOcspResponse) -> Vec<u8> {
         use ed25519_dalek::Signer;
         use x509_cert::{
-            der::{asn1::BitString as BitString07, Decode as Decode07, Encode as Encode07},
+            der::{asn1::BitString as BitString07, Decode as DecodeDer, Encode as EncodeDer},
             Certificate,
         };
 

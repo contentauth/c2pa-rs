@@ -623,7 +623,7 @@ mod tests {
             BitString as BitString07, ObjectIdentifier as ObjectIdentifier07,
             OctetString as OctetString07,
         },
-        Decode as Decode07, Encode as Encode07,
+        Decode as DecodeDer, Encode as EncodeDer,
     };
 
     use crate::{
@@ -1094,18 +1094,20 @@ mod tests {
             match variant {
                 0 => chain.truncate(1),
                 1 => {
-                    let mut leaf: x509_cert::Certificate = Decode07::from_der(&chain[0]).unwrap();
+                    let mut leaf: x509_cert::Certificate = DecodeDer::from_der(&chain[0]).unwrap();
                     leaf.signature = BitString07::from_bytes(&[0; 64]).unwrap();
                     chain[0] = leaf.to_der().unwrap();
                 }
                 2 => {
-                    let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
+                    let mut issuer: x509_cert::Certificate =
+                        DecodeDer::from_der(&chain[1]).unwrap();
                     issuer.tbs_certificate.extensions = None;
                     chain[1] = issuer.to_der().unwrap();
                 }
                 3 => chain[1] = signing_cert_chain()[1].clone(),
                 4 => {
-                    let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
+                    let mut issuer: x509_cert::Certificate =
+                        DecodeDer::from_der(&chain[1]).unwrap();
                     issuer
                         .tbs_certificate
                         .extensions
@@ -1119,8 +1121,9 @@ mod tests {
                     chain[1] = issuer.to_der().unwrap();
                 }
                 _ => {
-                    let leaf: x509_cert::Certificate = Decode07::from_der(&chain[0]).unwrap();
-                    let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
+                    let leaf: x509_cert::Certificate = DecodeDer::from_der(&chain[0]).unwrap();
+                    let mut issuer: x509_cert::Certificate =
+                        DecodeDer::from_der(&chain[1]).unwrap();
                     issuer.tbs_certificate.subject = leaf.tbs_certificate.subject;
                     chain[1] = issuer.to_der().unwrap();
                 }
@@ -1139,13 +1142,13 @@ mod tests {
     #[test]
     fn issuance_authentication_preserves_rsa_pss_certificate_support() {
         let chain = signing_cert_chain();
-        let mut leaf: x509_cert::Certificate = Decode07::from_der(&chain[0]).unwrap();
-        let mut issuer: x509_cert::Certificate = Decode07::from_der(&chain[1]).unwrap();
+        let mut leaf: x509_cert::Certificate = DecodeDer::from_der(&chain[0]).unwrap();
+        let mut issuer: x509_cert::Certificate = DecodeDer::from_der(&chain[1]).unwrap();
         let rsa_cert = pem::parse_many(include_bytes!("../../../tests/fixtures/certs/ps256.pub"))
             .unwrap()
             .remove(0);
 
-        let rsa_cert: x509_cert::Certificate = Decode07::from_der(rsa_cert.contents()).unwrap();
+        let rsa_cert: x509_cert::Certificate = DecodeDer::from_der(rsa_cert.contents()).unwrap();
         issuer.tbs_certificate.subject_public_key_info =
             rsa_cert.tbs_certificate.subject_public_key_info;
 
@@ -1170,7 +1173,7 @@ mod tests {
             params[53] = salt_len;
             leaf.signature_algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
                 oid: ObjectIdentifier07::new_unwrap("1.2.840.113549.1.1.10"),
-                parameters: Some(Decode07::from_der(&params).unwrap()),
+                parameters: Some(DecodeDer::from_der(&params).unwrap()),
             };
 
             leaf.tbs_certificate.signature = leaf.signature_algorithm.clone();
@@ -1211,13 +1214,13 @@ mod tests {
             wrong_trailer.extend_from_slice(&[0xa3, 0x03, 0x02, 0x01, 0x02]);
 
             for invalid_params in [
-                Some(Decode07::from_der(&wrong_salt).unwrap()),
-                Some(Decode07::from_der(&wrong_mgf_hash).unwrap()),
-                Some(Decode07::from_der(&unsupported_hash).unwrap()),
-                Some(Decode07::from_der(&malformed_mgf).unwrap()),
-                Some(Decode07::from_der(&wrong_mgf).unwrap()),
-                Some(Decode07::from_der(&wrong_trailer).unwrap()),
-                Some(Decode07::from_der(&[0x05, 0x00]).unwrap()),
+                Some(DecodeDer::from_der(&wrong_salt).unwrap()),
+                Some(DecodeDer::from_der(&wrong_mgf_hash).unwrap()),
+                Some(DecodeDer::from_der(&unsupported_hash).unwrap()),
+                Some(DecodeDer::from_der(&malformed_mgf).unwrap()),
+                Some(DecodeDer::from_der(&wrong_mgf).unwrap()),
+                Some(DecodeDer::from_der(&wrong_trailer).unwrap()),
+                Some(DecodeDer::from_der(&[0x05, 0x00]).unwrap()),
                 None,
             ] {
                 leaf.signature_algorithm.parameters = invalid_params;
@@ -1248,7 +1251,7 @@ mod tests {
         assert!(!super::certificate_issued_by(&[0xde, 0xad], issuer_der));
         assert!(!super::certificate_issued_by(leaf_der, &[0xde, 0xad]));
 
-        let leaf: x509_cert::Certificate = Decode07::from_der(leaf_der).unwrap();
+        let leaf: x509_cert::Certificate = DecodeDer::from_der(leaf_der).unwrap();
         let mut mismatched = leaf.clone();
         mismatched.tbs_certificate.signature.oid = ObjectIdentifier07::new_unwrap("1.2.3.4");
         assert!(!super::certificate_issued_by(

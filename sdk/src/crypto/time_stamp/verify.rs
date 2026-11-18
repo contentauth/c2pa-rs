@@ -2173,7 +2173,7 @@ pub(crate) mod message_imprint_regression {
     #[test]
     fn signer_lookup_matches_issuer_serial_and_decoded_ski() {
         use cms::signed_data::SignerIdentifier;
-        use x509_cert::der::Decode as Decode07;
+        use x509_cert::der::Decode as DecodeDer;
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),
