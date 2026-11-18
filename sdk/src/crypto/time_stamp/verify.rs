@@ -1368,6 +1368,7 @@ pub(crate) mod message_imprint_regression {
         sign::Signer,
         x509::{extension::ExtendedKeyUsage, X509Builder, X509NameBuilder},
     };
+    use time::{macros::format_description, OffsetDateTime};
     use x509_cert::der::Decode as DecodeDer;
 
     use super::{generalized_time_to_datetime, verify_time_stamp, SignedData};
@@ -1466,6 +1467,18 @@ pub(crate) mod message_imprint_regression {
         cms_digest: Option<(&'a [u8], MessageDigest)>,
     }
 
+    fn certificate_time(timestamp: i64) -> Asn1Time {
+        // Avoid platform time_t conversion, which rejects pre-1970 dates on Windows.
+        let value = OffsetDateTime::from_unix_timestamp(timestamp)
+            .unwrap()
+            .format(format_description!(
+                "[year][month][day][hour][minute][second]Z"
+            ))
+            .unwrap();
+
+        Asn1Time::from_str_x509(&value).unwrap()
+    }
+
     fn test_certificate(
         purpose: Option<&str>,
         profile_extensions: bool,
@@ -1487,10 +1500,8 @@ pub(crate) mod message_imprint_regression {
         cb.set_subject_name(&name).unwrap();
         cb.set_issuer_name(&name).unwrap();
         cb.set_pubkey(&key).unwrap();
-        cb.set_not_before(&Asn1Time::from_unix(not_before).unwrap())
-            .unwrap();
-        cb.set_not_after(&Asn1Time::from_unix(not_after).unwrap())
-            .unwrap();
+        cb.set_not_before(&certificate_time(not_before)).unwrap();
+        cb.set_not_after(&certificate_time(not_after)).unwrap();
 
         if let Some(purpose) = purpose {
             let mut eku = ExtendedKeyUsage::new();
@@ -2154,6 +2165,13 @@ pub(crate) mod message_imprint_regression {
                     ..Default::default()
                 },
             );
+
+            let cert_der = super::tsa_signer_cert_der_from_token(&token)
+                .unwrap()
+                .unwrap();
+            let (_, cert) = x509_parser::parse_x509_certificate(&cert_der).unwrap();
+            assert_eq!(cert.validity().not_before.timestamp(), -631_152_000);
+            assert_eq!(cert.validity().not_after.timestamp(), 2_524_608_000);
 
             let tst = verify_time_stamp(
                 &token,
