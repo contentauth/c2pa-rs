@@ -592,6 +592,15 @@ impl AssetBoxHash for AssetIoAdapter {
 }
 
 impl AssetIO for AssetIoAdapter {
+    fn save_c2pa_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+        // Standalone manifests create or replace a file instead of rewriting an existing asset.
+        if self.container() == Some(aio::containers::c2pa::ID) {
+            std::fs::write(asset_path, store_bytes).map_err(Error::IoError)
+        } else {
+            crate::asset_io::save_c2pa_store(self, asset_path, store_bytes)
+        }
+    }
+
     fn new(asset_type: &str) -> Self
     where
         Self: Sized,

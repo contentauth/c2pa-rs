@@ -291,21 +291,7 @@ pub trait AssetIO: Sync + Send {
     /// returns `None`.
     #[allow(dead_code)] // file-backed helper; not required on all targets
     fn save_c2pa_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let ext = asset_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or_default();
-        let writer = self.get_writer(ext).ok_or(Error::UnsupportedType)?;
-
-        let mut input_stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        writer.write_c2pa(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        rename_or_move(temp_file, asset_path)
+        save_c2pa_store(self, asset_path, store_bytes)
     }
 
     /// Removes the C2PA manifest store from the file at `asset_path`.
@@ -399,6 +385,28 @@ pub trait AssetIO: Sync + Send {
     fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         None
     }
+}
+
+pub(crate) fn save_c2pa_store(
+    handler: &(impl AssetIO + ?Sized),
+    asset_path: &Path,
+    store_bytes: &[u8],
+) -> Result<()> {
+    let ext = asset_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default();
+    let writer = handler.get_writer(ext).ok_or(Error::UnsupportedType)?;
+
+    let mut input_stream = fs::OpenOptions::new()
+        .read(true)
+        .open(asset_path)
+        .map_err(Error::IoError)?;
+    let mut temp_file = tempfile_builder("c2pa_temp")?;
+
+    writer.write_c2pa(&mut input_stream, &mut temp_file, store_bytes)?;
+
+    rename_or_move(temp_file, asset_path)
 }
 
 /// Optimizes manifest updates for handlers that can patch an existing manifest

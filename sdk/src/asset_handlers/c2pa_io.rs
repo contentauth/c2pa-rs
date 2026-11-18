@@ -145,7 +145,9 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use super::{AssetIO, C2paIO, C2paReader, C2paWriter};
+    #[cfg(not(feature = "unstable_asset_io"))]
+    use super::C2paIO;
+    use super::{AssetIO, C2paReader, C2paWriter};
     use crate::{
         status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
@@ -188,6 +190,14 @@ pub mod tests {
         c2pa_io
             .save_c2pa_store(&temp_path, &manifest)
             .expect("save cai store");
+
+        let mut longer_manifest = manifest.clone();
+        longer_manifest.extend_from_slice(b"trailing bytes");
+        std::fs::write(&temp_path, longer_manifest).expect("extend existing store");
+        c2pa_io
+            .save_c2pa_store(&temp_path, &manifest)
+            .expect("replace cai store");
+        assert_eq!(std::fs::read(&temp_path).unwrap(), manifest);
 
         let mut temp_file = std::fs::File::open(&temp_path).expect("open temp file");
         let manifest_2 = c2pa_io.read_c2pa(&mut temp_file).expect("read cai store");
