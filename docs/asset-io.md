@@ -57,6 +57,10 @@ message sees a change.
 
 All of these still reject the asset, so none can fall back to a remote manifest.
 
+JPEG parse errors use the normal error mapping rather than being rewritten to
+`UnsupportedType` when the signature does not match. Malformed input is reported
+as `InvalidAsset`, and underlying I/O errors remain `IoError`.
+
 ### Region layout
 
 `get_object_locations` reports finer regions: each ID3 frame and the audio in

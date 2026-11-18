@@ -4,12 +4,11 @@
 // store, which asset-io layout becomes which `ObjectLocations` and `BoxMap`, and how
 // errors are reported.
 
-use std::{io::Read, sync::Arc};
+use std::sync::Arc;
 
 use ::asset_io as aio;
 use aio::{
-    container_api::{ContainerHandler, DETECT_LEN},
-    ByteRange, HandlerRegistry, ItemKind, Structure, Updates,
+    container_api::ContainerHandler, ByteRange, HandlerRegistry, ItemKind, Structure, Updates,
 };
 
 use crate::{
@@ -98,26 +97,7 @@ impl AssetIoAdapter {
     fn parse(&self, input: &mut dyn ReadSeek) -> Result<Structure> {
         let mut input = input;
         let handler = self.handler()?;
-        Arc::clone(handler).parse(&mut input).map_err(|e| {
-            // `JpegIO` reported input that is not a JPEG at all as unsupported rather
-            // than as a malformed asset (`PngIO` did not), and callers rely on that.
-            if self.container() == Some(aio::containers::jpeg::ID)
-                && !Self::looks_like(handler.as_ref(), &mut *input)
-            {
-                return Error::UnsupportedType;
-            }
-            err(e)
-        })
-    }
-
-    fn looks_like(handler: &dyn ContainerHandler, input: &mut dyn ReadSeek) -> bool {
-        let mut header = Vec::with_capacity(DETECT_LEN);
-        input.rewind().is_ok()
-            && input
-                .take(DETECT_LEN as u64)
-                .read_to_end(&mut header)
-                .is_ok()
-            && handler.detect(&header)
+        Arc::clone(handler).parse(&mut input).map_err(err)
     }
 
     /// Whether `asset_type` is read only: camera raw formats served by the TIFF
@@ -733,6 +713,39 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    #[test]
+    fn non_jpeg_input_is_reported_as_invalid() {
+        let adapter = AssetIoAdapter::new("jpeg");
+        let mut input = std::io::Cursor::new(b"not a JPEG");
+        assert!(matches!(
+            adapter.read_c2pa(&mut input),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn jpeg_io_errors_are_preserved() {
+        struct Unreadable;
+
+        impl std::io::Read for Unreadable {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("test I/O failure"))
+            }
+        }
+
+        impl std::io::Seek for Unreadable {
+            fn seek(&mut self, _: std::io::SeekFrom) -> std::io::Result<u64> {
+                Err(std::io::Error::other("test I/O failure"))
+            }
+        }
+
+        let adapter = AssetIoAdapter::new("jpeg");
+        assert!(matches!(
+            adapter.read_c2pa(&mut Unreadable),
+            Err(Error::IoError(error)) if error.to_string() == "test I/O failure"
+        ));
+    }
 
     #[derive(Debug)]
     struct CustomContainer(&'static str);
