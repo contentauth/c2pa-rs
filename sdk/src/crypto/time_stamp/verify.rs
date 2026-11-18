@@ -25,6 +25,7 @@ use der::{
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use time::OffsetDateTime;
+use x509_parser::certificate::X509Certificate;
 
 use crate::{
     crypto::{
@@ -240,15 +241,18 @@ pub fn verify_time_stamp(
     // Convert certs to DER format
     let cert_ders: Vec<Vec<u8>> = certs_vec.iter().filter_map(certificate_der).collect();
 
-    if cert_ders.len() != certs.len() {
-        log_item!("", "could not parse timestamp data", "verify_time_stamp")
-            .validation_status(TIMESTAMP_UNTRUSTED)
-            .informational(validation_log);
+    let certificates = match parse_certificates(&cert_ders) {
+        Ok(certificates) if cert_ders.len() == certs.len() => certificates,
+        _ => {
+            log_item!("", "could not parse timestamp data", "verify_time_stamp")
+                .validation_status(TIMESTAMP_UNTRUSTED)
+                .informational(validation_log);
 
-        return Err(TimeStampError::DecodeError(
-            "time stamp certificate could not be processed".to_string(),
-        ));
-    }
+            return Err(TimeStampError::DecodeError(
+                "time stamp certificate could not be processed".to_string(),
+            ));
+        }
+    };
 
     let mut last_err = TimeStampError::InvalidData;
     let mut current_validation_log = StatusTracker::default();
@@ -261,26 +265,19 @@ pub fn verify_time_stamp(
         // certificates cannot win; only a matching issuer/serial or SKI can.
         // If distinct certificates share that identifier, decoded SET OF order
         // selects the candidate; this loop does not try every matching certificate.
-        let cert_pos = match certs_vec
+        let cert_pos = match certificates
             .iter()
             .position(|cc| signer_certificate_matches(cc, &signer_info.sid))
         {
             Some(c) => c,
             None => continue,
         };
-        let (_, cert) = x509_parser::parse_x509_certificate(&cert_ders[cert_pos])
-            .map_err(|error| TimeStampError::DecodeError(error.to_string()))?;
+        let cert = &certificates[cert_pos];
 
-        // get the cert common name, use different crate since x509-certificate does
-        // not parse the common name correctly
         let mut common_name = String::new();
-        if let Ok((_, new_c)) =
-            x509_parser::certificate::X509Certificate::from_der(&cert_ders[cert_pos])
-        {
-            for rdn in new_c.subject().iter_common_name() {
-                if let Ok(cn) = rdn.as_str() {
-                    common_name.push_str(cn);
-                }
+        for rdn in cert.subject().iter_common_name() {
+            if let Ok(cn) = rdn.as_str() {
+                common_name.push_str(cn);
             }
         }
 
@@ -710,10 +707,12 @@ pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, Time
             "time stamp certificate could not be processed".to_string(),
         ));
     }
+    let certificates = parse_certificates(&cert_ders)?;
+
     let Some(signer_info) = sd.signer_infos.0.iter().next() else {
         return Ok(None);
     };
-    let Some(cert_pos) = certs_vec
+    let Some(cert_pos) = certificates
         .iter()
         .position(|cc| signer_certificate_matches(cc, &signer_info.sid))
     else {
@@ -727,20 +726,22 @@ fn certificate_der(choice: &Any) -> Option<Vec<u8>> {
         return None;
     }
 
-    let bytes = choice.to_der().ok()?;
-    let (rest, _) = x509_parser::parse_x509_certificate(&bytes).ok()?;
-
-    rest.is_empty().then_some(bytes)
+    choice.to_der().ok()
 }
 
-fn signer_certificate_matches(choice: &Any, sid: &SignerIdentifier) -> bool {
-    let Some(bytes) = certificate_der(choice) else {
-        return false;
-    };
-    let Ok((_, cert)) = x509_parser::parse_x509_certificate(&bytes) else {
-        return false;
-    };
+fn parse_certificates(cert_ders: &[Vec<u8>]) -> Result<Vec<X509Certificate<'_>>, TimeStampError> {
+    cert_ders
+        .iter()
+        .map(|bytes| match x509_parser::parse_x509_certificate(bytes) {
+            Ok(([], cert)) => Ok(cert),
+            _ => Err(TimeStampError::DecodeError(
+                "time stamp certificate could not be processed".to_string(),
+            )),
+        })
+        .collect()
+}
 
+fn signer_certificate_matches(cert: &X509Certificate<'_>, sid: &SignerIdentifier) -> bool {
     match sid {
         SignerIdentifier::IssuerAndSerialNumber(sn) => {
             sn.issuer

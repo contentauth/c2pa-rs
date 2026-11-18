@@ -1335,6 +1335,18 @@ mod tests {
             "20161231235960.1Z",
             "20230229000000Z",
             "20250101240000Z",
+            "20230001000000.1Z",
+            "20231301000000.1Z",
+            "20239901000000.1Z",
+            "20230100000000.1Z",
+            "20230132000000.1Z",
+            "20230199000000.1Z",
+            "20230229000000.1Z",
+            "20250101240000.1Z",
+            "20250101990000.1Z",
+            "20250101006000.1Z",
+            "20250101009900.1Z",
+            "20250101000099.1Z",
         ] {
             let encoded = reconstruct_der_bytes(0x18, value.as_bytes()).unwrap();
 
@@ -1342,6 +1354,31 @@ mod tests {
                 GeneralizedTime::from_der_bytes_rfc3161(&encoded).is_err(),
                 "{value}"
             );
+        }
+    }
+
+    #[test]
+    fn rfc3161_accepts_component_boundaries() {
+        for (value, expected) in [
+            (
+                "19700101000000.000000001Z",
+                time::macros::datetime!(1970-01-01 00:00:00.000000001 UTC),
+            ),
+            (
+                "20240229235959.999999999Z",
+                time::macros::datetime!(2024-02-29 23:59:59.999999999 UTC),
+            ),
+            (
+                "99991231000000.000000001Z",
+                time::macros::datetime!(9999-12-31 00:00:00.000000001 UTC),
+            ),
+        ] {
+            let encoded = reconstruct_der_bytes(0x18, value.as_bytes()).unwrap();
+            let parsed = GeneralizedTime::from_der_bytes_rfc3161(&encoded)
+                .unwrap_or_else(|error| panic!("{value}: {error}"));
+
+            assert_eq!(parsed.as_der_bytes(), encoded);
+            assert_eq!(time::OffsetDateTime::from(parsed), expected);
         }
     }
 

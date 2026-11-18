@@ -308,9 +308,10 @@ impl OcspResponse {
                             };
 
                             if !in_range {
-                                let utc_with_offset = revoked_at_native;
-
-                                let msg = format!("certificate revoked at: {utc_with_offset}");
+                                let msg = format!(
+                                    "certificate revoked at: {}",
+                                    internal::time::format_with_offset(revoked_at_native)
+                                );
 
                                 log_item!("", msg, "check_ocsp_response")
                                     .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
@@ -322,11 +323,9 @@ impl OcspResponse {
                                 output.revoked_at = Some(revoked_at_native);
                             }
                         } else {
-                            let utc_with_offset = revoked_at_native;
-
                             // Was the cert signed before revocation?
                             let in_range = if let Some(st) = signing_time {
-                                st.unix_timestamp() < utc_with_offset.unix_timestamp()
+                                st.unix_timestamp() < revoked_at_native.unix_timestamp()
                             } else {
                                 false
                             };
@@ -334,7 +333,10 @@ impl OcspResponse {
                             if !in_range {
                                 log_item!(
                                     "",
-                                    format!("certificate revoked at: {}", utc_with_offset),
+                                    format!(
+                                        "certificate revoked at: {}",
+                                        internal::time::format_with_offset(revoked_at_native)
+                                    ),
                                     "check_ocsp_response"
                                 )
                                 .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
@@ -1696,6 +1698,17 @@ mod tests {
                     assert_eq!(parsed.revoked_at, expected_revoked.then_some(revoked_at));
                     assert_eq!(log.has_status(SIGNING_CREDENTIAL_REVOKED), expected_revoked);
                     assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+
+                    if expected_revoked {
+                        assert_eq!(parsed.revoked_at.unwrap().offset(), ::time::UtcOffset::UTC);
+
+                        if !future && reason.is_some() {
+                            assert!(log.logged_items().iter().any(|item| {
+                                item.description
+                                    == "certificate revoked at: 2023-02-01T00:00:00+00:00"
+                            }));
+                        }
+                    }
                 }
             }
         }

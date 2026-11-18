@@ -27,8 +27,7 @@ pub struct CertificateInfo {
 
     /// Date the signature was created, in UTC.
     ///
-    /// The Rust API now uses `time::OffsetDateTime` instead of chrono.
-    /// Serialized signature reports retain their existing RFC 3339 format.
+    /// Signature reports serialize this as an RFC 3339 timestamp.
     pub date: Option<OffsetDateTime>,
 
     /// Certificate serial number
