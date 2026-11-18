@@ -1,17 +1,17 @@
-use std::{io::SeekFrom, sync::Arc};
+use std::sync::Arc;
 
 use ::asset_io::{
-    container_api::{ContainerHandler, WritePlan},
-    Chunk, ItemKind, NullSink, Role, SegmentId, Sink, Structure, Updates,
+    container_api::{
+        BoxFuture, ContainerHandler, FormatSpec, Io, MetadataUpdate, PlanBuilder, StructureBuilder,
+        WritePlan,
+    },
+    ItemKind, NullSink, SegmentId, Structure, Updates,
 };
 
 use crate::{
-    assertions::{
-        asset_binding::{
-            asset_io_error, binding_from_claim, default_binding, AssetBinding, BuiltAssertion,
-            PlannedAsset, SpanHasher,
-        },
-        DataHash,
+    assertions::asset_binding::{
+        asset_io_error, binding_from_claim, default_binding, AssetBinding, BuiltAssertion,
+        PlannedAsset, SpanHasher,
     },
     asset_handlers::asset_io_adapter::{store_err, MANIFEST_PLACEHOLDER},
     asset_io::{ReadSeek, ReadWriteSeek},
@@ -29,8 +29,50 @@ use crate::{
 /// size, which moves the offsets again.
 const MAX_SETTLE_PASSES: usize = 8;
 
-/// Buffer size for copying an asset no handler understands.
-const COPY_BUFFER_LEN: usize = 64 * 1024;
+/// Unregistered fallback for assets that can only be copied to a sidecar output.
+#[derive(Debug)]
+struct OpaqueHandler;
+
+impl ContainerHandler for OpaqueHandler {
+    fn id(&self) -> &'static str {
+        "opaque"
+    }
+
+    fn formats(&self) -> &[FormatSpec] {
+        &[]
+    }
+
+    fn parse_async(self: Arc<Self>, io: Io) -> BoxFuture<'static, ::asset_io::Result<Structure>> {
+        Box::pin(async move {
+            let mut builder = StructureBuilder::new(self, "application/octet-stream", io.len());
+            builder.push_tail()?;
+            builder.finish()
+        })
+    }
+
+    fn write_plan_async<'f, 'a: 'f>(
+        &'f self,
+        source: &'f Structure,
+        _io: Io,
+        updates: &'a Updates,
+    ) -> BoxFuture<'f, ::asset_io::Result<WritePlan<'a>>> {
+        Box::pin(async move {
+            for (update, kind) in [
+                (updates.xmp(), ItemKind::Xmp),
+                (updates.c2pa(), ItemKind::C2pa),
+            ] {
+                if matches!(update, MetadataUpdate::Set(_)) {
+                    return Err(::asset_io::Error::UnsupportedItem(kind));
+                }
+            }
+            let mut builder = PlanBuilder::new(source);
+            for index in 0..source.segments().len() {
+                builder.copy_segment(SegmentId::from_index(index)?)?;
+            }
+            builder.finish()
+        })
+    }
+}
 
 /// What the provenance claim asks of a save.
 struct SaveRequest {
@@ -182,17 +224,7 @@ impl Store {
         self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
 
         let request = SaveRequest::from_store(self)?;
-        let Some(handler) = handler else {
-            return self.save_unhandled_sidecar(
-                format,
-                input,
-                output,
-                request,
-                signer,
-                &dynamic_assertions,
-                context,
-            );
-        };
+        let handler = handler.unwrap_or_else(|| Arc::new(OpaqueHandler));
         let structure = open_structure(handler, input)?;
         let xmp = provenance_xmp(&structure, input, request.remote_url.as_deref())?;
         let save = DirectSave {
@@ -397,75 +429,6 @@ impl Store {
         self.embedded = embedded;
         self.verify_after_save(output, format, context)?;
         Ok(signed)
-    }
-
-    /// Save an asset no handler understands: copied unchanged and hashed whole,
-    /// with the manifest returned for a sidecar.
-    #[allow(clippy::too_many_arguments)]
-    fn save_unhandled_sidecar(
-        &mut self,
-        format: &str,
-        input: &mut dyn ReadSeek,
-        output: &mut dyn ReadWriteSeek,
-        request: SaveRequest,
-        signer: &dyn Signer,
-        dynamic_assertions: &[Box<dyn DynamicAssertion>],
-        context: &Context,
-    ) -> Result<Vec<u8>> {
-        if request.remote_url.is_some() {
-            return Err(Error::XmpNotSupported);
-        }
-        if request.embed {
-            return Err(Error::UnsupportedType);
-        }
-        // An update manifest has no hard binding; the asset is only copied.
-        let mut binding = match request.binding {
-            Some(binding) => Some((binding, true)),
-            None if request.update => None,
-            None => Some((
-                Box::new(DataHash::placeholder(&request.alg, Vec::new())?) as Box<_>,
-                false,
-            )),
-        };
-        let mut hasher = match &mut binding {
-            Some((binding, _)) => {
-                let len = input.seek(SeekFrom::End(0))?;
-                Some(SpanHasher::new(
-                    binding.plan_unstructured(len, &request.alg)?,
-                    context,
-                )?)
-            }
-            None => None,
-        };
-
-        let segment = SegmentId::from_index(0).map_err(asset_io_error)?;
-        context.check_progress(ProgressPhase::Writing, 1, 2)?;
-        input.rewind()?;
-        output.rewind()?;
-        let mut buffer = vec![0; COPY_BUFFER_LEN];
-        let mut offset = 0;
-        loop {
-            let read = input.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            output.write_all(&buffer[..read])?;
-            if let Some(hasher) = &mut hasher {
-                hasher
-                    .chunk(Chunk::new(segment, Role::Payload, offset, &buffer[..read]))
-                    .map_err(asset_io_error)?;
-            }
-            offset += read as u64;
-        }
-        output.flush()?;
-        context.check_progress(ProgressPhase::Writing, 2, 2)?;
-        if let (Some((binding, existing)), Some(hasher)) = (&mut binding, hasher) {
-            binding.set_hashes(hasher.finish());
-            self.put_binding(binding.as_ref(), *existing)?;
-        }
-
-        let manifest = self.sign_for_save(signer, dynamic_assertions, context, None)?;
-        self.finish_save(format, false, output, context, manifest)
     }
 
     /// Write the signer's dynamic assertions into the slots reserved for them,
@@ -930,6 +893,8 @@ mod tests {
         for kind in [
             "unknown_embed",
             "unknown_remote",
+            "unknown_boxes",
+            "unknown_bmff",
             "multiple",
             "collection",
             "update_with_binding",
@@ -942,6 +907,16 @@ mod tests {
                 "unknown_remote" => {
                     claim
                         .set_remote_manifest("https://example.com/manifest.c2pa")
+                        .unwrap();
+                }
+                "unknown_boxes" => {
+                    claim.set_external_manifest();
+                    claim.add_assertion(&BoxHash { boxes: Vec::new() }).unwrap();
+                }
+                "unknown_bmff" => {
+                    claim.set_external_manifest();
+                    claim
+                        .add_assertion(&BmffHash::new("requested", "sha256", None))
                         .unwrap();
                 }
                 "multiple" => {
@@ -964,7 +939,9 @@ mod tests {
                 _ => {}
             }
             let (format, source): (&str, &[u8]) = match kind {
-                "unknown_embed" | "unknown_remote" => ("application/octet-stream", source),
+                "unknown_embed" | "unknown_remote" | "unknown_boxes" | "unknown_bmff" => {
+                    ("application/octet-stream", source)
+                }
                 "pdf" => (
                     "application/pdf",
                     include_bytes!("../../tests/fixtures/basic.pdf"),
@@ -1001,6 +978,85 @@ mod tests {
             }
             assert!(output.writes.is_empty(), "{kind} wrote before rejection");
         }
+    }
+
+    #[test]
+    fn direct_asset_io_opaque_sidecars_hash_the_entire_payload() {
+        let payload = vec![42; 128 * 1024 + 1];
+        for prefer_box_hash in [false, true] {
+            let context = test_context()
+                .with_settings(
+                    format!(
+                        r#"{{"builder":{{"prefer_box_hash":{prefer_box_hash}}},"verify":{{"verify_after_sign":false}}}}"#
+                    )
+                    .as_str(),
+                )
+                .unwrap()
+                .with_signer(test_signer(SigningAlg::Ed25519));
+            for source in [&b"x"[..], payload.as_slice()] {
+                for explicit in [false, true] {
+                    let mut store = unsigned_store(&context);
+                    let claim = store.provenance_claim_mut().unwrap();
+                    claim.set_external_manifest();
+                    if explicit {
+                        let hash = DataHash::placeholder(
+                            "sha384",
+                            vec![crate::utils::hash_utils::HashRange::new(0, 1)],
+                        )
+                        .unwrap();
+                        claim.add_assertion(&hash).unwrap();
+                    }
+                    let mut output = TrackedOutput::default();
+                    let manifest = store
+                        .save_to_stream_asset_io(
+                            "application/octet-stream",
+                            &mut Cursor::new(source),
+                            &mut output,
+                            context.signer().unwrap(),
+                            &context,
+                        )
+                        .unwrap();
+                    assert_eq!(output.stream.get_ref(), source);
+                    assert!(output.reads.is_empty());
+                    let claim = store.provenance_claim().unwrap();
+                    let hash =
+                        DataHash::from_assertion(claim.data_hash_assertions()[0].assertion())
+                            .unwrap();
+                    assert!(hash.exclusions.is_none());
+                    if explicit {
+                        assert_eq!(hash.alg.as_deref(), Some("sha384"));
+                    }
+                    hash.verify_stream_hash(&mut Cursor::new(source), Some(claim.alg()))
+                        .unwrap();
+                    assert_valid_manifest(
+                        "application/octet-stream",
+                        &manifest,
+                        &mut output.stream,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn direct_asset_io_does_not_treat_malformed_known_formats_as_opaque() {
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let mut store = unsigned_store(&context);
+        store
+            .provenance_claim_mut()
+            .unwrap()
+            .set_external_manifest();
+        let mut output = TrackedOutput::default();
+        assert!(store
+            .save_to_stream_asset_io(
+                "image/png",
+                &mut Cursor::new(b"not a PNG"),
+                &mut output,
+                context.signer().unwrap(),
+                &context,
+            )
+            .is_err());
+        assert!(output.writes.is_empty());
     }
 
     /// Sign `source` with a direct save, then return the store read back from

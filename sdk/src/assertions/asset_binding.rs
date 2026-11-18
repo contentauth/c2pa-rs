@@ -136,14 +136,6 @@ pub(crate) trait AssetBinding {
         default_alg: &str,
     ) -> Result<Vec<HashSpan>>;
 
-    /// The spans for an asset no handler understands, `len` bytes hashed whole
-    /// with its manifest kept elsewhere. Only a data hash can do this.
-    fn plan_unstructured(&mut self, _len: u64, _default_alg: &str) -> Result<Vec<HashSpan>> {
-        Err(Error::NotImplemented(
-            "unstructured assets require a data hash".into(),
-        ))
-    }
-
     /// Store the digests of the spans [`plan_hashes`](Self::plan_hashes) returned.
     fn set_hashes(&mut self, digests: Vec<Vec<u8>>);
 

@@ -14,7 +14,7 @@
 //! [`DataHash`] as a binding of an asset-io planned output: every byte except
 //! the ranges the container excludes for the embedded manifest store.
 
-use ::asset_io::{ByteRange, Structure};
+use ::asset_io::Structure;
 
 use super::DataHash;
 use crate::{
@@ -116,15 +116,6 @@ impl AssetBinding for DataHash {
         Ok(vec![
             HashSpan::new(asset.full_range()?, &alg).excluding(exclusions)?
         ])
-    }
-
-    fn plan_unstructured(&mut self, len: u64, default_alg: &str) -> Result<Vec<HashSpan>> {
-        self.exclusions = None;
-        let alg = self.resolved_alg(default_alg);
-        Ok(vec![HashSpan::new(
-            ByteRange::new(0, len).map_err(asset_io_error)?,
-            &alg,
-        )])
     }
 
     fn set_hashes(&mut self, digests: Vec<Vec<u8>>) {

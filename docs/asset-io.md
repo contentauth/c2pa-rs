@@ -53,6 +53,9 @@ patches the output.
 The context's handler registry decides how a format is saved: an asset-io
 container directly, a format served by a legacy handler through
 `save_to_stream`, and a format with no handler as a sidecar.
+Unknown formats use a private, unregistered pass-through handler that describes
+the asset as unnamed payload bytes. They share the normal write-and-hash pipeline
+but cannot embed a manifest or write XMP.
 
 ### Current limitations
 

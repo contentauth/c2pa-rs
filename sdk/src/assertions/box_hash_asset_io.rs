@@ -201,6 +201,11 @@ impl AssetBinding for BoxHash {
                 "BMFF requires the BMFF hard binding".into(),
             ));
         }
+        if !structure.supports_named_boxes() {
+            return Err(Error::NotImplemented(
+                "box hash requires a structure made entirely of named boxes".into(),
+            ));
+        }
         Ok(())
     }
 
