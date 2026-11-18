@@ -13,6 +13,21 @@
 
 mod common;
 
+#[cfg(feature = "unstable_asset_io")]
+#[test]
+fn context_registry_is_public() {
+    use c2pa::{Context, HandlerRegistry};
+
+    let mut context = Context::new();
+    let registry: &HandlerRegistry = context.io();
+    assert_eq!(registry.mime_for("jpg"), Some("image/jpeg"));
+    assert!(registry
+        .reader_mime_types()
+        .contains(&"image/png".to_owned()));
+    let registry: &mut HandlerRegistry = context.io_mut();
+    assert_eq!(registry.mime_for("png"), Some("image/png"));
+}
+
 #[cfg(feature = "file_io")]
 #[path = "common/embed_manifest.rs"]
 mod embed_manifest;

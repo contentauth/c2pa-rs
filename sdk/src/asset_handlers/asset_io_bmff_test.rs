@@ -1,4 +1,5 @@
-// EXPERIMENT (local only, do not commit).
+// Temporary compatibility tests for the asset-io migration.
+// Remove when the corresponding legacy handlers are retired; preserve regression coverage.
 //
 // Differential test: asset-io's BMFF layout against the existing c2pa-rs BMFF
 // handler on every BMFF fixture.

@@ -3941,9 +3941,8 @@ fn rewrite_action_ingredient_urls(
     Ok(())
 }
 
-// EXPERIMENT (local only, do not commit): raw-JUMBF accessors for the asset-io
-// equivalence test. A real API would expose these (e.g. placeholder_jumbf /
-// sign_jumbf) so the caller's container code can compose the manifest itself.
+// Temporary raw-JUMBF accessors for the asset-io compatibility tests.
+// Remove with the migration test harness.
 #[cfg(all(test, feature = "unstable_asset_io"))]
 impl Builder {
     /// Composed placeholder (as `placeholder()` returns) plus the raw JUMBF.

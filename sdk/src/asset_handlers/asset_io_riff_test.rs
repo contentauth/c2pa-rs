@@ -1,4 +1,5 @@
-// EXPERIMENT (local only, do not commit).
+// Temporary compatibility tests for the asset-io migration.
+// Remove when the corresponding legacy handlers are retired; preserve regression coverage.
 //
 // Differential test: asset-io's RIFF handler against the existing c2pa-rs
 // `RiffIO` on every WebP, WAV and AVI fixture.

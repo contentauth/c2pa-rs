@@ -11,7 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// EXPERIMENT (local only, do not commit)
 #[cfg(feature = "unstable_asset_io")]
 pub(crate) mod asset_io_adapter;
 #[cfg(all(test, feature = "unstable_asset_io"))]

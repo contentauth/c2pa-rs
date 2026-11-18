@@ -36,8 +36,8 @@ transfer encodings such as SVG base64. Same-size manifest replacement uses
 
 The `asset_io_*_test` modules live alongside the handlers because they exercise
 crate-private handler and signing internals. They are unit tests enabled only
-with `unstable_asset_io`; public registry integration tests remain in
-[`sdk/tests/handler_registry.rs`](../../tests/handler_registry.rs).
+with `unstable_asset_io`; the public registry API check lives in
+[`sdk/tests/integration.rs`](../../tests/integration.rs).
 
 ### Lookup functions
 

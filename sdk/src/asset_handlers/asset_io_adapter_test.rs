@@ -1,4 +1,5 @@
-// EXPERIMENT (local only, do not commit).
+// Temporary compatibility tests for the asset-io migration.
+// Remove when the corresponding legacy handlers are retired; preserve regression coverage.
 //
 // The asset-io adapter against the handlers it replaces, through the same traits the SDK
 // uses, on every JPEG, PNG, SVG, RIFF, TIFF/DNG, MP3, FLAC, GIF and PDF fixture.

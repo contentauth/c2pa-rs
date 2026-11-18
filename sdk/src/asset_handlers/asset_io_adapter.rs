@@ -1,5 +1,3 @@
-// EXPERIMENT (local only, do not commit).
-//
 // The built-in handlers for formats the `asset-io` crate understands, as `AssetIO`
 // implementations over its `ContainerHandler`s. Everything format specific lives in
 // asset-io; what remains here is what C2PA decides: which JUMBF is the manifest

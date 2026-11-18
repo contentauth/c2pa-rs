@@ -98,7 +98,6 @@ name = "progress"
 [[example]]
 name = "redaction"
 
-# EXPERIMENT (local only, do not commit).
 [[example]]
 name = "asset_io_corpus"
 required-features = ["unstable_asset_io"]

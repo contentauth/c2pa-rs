@@ -1,4 +1,5 @@
-// EXPERIMENT (local only, do not commit).
+// Temporary compatibility tests for the asset-io migration.
+// Remove when the corresponding legacy handlers are retired; preserve regression coverage.
 //
 // Can exclusions derived from asset-io's container-agnostic `Structure`
 // reproduce the DataHash stored in real signed files?

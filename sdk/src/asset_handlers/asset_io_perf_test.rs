@@ -1,4 +1,5 @@
-// EXPERIMENT (local only, do not commit).
+// Temporary performance comparisons for the asset-io migration.
+// Remove when the corresponding legacy handlers are retired.
 //
 // Timing of the asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`, `SvgIO`, `RiffIO`, `TiffIO`, `PdfIO`),
 // through the same traits the SDK uses. Not run by default: it only reports.

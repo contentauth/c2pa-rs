@@ -1,5 +1,3 @@
-// EXPERIMENT (local only, do not commit).
-//
 //! Run asset-io's invariants over a folder of media files.
 //!
 //! For every file the container is detected from its bytes, then:
