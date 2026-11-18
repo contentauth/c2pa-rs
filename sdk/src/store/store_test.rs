@@ -6055,11 +6055,14 @@ mod remote_manifest_response_tests {
     fn test_remote_manifest_sync_timeout_bounds_headers_and_body() {
         use std::time::{Duration, Instant};
 
+        let context = Context::new()
+            .with_settings_value("core.http_request_timeout_in_ms", 100u64)
+            .unwrap();
+        // Exclude lazy HTTP client initialization from the request timeout measurement.
+        let _resolver = context.resolver();
+
         for delay_body in [false, true] {
             let (url, server) = crate::http::tests::slow_server(delay_body);
-            let context = Context::new()
-                .with_settings_value("core.http_request_timeout_in_ms", 100u64)
-                .unwrap();
             let started = Instant::now();
             let result = Store::fetch_remote_manifest(&url, &context);
             let elapsed = started.elapsed();
@@ -6078,11 +6081,14 @@ mod remote_manifest_response_tests {
     async fn test_remote_manifest_async_timeout_bounds_headers_and_body() {
         use std::time::{Duration, Instant};
 
+        let context = Context::new()
+            .with_settings_value("core.http_request_timeout_in_ms", 100u64)
+            .unwrap();
+        // Exclude lazy HTTP client initialization from the request timeout measurement.
+        let _resolver = context.resolver_async();
+
         for delay_body in [false, true] {
             let (url, server) = crate::http::tests::slow_server(delay_body);
-            let context = Context::new()
-                .with_settings_value("core.http_request_timeout_in_ms", 100u64)
-                .unwrap();
             let started = Instant::now();
             let result = Store::fetch_remote_manifest_async(&url, &context).await;
             let elapsed = started.elapsed();
