@@ -206,10 +206,17 @@ trait, not another variant or parameter here — which is also why the old
 the file-`Path`-based `embed_reference` method) is gone; the method just takes the URL
 directly.
 
-**Don't implement `RemoteManifestUrl` directly.** Since writing a remote manifest URL is
-always "merge it into XMP, then write XMP", implement `WriteXmp` instead —
+**Don't implement `RemoteManifestUrl` directly, unless the format has its own place for the
+URL.** Since writing a remote manifest URL is usually "merge it into XMP, then write XMP",
+implement `WriteXmp` instead —
 `RemoteManifestUrl` has a blanket impl for any type that implements `WriteXmp` (and
 `C2paReader`, for reading the current XMP):
+
+The exception is a format whose spec keeps the URL outside XMP. `StructuredTextIO`
+implements the trait directly because C2PA A.9 stores the URL in the same manifest block
+that would otherwise hold an embedded manifest. Such a handler overrides
+`read_manifest_url` so readers can find the URL, and `url_shares_manifest_slot` so the
+store keeps the block's exclusion range and doesn't strip the block before writing.
 
 ```rust
 pub trait WriteXmp {

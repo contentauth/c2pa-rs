@@ -620,6 +620,15 @@ pub trait RemoteManifestUrl {
             "remove_remote_manifest_url is not supported by this handler".to_string(),
         ))
     }
+
+    /// Whether the remote URL and an embedded manifest occupy the same location in the asset.
+    ///
+    /// When true, [`write_remote_manifest_url`](Self::write_remote_manifest_url) replaces any
+    /// existing manifest itself, so the caller must not strip it first, and an asset can't hold
+    /// both a URL and an embedded manifest. Formats that write the URL to XMP return false.
+    fn url_shares_manifest_slot(&self) -> bool {
+        false
+    }
 }
 
 /// Writes a complete XMP packet into an asset stream, replacing any existing XMP.

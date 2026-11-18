@@ -54,6 +54,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
     pub is_embedded: bool, // whether the manifest was read out of the asset being validated, vs. supplied separately (sidecar/remote)
+    pub single_exclusion_required: bool, // whether the format's data hash must exclude only its manifest location
 }
 
 impl Store {
@@ -457,6 +458,20 @@ impl Store {
 
         // get the manifest offset position
         if let Some(asset_data) = asset_data {
+            let format = match &*asset_data {
+                #[cfg(feature = "file_io")]
+                ClaimAssetData::Path(path) => io.supported_extension(path),
+                ClaimAssetData::Bytes(_, typ)
+                | ClaimAssetData::Stream(_, typ)
+                | ClaimAssetData::StreamFragment(_, _, typ) => Some(typ.to_string()),
+                #[cfg(feature = "file_io")]
+                ClaimAssetData::StreamFragments(_, _, typ) => Some(typ.to_string()),
+            };
+            svi.single_exclusion_required = format
+                .and_then(|format| io.handler(&format))
+                .and_then(|handler| handler.remote_manifest_url_ref())
+                .is_some_and(|writer| writer.url_shares_manifest_slot());
+
             let locations = match asset_data {
                 #[cfg(feature = "file_io")]
                 ClaimAssetData::Path(path) => {

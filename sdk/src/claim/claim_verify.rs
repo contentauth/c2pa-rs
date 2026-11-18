@@ -1219,7 +1219,8 @@ impl Claim {
                                 exclusions,
                                 svi.manifest_store_range.as_ref(),
                                 svi.is_embedded,
-                            ) {
+                            ) || (svi.single_exclusion_required && exclusions.len() != 1)
+                            {
                                 log_item!(
                                     claim.assertion_uri(&hash_binding_assertion.label()),
                                     "data hash exclusion does not match the manifest location in the asset",

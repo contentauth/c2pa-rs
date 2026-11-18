@@ -6097,6 +6097,260 @@ mod tests {
         }
     }
 
+    /// Signs `content` as a remote-manifest asset and returns the output and manifest bytes.
+    #[cfg(feature = "unstable_structured_text")]
+    fn sign_structured_text_with_remote_url(content: &[u8], url: &str) -> (Vec<u8>, Vec<u8>) {
+        let mut builder = Builder::default()
+            .with_definition(json!({"title": "Remote manifest"}))
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCreation));
+        builder.set_no_embed(true);
+        builder.set_remote_url(url);
+
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        let manifest = builder
+            .sign(
+                signer.as_ref(),
+                "text/markdown",
+                &mut Cursor::new(content.to_vec()),
+                &mut dest,
+            )
+            .unwrap();
+        (dest.into_inner(), manifest)
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_builder_structured_text_remote_url() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let (output, manifest) = sign_structured_text_with_remote_url(b"# Title\n\nBody.\n", url);
+        let text = String::from_utf8(output.clone()).unwrap();
+        assert!(text.starts_with(&format!(
+            "<!-- -----BEGIN C2PA MANIFEST----- {url} -----END C2PA MANIFEST----- -->\n"
+        )));
+
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(&manifest, "text/markdown", Cursor::new(output.clone()))
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        // With fetching off, the reader reports the URL from the block rather than "no manifest".
+        let context = Context::new()
+            .with_settings(serde_json::json!({"verify": {"remote_manifest_fetch": false}}))
+            .unwrap();
+        let result =
+            Reader::from_context(context).with_stream("text/markdown", Cursor::new(output));
+        assert!(
+            matches!(&result, Err(Error::RemoteManifestUrl(found)) if found == url),
+            "{:?}",
+            result.err()
+        );
+    }
+
+    /// The form a publisher needs in a file with YAML front matter: one `#` comment line.
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_builder_structured_text_remote_url_keeps_existing_line() {
+        let url = "https://example.com/manifests/skill.c2pa";
+        let line = format!("# -----BEGIN C2PA MANIFEST----- {url} -----END C2PA MANIFEST-----");
+        let source = format!("---\n{line}\nname: skill\ndescription: Example.\n---\n\nBody.\n");
+
+        let (output, manifest) = sign_structured_text_with_remote_url(source.as_bytes(), url);
+        assert_eq!(String::from_utf8(output.clone()).unwrap(), source);
+
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(&manifest, "text/markdown", Cursor::new(output))
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        // A.9.5: the exclusion covers the block, so the URL can move without breaking the binding.
+        let moved = source.replace("example.com", "example.org");
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(
+                &manifest,
+                "text/markdown",
+                Cursor::new(moved.into_bytes()),
+            )
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let tampered = source.replace("Example.", "Tampered");
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(
+                &manifest,
+                "text/markdown",
+                Cursor::new(tampered.into_bytes()),
+            )
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Invalid);
+    }
+
+    /// Only the delimited bytes are excluded, so everything else on the line is hashed.
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_builder_structured_text_hashes_the_rest_of_the_line() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let line = format!("# -----BEGIN C2PA MANIFEST----- {url} -----END C2PA MANIFEST-----");
+        let source = format!("{line}\nbody\n");
+        let (output, manifest) = sign_structured_text_with_remote_url(source.as_bytes(), url);
+        assert_eq!(String::from_utf8(output).unwrap(), source);
+
+        let edited = source.replace("# -----BEGIN", "x# -----BEGIN").replace(
+            "https://example.com/manifests/doc.c2pa",
+            "https://example.com/manifests/do.c2pa",
+        );
+        assert_eq!(edited.len(), source.len());
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(
+                &manifest,
+                "text/markdown",
+                Cursor::new(edited.into_bytes()),
+            )
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Invalid);
+    }
+
+    /// A new block in Markdown front matter is a comment line, so the YAML stays parseable.
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_builder_structured_text_front_matter_uses_a_comment_line() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let source = "---\nname: skill\n---\n\nBody.\n";
+        let (output, manifest) = sign_structured_text_with_remote_url(source.as_bytes(), url);
+        let text = String::from_utf8(output.clone()).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "---\n# -----BEGIN C2PA MANIFEST----- {url} -----END C2PA MANIFEST-----\nname: skill\n---\n\nBody.\n"
+            )
+        );
+
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(&manifest, "text/markdown", Cursor::new(output))
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+    }
+
+    /// A data hash for structured text must exclude only the delimited block.
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_structured_text_rejects_additional_exclusions() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let source = format!(
+            "# -----BEGIN C2PA MANIFEST----- {url} -----END C2PA MANIFEST-----\nsigned\nhidden\n"
+        );
+        let begin = source.find("-----BEGIN").unwrap();
+        let end = source.find("MANIFEST-----\n").unwrap() + "MANIFEST-----".len();
+        let hidden = source.find("hidden").unwrap();
+
+        let sign_with = |exclusions: Vec<HashRange>| {
+            let context = Context::new().with_signer(test_signer(SigningAlg::Ps256));
+            let mut builder = Builder::from_context(context)
+                .with_definition(json!({"title": "Exclusions"}))
+                .unwrap();
+            builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCreation));
+            let mut binding = DataHash::new("jumbf manifest", "sha256");
+            for exclusion in exclusions {
+                binding.add_exclusion(exclusion);
+            }
+            builder.add_assertion(DataHash::LABEL, &binding).unwrap();
+            builder
+                .update_hash_from_stream("text/markdown", &mut Cursor::new(source.as_bytes()))
+                .unwrap();
+            builder.sign_embeddable("application/c2pa").unwrap()
+        };
+        let validate = |manifest: &[u8]| {
+            Reader::default()
+                .with_manifest_data_and_stream(
+                    manifest,
+                    "text/markdown",
+                    Cursor::new(source.as_bytes().to_vec()),
+                )
+                .unwrap()
+                .validation_state()
+        };
+
+        let block = HashRange::new(begin as u64, (end - begin) as u64);
+        assert_eq!(
+            validate(&sign_with(vec![block.clone()])),
+            ValidationState::Trusted
+        );
+        assert_eq!(
+            validate(&sign_with(vec![
+                block,
+                HashRange::new(hidden as u64, "hidden".len() as u64),
+            ])),
+            ValidationState::Invalid
+        );
+    }
+
+    #[cfg(feature = "unstable_structured_text")]
+    #[c2pa_test_async]
+    async fn test_builder_structured_text_remote_url_async() {
+        let url = "https://example.com/manifests/doc.c2pa";
+        let mut builder = Builder::default()
+            .with_definition(json!({"title": "Remote manifest"}))
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCreation));
+        builder.set_no_embed(true);
+        builder.set_remote_url(url);
+
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
+        let mut dest = Cursor::new(Vec::new());
+        let manifest = builder
+            .sign_async(
+                &signer,
+                "text/markdown",
+                &mut Cursor::new(b"# Title\n".to_vec()),
+                &mut dest,
+            )
+            .await
+            .unwrap();
+        let output = dest.into_inner();
+
+        let reader = Reader::default()
+            .with_manifest_data_and_stream_async(
+                &manifest,
+                "text/markdown",
+                Cursor::new(output.clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let context = Context::new()
+            .with_settings(serde_json::json!({"verify": {"remote_manifest_fetch": false}}))
+            .unwrap();
+        let result = Reader::from_context(context)
+            .with_stream_async("text/markdown", Cursor::new(output))
+            .await;
+        assert!(
+            matches!(&result, Err(Error::RemoteManifestUrl(found)) if found == url),
+            "{:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_builder_structured_text_rejects_url_with_embedded_manifest() {
+        let mut builder = Builder::default()
+            .with_definition(json!({"title": "Remote manifest"}))
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCreation));
+        builder.set_remote_url("https://example.com/manifests/doc.c2pa");
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let result = builder.sign(
+            signer.as_ref(),
+            "text/markdown",
+            &mut Cursor::new(b"# Title\n".to_vec()),
+            &mut Cursor::new(Vec::new()),
+        );
+        assert!(matches!(result, Err(Error::BadParam(_))), "{result:?}");
+    }
+
     #[test]
     #[cfg(feature = "unstable_structured_text")]
     fn test_tampered_structured_text_fails_validation() {
