@@ -11,6 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+// Legacy dependencies remain necessary for default builds and differential tests.
+#[cfg(all(feature = "unstable_asset_io", not(test)))]
+use {byteordered as _, id3 as _, img_parts as _, jfifdump as _, png_pong as _, riff as _};
+
 #[cfg(feature = "unstable_asset_io")]
 pub(crate) mod asset_io_adapter;
 #[cfg(all(test, feature = "unstable_asset_io"))]
