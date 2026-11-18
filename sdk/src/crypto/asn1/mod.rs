@@ -475,6 +475,7 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
     use bcder::{decode::Constructed, encode::Values, Mode, Oid};
+    use time::{macros::datetime, Month, OffsetDateTime};
 
     use super::*;
 
@@ -694,8 +695,6 @@ mod tests {
 
     #[test]
     fn test_generalized_time_from_offset_datetime() {
-        use time::{macros::datetime, Month, OffsetDateTime};
-
         // Create a known timestamp: 2023-01-15 12:30:45 UTC
         let dt = datetime!(2023-01-15 12:30:45 UTC);
 
@@ -726,7 +725,6 @@ mod tests {
         assert!(!cert_der.is_empty(), "Certificate DER should not be empty");
 
         // Create a GeneralizedTime from a known timestamp and test roundtrip
-        use time::{macros::datetime, Month, OffsetDateTime};
         let test_time = datetime!(2022-06-10 18:46:40 UTC);
         let gt = GeneralizedTime::try_from(test_time).unwrap();
 
@@ -748,8 +746,6 @@ mod tests {
     fn test_generalized_time_with_multiple_cert_types() {
         // Test that we can load and parse certificates with different algorithms
         // This verifies the der/bcder integration works across all supported cert types
-        use time::macros::datetime;
-
         let cert_types = vec![
             "es256.pub",
             "es384.pub",
@@ -941,8 +937,6 @@ mod tests {
 
     #[test]
     fn test_generalized_time_encode_decode_roundtrip() {
-        use time::{macros::datetime, OffsetDateTime};
-
         let original_dt = datetime!(2025-10-29 14:30:00 UTC);
         let gt1 = GeneralizedTime::try_from(original_dt).unwrap();
 
@@ -983,8 +977,6 @@ mod tests {
 
     #[test]
     fn test_generalized_time_try_from_out_of_range() {
-        use time::macros::datetime;
-
         // der's GeneralizedTime only supports 1970-9999. Dates outside that range
         // (e.g. a pre-1970 signing time attacker-supplied in a timestamp token) must
         // return an error rather than panic. Regression test for the DoS where an

@@ -1231,7 +1231,10 @@ mod rsa_pss_ski_regression;
 mod tests {
     use std::str::FromStr;
 
+    use bcder::{decode::Constructed, Mode};
+
     use super::DigestAlgorithm;
+    use crate::crypto::asn1::rfc5652::Time;
 
     fn oid(s: &str) -> bcder::Oid {
         bcder::Oid::from_str(s).expect("valid OID")
@@ -1307,10 +1310,6 @@ mod tests {
 
     #[test]
     fn timestamp_conversions_preserve_utc_and_generalized_dates() {
-        use bcder::{decode::Constructed, Mode};
-
-        use crate::crypto::asn1::rfc5652::Time;
-
         let expected = time::macros::datetime!(2020-01-01 00:00 UTC);
         for encoded in [
             b"\x17\x0d200101000000Z".as_slice(),
@@ -1357,7 +1356,8 @@ mod tests {
 #[cfg(all(test, feature = "openssl", not(target_arch = "wasm32")))]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 pub(crate) mod message_imprint_regression {
-    use der::{Decode, Encode};
+    use cms::signed_data::SignerIdentifier;
+    use der::{asn1::ObjectIdentifier, Any, Decode, Encode};
     use openssl::{
         asn1::Asn1Time,
         bn::BigNum,
@@ -1368,12 +1368,16 @@ pub(crate) mod message_imprint_regression {
         sign::Signer,
         x509::{extension::ExtendedKeyUsage, X509Builder, X509NameBuilder},
     };
+    use x509_cert::der::Decode as DecodeDer;
 
     use super::{generalized_time_to_datetime, verify_time_stamp, SignedData};
     use crate::{
         crypto::{cose::CertificateTrustPolicy, time_stamp::TimeStampError},
         status_tracker::StatusTracker,
-        validation_status::{TIMESTAMP_TRUSTED, TIMESTAMP_UNTRUSTED, TIMESTAMP_VALIDATED},
+        validation_status::{
+            TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_TRUSTED, TIMESTAMP_UNTRUSTED,
+            TIMESTAMP_VALIDATED,
+        },
     };
 
     const OID_MD5: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05];
@@ -1955,9 +1959,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn signed_message_digest_failures_have_distinct_statuses() {
-        use der::{asn1::ObjectIdentifier, Any};
-
-        use crate::validation_status::{TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH};
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),
@@ -2172,8 +2173,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn signer_lookup_matches_issuer_serial_and_decoded_ski() {
-        use cms::signed_data::SignerIdentifier;
-        use x509_cert::der::Decode as DecodeDer;
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),

@@ -625,12 +625,17 @@ mod tests {
         },
         Decode as DecodeDer, Encode as EncodeDer,
     };
+    use x509_parser::prelude::X509Certificate;
 
+    #[cfg(feature = "openssl")]
+    use crate::crypto::ocsp::asn1::{CertStatus, CrlReason, RevokedInfo};
     use crate::{
         crypto::{
             internal,
             ocsp::{
-                test_responder::{encode_response, good_basic_response as basic_response},
+                test_responder::{
+                    encode_response, good_basic_response as basic_response, IssuerResponder,
+                },
                 OcspResponse,
             },
         },
@@ -1002,8 +1007,6 @@ mod tests {
 
     #[test]
     fn issuer_signed_response_without_certs_authenticates_both_responder_ids() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let now = datetime!(2025-03-08 00:00:00 UTC);
 
@@ -1033,8 +1036,6 @@ mod tests {
 
     #[test]
     fn issuer_response_rejects_signed_wrong_ids_and_cert_ids_and_bad_signature() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let original = responder.basic_response(false);
         let now = datetime!(2025-03-08 00:00:00 UTC);
@@ -1083,8 +1084,6 @@ mod tests {
 
     #[test]
     fn issuer_candidate_must_actually_issue_leaf_and_be_a_ca() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let der = responder.sign(responder.basic_response(false));
         let now = datetime!(2025-03-08 00:00:00 UTC);
@@ -1270,8 +1269,6 @@ mod tests {
 
     #[test]
     fn issuer_response_preserves_stale_good_and_trusted_time_windows() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
 
         for has_next_update in [false, true] {
@@ -1326,8 +1323,6 @@ mod tests {
 
     #[test]
     fn issuer_signed_revoked_and_unknown_responses_preserve_status_codes() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let outer = super::asn1::Response::from_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/response_revoked.der"
@@ -1410,9 +1405,6 @@ mod tests {
 
     #[test]
     fn cert_id_requires_serial_both_issuer_hashes_and_supported_algorithm() {
-        use der::asn1::{Int, ObjectIdentifier, OctetString};
-        use x509_parser::prelude::{FromDer, X509Certificate};
-
         let chain = signing_cert_chain();
         let original = basic_response().tbs_response_data.responses[0]
             .cert_id
@@ -1615,8 +1607,6 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn future_responses_are_ignored_regardless_of_certificate_status() {
-        use crate::crypto::ocsp::asn1::{CertStatus, CrlReason, RevokedInfo};
-
         let this_update = datetime!(2025-03-07 14:53:24 UTC);
         let revoked_at = datetime!(2023-01-01 00:00:00 UTC);
         let signing_time = datetime!(2023-02-01 08:00:00 UTC);
@@ -1660,8 +1650,6 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn revocation_reason_and_signing_time_matrix() {
-        use crate::crypto::ocsp::asn1::{CertStatus, CrlReason, RevokedInfo};
-
         for reason in [
             None,
             Some(CrlReason::KeyCompromise),

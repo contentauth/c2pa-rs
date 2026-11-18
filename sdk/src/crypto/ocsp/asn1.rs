@@ -255,6 +255,7 @@ pub(crate) struct Extension {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use der::{asn1::Any, Decode, Encode, Tag};
+    use time::macros::datetime;
 
     use super::{BasicOcspResponse, GeneralizedTime, Response};
 
@@ -283,8 +284,6 @@ mod tests {
 
     #[test]
     fn date_construction_preserves_epoch_boundaries_fractions_and_offsets() {
-        use time::macros::datetime;
-
         for (datetime, expected) in [
             (datetime!(1950-01-01 00:00 UTC), "19500101000000Z"),
             (datetime!(1969-12-31 23:59:59.5 UTC), "19691231235959.5Z"),

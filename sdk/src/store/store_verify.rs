@@ -696,9 +696,13 @@ impl Store {
 mod ocsp_reporting_tests {
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(feature = "openssl")]
+    use ::time::{Duration, OffsetDateTime};
     use coset::{cbor::value::Value, CoseSign1, Label, TaggedCborSerializable};
 
     use super::*;
+    #[cfg(feature = "openssl")]
+    use crate::crypto::{internal, ocsp::test_responder::TestResponder};
     use crate::{
         assertions::DataHash,
         cose_validator::{check_ocsp_status, check_ocsp_status_async, get_signing_cert_serial_num},
@@ -994,10 +998,6 @@ mod ocsp_reporting_tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn fresh_good_reports_once_after_collection() {
-        use ::time::{Duration, OffsetDateTime};
-
-        use crate::crypto::{internal, ocsp::test_responder::TestResponder};
-
         let context = context(true);
         let responder = TestResponder::new();
         let mut basic = good_basic_response();

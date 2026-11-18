@@ -20,8 +20,21 @@ use der::{
     asn1::{Any, BitString, ObjectIdentifier, OctetString},
     Decode, Encode,
 };
+use ed25519_dalek::Signer;
 #[cfg(feature = "openssl")]
 pub(crate) use responder::TestResponder;
+use x509_cert::{
+    der::{
+        asn1::{
+            BitString as BitString07, ObjectIdentifier as ObjectIdentifier07,
+            OctetString as OctetString07,
+        },
+        Decode as DecodeDer, Encode as EncodeDer,
+    },
+    spki::AlgorithmIdentifierOwned,
+    Certificate,
+};
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::crypto::ocsp::asn1::{BasicOcspResponse, ResponderId, Response};
 
@@ -49,16 +62,6 @@ pub(crate) struct IssuerResponder {
 
 impl IssuerResponder {
     pub(crate) fn new() -> Self {
-        use ed25519_dalek::Signer;
-        use x509_cert::{
-            der::{
-                asn1::{BitString, ObjectIdentifier, OctetString},
-                Decode as DecodeDer, Encode as EncodeDer,
-            },
-            spki::AlgorithmIdentifierOwned,
-            Certificate,
-        };
-
         let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
         let mut chain: Vec<Certificate> = pem::parse_many(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
@@ -69,7 +72,7 @@ impl IssuerResponder {
         .collect();
 
         let algorithm = AlgorithmIdentifierOwned {
-            oid: ObjectIdentifier::new_unwrap("1.3.101.112"),
+            oid: ObjectIdentifier07::new_unwrap("1.3.101.112"),
             parameters: None,
         };
 
@@ -77,24 +80,24 @@ impl IssuerResponder {
         chain[1]
             .tbs_certificate
             .subject_public_key_info
-            .subject_public_key = BitString::from_bytes(&key.verifying_key().to_bytes()).unwrap();
+            .subject_public_key = BitString07::from_bytes(&key.verifying_key().to_bytes()).unwrap();
 
-        let key_usage = BitString::new(1, vec![0x06]).unwrap();
+        let key_usage = BitString07::new(1, vec![0x06]).unwrap();
         chain[1]
             .tbs_certificate
             .extensions
             .as_mut()
             .unwrap()
             .push(x509_cert::ext::Extension {
-                extn_id: ObjectIdentifier::new_unwrap("2.5.29.15"),
+                extn_id: ObjectIdentifier07::new_unwrap("2.5.29.15"),
                 critical: true,
-                extn_value: OctetString::new(key_usage.to_der().unwrap()).unwrap(),
+                extn_value: OctetString07::new(key_usage.to_der().unwrap()).unwrap(),
             });
 
         for cert in &mut chain {
             cert.signature_algorithm = algorithm.clone();
             cert.tbs_certificate.signature = algorithm.clone();
-            cert.signature = BitString::from_bytes(
+            cert.signature = BitString07::from_bytes(
                 &key.sign(&cert.tbs_certificate.to_der().unwrap()).to_bytes(),
             )
             .unwrap();
@@ -108,7 +111,6 @@ impl IssuerResponder {
 
     pub(crate) fn basic_response(&self, by_name: bool) -> BasicOcspResponse {
         let mut basic = good_basic_response();
-        use x509_parser::prelude::{FromDer, X509Certificate};
 
         let (_, issuer) = X509Certificate::from_der(&self.chain[1]).unwrap();
         basic.certs = None;
@@ -136,8 +138,6 @@ impl IssuerResponder {
     }
 
     pub(crate) fn sign(&self, mut basic: BasicOcspResponse) -> Vec<u8> {
-        use ed25519_dalek::Signer;
-
         basic.signature = BitString::from_bytes(
             &self
                 .key
@@ -150,12 +150,6 @@ impl IssuerResponder {
     }
 
     pub(crate) fn delegated_response(&self, mut basic: BasicOcspResponse) -> Vec<u8> {
-        use ed25519_dalek::Signer;
-        use x509_cert::{
-            der::{asn1::BitString as BitString07, Decode as DecodeDer, Encode as EncodeDer},
-            Certificate,
-        };
-
         let key = ed25519_dalek::SigningKey::from_bytes(&[43; 32]);
         let mut cert = Certificate::from_der(
             &good_basic_response()

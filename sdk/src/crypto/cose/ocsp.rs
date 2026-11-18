@@ -905,7 +905,13 @@ mod tests {
     use der::{Any, Decode, Encode};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
-    use x509_cert::der::{Decode as DecodeDer, Encode as EncodeDer};
+    use x509_cert::{
+        der::{
+            asn1::{ObjectIdentifier, OctetString, SequenceOf},
+            Decode as DecodeDer, Encode as EncodeDer,
+        },
+        Certificate,
+    };
 
     use super::*;
     use crate::crypto::cert_chain_pem_to_der;
@@ -987,8 +993,6 @@ mod tests {
     // issuer is resolved from the anchor.
     #[test]
     fn revoked_lone_leaf_detected_after_issuer_resolved() {
-        use ::time::macros::datetime;
-
         use super::ocsp_signing_chain;
         use crate::{
             crypto::{
@@ -1239,7 +1243,6 @@ mod tests {
         };
 
         use http::{Request, Response};
-        use x509_cert::Certificate;
 
         use crate::http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver};
 
@@ -3362,8 +3365,6 @@ mod tests {
 
     #[test]
     fn ocsp_responder_requires_ocsp_signing_eku() {
-        use x509_cert::der::asn1::{ObjectIdentifier, OctetString, SequenceOf};
-
         use crate::{
             crypto::ocsp::test_responder::{encode_response, good_basic_response},
             validation_status::SIGNING_CREDENTIAL_INVALID,
