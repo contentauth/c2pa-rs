@@ -588,7 +588,7 @@ impl Context {
     /// let context = Context::new().with_io_handler(MyCustomContainer);
     /// let reader = c2pa::Reader::from_context(context);
     /// ```
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     pub fn with_io_handler(
         mut self,
         handler: impl ::asset_io::container_api::ContainerHandler + 'static,
@@ -598,7 +598,7 @@ impl Context {
     }
 
     /// Register a custom IO handler on this Context (mutable variant).
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     pub fn add_io_handler(
         &mut self,
         handler: impl ::asset_io::container_api::ContainerHandler + 'static,
@@ -612,18 +612,18 @@ impl Context {
     /// Custom handlers registered on this Context are searched
     /// before the built-in global registry; last-registered wins when two handlers claim the
     /// same format.
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     pub fn io(&self) -> &HandlerRegistry {
         &self.io
     }
 
-    #[cfg(not(feature = "asset_io"))]
+    #[cfg(not(feature = "unstable_asset_io"))]
     pub(crate) fn io(&self) -> &HandlerRegistry {
         &self.io
     }
 
     /// Returns this Context's registry for registering asset-io container handlers.
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     pub fn io_mut(&mut self) -> &mut HandlerRegistry {
         &mut self.io
     }

@@ -708,12 +708,12 @@ pub trait ComposedManifestRef {
 /// format. This lets a small registry (e.g. a caller's custom handlers) cheaply extend a
 /// larger one (e.g. the SDK's built-in handlers) without copying it.
 ///
-/// With the `asset_io` feature, register custom asset-io `ContainerHandler`s with
+/// With the `unstable_asset_io` feature, register custom asset-io `ContainerHandler`s with
 /// `add_handler`, or import an asset-io `HandlerRegistry` with `extend`.
 /// Legacy SDK handler traits remain internal.
 ///
 /// ```
-/// # #[cfg(feature = "asset_io")]
+/// # #[cfg(feature = "unstable_asset_io")]
 /// # {
 /// # use c2pa::{Context, HandlerRegistry};
 /// let mut context = Context::new();
@@ -766,7 +766,7 @@ impl HandlerRegistry {
     }
 
     /// Registers `handler`, returning `self` for chaining.
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     pub fn with_handler(
         mut self,
         handler: impl ::asset_io::container_api::ContainerHandler + 'static,
@@ -776,7 +776,7 @@ impl HandlerRegistry {
     }
 
     /// Registers an asset-io container handler for every format it declares.
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     pub fn add_handler(
         &mut self,
         handler: impl ::asset_io::container_api::ContainerHandler + 'static,
@@ -787,14 +787,14 @@ impl HandlerRegistry {
     /// Registers every handler in an asset-io registry, in its registration order.
     ///
     /// Imported handlers override earlier registrations, including built-in fallbacks.
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     pub fn extend(&mut self, registry: &::asset_io::HandlerRegistry) {
         for handler in registry.handlers() {
             self.add_container_handler(Arc::clone(handler));
         }
     }
 
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     fn add_container_handler(
         &mut self,
         handler: Arc<dyn ::asset_io::container_api::ContainerHandler>,

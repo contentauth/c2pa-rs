@@ -12,51 +12,51 @@
 // each license.
 
 // EXPERIMENT (local only, do not commit)
-#[cfg(feature = "asset_io")]
+#[cfg(feature = "unstable_asset_io")]
 pub(crate) mod asset_io_adapter;
-#[cfg(all(test, feature = "asset_io"))]
+#[cfg(all(test, feature = "unstable_asset_io"))]
 mod asset_io_adapter_test;
-#[cfg(all(test, feature = "asset_io"))]
+#[cfg(all(test, feature = "unstable_asset_io"))]
 mod asset_io_bmff_test;
-#[cfg(all(test, feature = "asset_io"))]
+#[cfg(all(test, feature = "unstable_asset_io"))]
 mod asset_io_equivalence_test;
-#[cfg(all(test, feature = "asset_io"))]
+#[cfg(all(test, feature = "unstable_asset_io"))]
 mod asset_io_perf_test;
-#[cfg(all(test, feature = "asset_io"))]
+#[cfg(all(test, feature = "unstable_asset_io"))]
 mod asset_io_riff_test;
-// The legacy BMFF parser: BmffHash's parser without `asset_io`; with it, only
+// The legacy BMFF parser: BmffHash's parser without `unstable_asset_io`; with it, only
 // timed-media sample tables and Merkle proof box framing still come from here.
 pub mod bmff_io;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod c2pa_io;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod flac_io;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod gif_io;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub(crate) mod id3_helper;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod jpeg_io;
 pub mod jpegxl_io;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod mp3_io;
 #[cfg(feature = "unstable_plain_text")]
 pub mod plain_text_io;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod png_io;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod riff_io;
 #[cfg(feature = "unstable_structured_text")]
 pub mod structured_text_io;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod svg_io;
 #[cfg(feature = "unstable_structured_text")]
 pub(crate) mod text_common;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 pub mod tiff_io;
 pub mod zip_io;
 
 #[cfg(feature = "pdf")]
 pub(crate) mod pdf;
-#[cfg(all(feature = "pdf", any(not(feature = "asset_io"), test)))]
+#[cfg(all(feature = "pdf", any(not(feature = "unstable_asset_io"), test)))]
 pub mod pdf_io;

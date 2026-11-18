@@ -695,8 +695,8 @@ fn path_from_token(bmff_tree: &Arena<BoxInfo>, current_node_token: &Token) -> Re
     Ok(path)
 }
 
-// Unused with `asset_io`: BmffHash finds boxes through asset-io.
-#[cfg_attr(feature = "asset_io", allow(dead_code))]
+// Unused with `unstable_asset_io`: BmffHash finds boxes through asset-io.
+#[cfg_attr(feature = "unstable_asset_io", allow(dead_code))]
 fn get_top_level_box_offsets(
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
@@ -741,8 +741,8 @@ fn get_top_level_boxes(
     tl_boxes
 }
 
-// Unused with `asset_io`: BmffHash finds boxes through asset-io.
-#[cfg_attr(feature = "asset_io", allow(dead_code))]
+// Unused with `unstable_asset_io`: BmffHash finds boxes through asset-io.
+#[cfg_attr(feature = "unstable_asset_io", allow(dead_code))]
 pub fn bmff_to_jumbf_exclusions<R>(
     mut reader: &mut R,
     bmff_exclusions: &[ExclusionsMap],
@@ -3131,15 +3131,15 @@ pub mod tests {
     use super::*;
 
     /// A new handler for `format`, of the implementation these tests run
-    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
     /// handler without it. Tests of the legacy handler's own internals
     /// construct it directly.
-    #[cfg(not(feature = "asset_io"))]
+    #[cfg(not(feature = "unstable_asset_io"))]
     fn test_handler(format: &str) -> BmffIO {
         BmffIO::new(format)
     }
 
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
         crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
     }
@@ -3193,7 +3193,7 @@ pub mod tests {
 
     #[test]
     #[cfg_attr(
-        feature = "asset_io",
+        feature = "unstable_asset_io",
         ignore = "asset-io cannot yet add metadata to a QuickTime file without ftyp"
     )]
     fn test_mov_manifest_insertion_with_and_without_ftyp() {
@@ -3234,7 +3234,7 @@ pub mod tests {
 
     #[test]
     #[cfg_attr(
-        feature = "asset_io",
+        feature = "unstable_asset_io",
         ignore = "asset-io cannot yet add metadata to a QuickTime file without ftyp"
     )]
     fn test_mov_xmp_insertion_with_and_without_ftyp() {
@@ -3446,9 +3446,9 @@ pub mod tests {
         let mut source = Cursor::new(data);
         let result = bmff_io.read_c2pa(&mut source);
         // asset-io clamps an mdat that runs past the end of the file.
-        #[cfg(not(feature = "asset_io"))]
+        #[cfg(not(feature = "unstable_asset_io"))]
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
-        #[cfg(feature = "asset_io")]
+        #[cfg(feature = "unstable_asset_io")]
         assert!(matches!(result, Err(Error::JumbfNotFound)));
     }
 
@@ -3575,7 +3575,8 @@ pub mod tests {
             matches!(
                 result,
                 Err(Error::C2PAValidation(ref m)) if m == "update manifest without original manifest"
-            ) || (cfg!(feature = "asset_io") && matches!(result, Err(Error::InvalidAsset(_)))),
+            ) || (cfg!(feature = "unstable_asset_io")
+                && matches!(result, Err(Error::InvalidAsset(_)))),
             "expected update-without-original to be rejected, got {result:?}"
         );
     }
@@ -3592,7 +3593,8 @@ pub mod tests {
             matches!(
                 result,
                 Err(Error::C2PAValidation(ref m)) if m == "original manifest without update manifest"
-            ) || (cfg!(feature = "asset_io") && matches!(result, Err(Error::InvalidAsset(_)))),
+            ) || (cfg!(feature = "unstable_asset_io")
+                && matches!(result, Err(Error::InvalidAsset(_)))),
             "expected original-without-update to be rejected, got {result:?}"
         );
     }
@@ -3632,7 +3634,8 @@ pub mod tests {
             matches!(
                 result,
                 Err(Error::C2PAValidation(ref m)) if m == "C2PA box present without a readable manifest"
-            ) || (cfg!(feature = "asset_io") && matches!(result, Err(Error::InvalidAsset(_)))),
+            ) || (cfg!(feature = "unstable_asset_io")
+                && matches!(result, Err(Error::InvalidAsset(_)))),
             "expected retagged-purpose box to be rejected, got {result:?}"
         );
     }
@@ -3680,7 +3683,7 @@ pub mod tests {
 
     #[test]
     fn test_load_jumbf_tampered_box_skips_remote_fallback() {
-        #[cfg(not(feature = "asset_io"))]
+        #[cfg(not(feature = "unstable_asset_io"))]
         use crate::utils::xmp_inmemory_utils::XmpInfo;
         use crate::{
             utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
@@ -3699,7 +3702,7 @@ pub mod tests {
         // The remote reference is genuinely present, so the fallback would fire
         // on JumbfNotFound. asset-io refuses to parse a C2PA box of unknown
         // purpose at all, so it reads no XMP either.
-        #[cfg(not(feature = "asset_io"))]
+        #[cfg(not(feature = "unstable_asset_io"))]
         assert_eq!(
             XmpInfo::from_source(&mut Cursor::new(data.clone()), "mp4")
                 .provenance
@@ -3710,7 +3713,7 @@ pub mod tests {
         let context = Context::new();
         let mut source = Cursor::new(data);
         let result = crate::store::Store::load_jumbf_from_stream("mp4", &mut source, &context);
-        #[cfg(not(feature = "asset_io"))]
+        #[cfg(not(feature = "unstable_asset_io"))]
         assert!(
             matches!(
                 result,
@@ -3718,7 +3721,7 @@ pub mod tests {
             ),
             "tampered C2PA box must be rejected, not fall back to the remote manifest; got {result:?}"
         );
-        #[cfg(feature = "asset_io")]
+        #[cfg(feature = "unstable_asset_io")]
         assert!(
             matches!(result, Err(Error::InvalidAsset(_))),
             "tampered C2PA box must be rejected, not fall back to the remote manifest; got {result:?}"

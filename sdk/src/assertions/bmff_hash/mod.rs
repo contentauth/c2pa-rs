@@ -67,16 +67,16 @@ const ASSERTION_CREATION_VERSION: usize = 3;
 
 // Where boxes are found. Hashing and Merkle algorithms below are shared; only
 // the parser differs. The legacy one stays available to tests as an oracle.
-#[cfg(feature = "asset_io")]
+#[cfg(feature = "unstable_asset_io")]
 mod asset_io_parser;
-#[cfg(any(not(feature = "asset_io"), test))]
+#[cfg(any(not(feature = "unstable_asset_io"), test))]
 mod legacy_parser;
-#[cfg(all(test, feature = "asset_io"))]
+#[cfg(all(test, feature = "unstable_asset_io"))]
 mod parser_parity_tests;
 
-#[cfg(feature = "asset_io")]
+#[cfg(feature = "unstable_asset_io")]
 use asset_io_parser as parser;
-#[cfg(not(feature = "asset_io"))]
+#[cfg(not(feature = "unstable_asset_io"))]
 use legacy_parser as parser;
 
 /// A box of a BMFF asset: its type and where it is.

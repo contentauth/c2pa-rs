@@ -3,7 +3,7 @@
 // Timing of the asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`, `SvgIO`, `RiffIO`, `TiffIO`, `PdfIO`),
 // through the same traits the SDK uses. Not run by default: it only reports.
 //
-//   cargo test --release --features asset_io asset_io_perf -- --ignored --nocapture
+//   cargo test --release --features unstable_asset_io asset_io_perf -- --ignored --nocapture
 //
 // Environment:
 //   ASSET_IO_CORPUS=<dir>   also time every JPEG, PNG, SVG, RIFF and PDF under <dir>
@@ -27,7 +27,7 @@
 // of several runs is kept, which filters out scheduling noise. Parsing in memory
 // isolates the parsers; reading from disk adds the cost of their I/O pattern.
 
-#![cfg(all(test, feature = "asset_io", not(target_arch = "wasm32")))]
+#![cfg(all(test, feature = "unstable_asset_io", not(target_arch = "wasm32")))]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::{

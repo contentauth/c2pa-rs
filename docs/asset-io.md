@@ -1,11 +1,14 @@
 # Experimental asset-io integration
 
+Enable the non-default `unstable_asset_io` Cargo feature to use this integration.
+It is covered by the [experimental features policy](experimental-features.md).
+
 ## BMFF hashing and verification
 
 `BmffHash` (`sdk/src/assertions/bmff_hash/`) keeps its hashing, Merkle and
 verification code in one copy and reads boxes through one of two parsers:
 
-- `asset_io_parser.rs`, with `asset_io`: the box tree from `Structure::walk`
+- `asset_io_parser.rs`, with `unstable_asset_io`: the box tree from `Structure::walk`
   and the Merkle proof boxes from the structure's items. Exclusion selectors,
   including indexed ones, are evaluated here for verification.
 - `legacy_parser.rs`, without it: the existing `asset_handlers/bmff_io.rs`
@@ -22,7 +25,7 @@ proof boxes the SDK writes itself (`write_c2pa_box`).
 
 ## Differences from the legacy handlers
 
-With `asset_io`, the legacy handlers' unit tests run against the asset-io
+With `unstable_asset_io`, the legacy handlers' unit tests run against the asset-io
 adapter (`test_handler(format)` in each test module). Where the results differ,
 the tests state the asset-io result. Callers that match on error variants or
 messages, or that depend on the legacy handlers rejecting an asset, may see

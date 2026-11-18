@@ -9,16 +9,16 @@ The following table summarizes the supported media (asset) file formats. This in
 
 `txt` requires the non-default `unstable_plain_text` feature.
 
-The experimental, non-default `asset_io` feature routes every container that
+The experimental, non-default `unstable_asset_io` feature routes every container that
 `asset-io` 0.5 supports through it: JPEG, PNG, SVG, RIFF (WAV, WebP, AVI),
 TIFF/DNG (ARW and NEF read only), MP3, FLAC, GIF, ISO BMFF (MP4, MOV, M4A, HEIC,
 HEIF, AVIF), and `.c2pa` sidecars. PDF uses it when the `pdf` feature is also
 enabled. JPEG XL, ZIP-based formats and text keep their legacy handlers, as do
-all formats without `asset_io`.
+all formats without `unstable_asset_io`.
 
 Public handler registration and registry access, differential tests, and their
-additional dependencies also require `asset_io`. Standard Makefile targets do
-not enable it; use `make test-local FEATURES=file_io,fetch_remote_manifests,add_thumbnails,asset_io`
+additional dependencies also require `unstable_asset_io`. Standard Makefile targets do
+not enable it; use `make test-local FEATURES=file_io,fetch_remote_manifests,add_thumbnails,unstable_asset_io`
 to include the experimental integration.
 
 The ID3 adapter preserves unrelated frames byte-for-byte, including malformed

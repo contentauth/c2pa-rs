@@ -1069,15 +1069,15 @@ pub mod tests {
     use super::*;
 
     /// A new handler for `format`, of the implementation these tests run
-    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
     /// handler without it. Tests of the legacy handler's own internals
     /// construct it directly.
-    #[cfg(not(feature = "asset_io"))]
+    #[cfg(not(feature = "unstable_asset_io"))]
     fn test_handler(format: &str) -> JpegIO {
         JpegIO::new(format)
     }
 
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
         crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
     }
@@ -1090,7 +1090,7 @@ pub mod tests {
     // oversized segment panicked in img-parts via `(len-2).try_into().unwrap()`).
     #[test]
     #[cfg_attr(
-        feature = "asset_io",
+        feature = "unstable_asset_io",
         ignore = "asset-io writes XMP over one segment as extended XMP"
     )]
     fn write_xmp_oversized_is_rejected_not_panic() {
@@ -1361,9 +1361,9 @@ pub mod tests {
 
         let result = jpeg_io.get_object_locations(&mut stream);
         // asset-io reads it as SOI, fill bytes and EOI followed by trailing data.
-        #[cfg(not(feature = "asset_io"))]
+        #[cfg(not(feature = "unstable_asset_io"))]
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
-        #[cfg(feature = "asset_io")]
+        #[cfg(feature = "unstable_asset_io")]
         assert!(result.is_ok());
     }
 

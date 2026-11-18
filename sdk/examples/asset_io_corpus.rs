@@ -15,10 +15,10 @@
 //! corrupt inputs are expected in a corpus. A failure is an invariant that does not
 //! hold, or a panic.
 //!
-//! Run: `cargo run --release --example asset_io_corpus --features asset_io -- [options] <dir|file>...`
+//! Run: `cargo run --release --example asset_io_corpus --features unstable_asset_io -- [options] <dir|file>...`
 //!
 //! The comparison with the handlers asset-io replaces is a test, because those are not
-//! public: `ASSET_IO_CORPUS=<dir> cargo test --features asset_io asset_io_adapter`.
+//! public: `ASSET_IO_CORPUS=<dir> cargo test --features unstable_asset_io asset_io_adapter`.
 //!
 //! Options:
 //!   --collect DIR    copy files that fail or panic, and structurally interesting ones

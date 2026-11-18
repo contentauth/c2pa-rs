@@ -211,15 +211,15 @@ pub mod tests {
     use super::*;
 
     /// A new handler for `format`, of the implementation these tests run
-    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
     /// handler without it. Tests of the legacy handler's own internals
     /// construct it directly.
-    #[cfg(not(feature = "asset_io"))]
+    #[cfg(not(feature = "unstable_asset_io"))]
     fn test_handler(format: &str) -> Mp3IO {
         Mp3IO::new(format)
     }
 
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
         crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
     }
@@ -382,7 +382,7 @@ pub mod tests {
             Err(Error::JumbfNotFound) => {}
             // asset-io does not recognize 22 bytes as MPEG audio. A real MP3
             // without an ID3 tag reads as unsigned.
-            Err(Error::UnsupportedType) if cfg!(feature = "asset_io") => {}
+            Err(Error::UnsupportedType) if cfg!(feature = "unstable_asset_io") => {}
             other => panic!(
                 "expected JumbfNotFound for bare MPEG stream, got {:?}",
                 other
@@ -414,7 +414,7 @@ pub mod tests {
         match mp3_io.write_c2pa(&mut input, &mut output, &[1, 2, 3]) {
             Err(Error::IoError(_)) => {}
             // asset-io rejects it as too small to be audio.
-            Err(Error::InvalidAsset(_)) if cfg!(feature = "asset_io") => {}
+            Err(Error::InvalidAsset(_)) if cfg!(feature = "unstable_asset_io") => {}
             other => panic!("expected IoError for short stream, got {:?}", other),
         }
     }
@@ -429,7 +429,7 @@ pub mod tests {
         match mp3_io.write_c2pa(&mut input, &mut output, &[1, 2, 3]) {
             Err(Error::UnsupportedType) => {}
             // asset-io reports an ID3 version it does not support.
-            Err(Error::NotImplemented(_)) if cfg!(feature = "asset_io") => {}
+            Err(Error::NotImplemented(_)) if cfg!(feature = "unstable_asset_io") => {}
             other => panic!("expected UnsupportedType for ID3v1 header, got {:?}", other),
         }
     }

@@ -12,7 +12,7 @@
 // each license.
 
 //! [`BmffHash`](super::BmffHash)'s view of an asset through the legacy BMFF
-//! parser in `asset_handlers::bmff_io`. Used without the `asset_io` feature, and
+//! parser in `asset_handlers::bmff_io`. Used without the `unstable_asset_io` feature, and
 //! by tests as the reference for the asset-io parser.
 
 use std::io::{Read, Seek};

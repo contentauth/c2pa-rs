@@ -358,15 +358,15 @@ pub mod tests {
     };
 
     /// A new handler for `format`, of the implementation these tests run
-    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
     /// handler without it. Tests of the legacy handler's own internals
     /// construct it directly.
-    #[cfg(not(feature = "asset_io"))]
+    #[cfg(not(feature = "unstable_asset_io"))]
     fn test_handler(format: &str) -> PdfIO {
         PdfIO::new(format)
     }
 
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
         crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
     }

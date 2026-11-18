@@ -603,15 +603,15 @@ pub mod tests {
     use super::*;
 
     /// A new handler for `format`, of the implementation these tests run
-    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
     /// handler without it. Tests of the legacy handler's own internals
     /// construct it directly.
-    #[cfg(not(feature = "asset_io"))]
+    #[cfg(not(feature = "unstable_asset_io"))]
     fn test_handler(format: &str) -> RiffIO {
         RiffIO::new(format)
     }
 
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
         crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
     }
@@ -726,9 +726,9 @@ pub mod tests {
                 let mut source = File::open(fixture_path("riff_bomb_1000.wav")).unwrap();
                 let result = riff_io.write_c2pa(&mut source, &mut output_stream, more_data);
                 // asset-io bounds the chunk tree and writes the file.
-                #[cfg(not(feature = "asset_io"))]
+                #[cfg(not(feature = "unstable_asset_io"))]
                 assert!(matches!(result, Err(Error::InvalidAsset(_))));
-                #[cfg(feature = "asset_io")]
+                #[cfg(feature = "unstable_asset_io")]
                 assert!(result.is_ok());
             });
 

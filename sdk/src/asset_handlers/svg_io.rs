@@ -760,15 +760,15 @@ pub mod tests {
     use super::*;
 
     /// A new handler for `format`, of the implementation these tests run
-    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
     /// handler without it. Tests of the legacy handler's own internals
     /// construct it directly.
-    #[cfg(not(feature = "asset_io"))]
+    #[cfg(not(feature = "unstable_asset_io"))]
     fn test_handler(format: &str) -> SvgIO {
         SvgIO::new(format)
     }
 
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
         crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
     }
@@ -842,7 +842,7 @@ pub mod tests {
             assert!(
                 matches!(result, Err(Error::InvalidAsset(_)))
                     // asset-io reports two manifest elements as two stores.
-                    || (cfg!(feature = "asset_io")
+                    || (cfg!(feature = "unstable_asset_io")
                         && matches!(result, Err(Error::TooManyManifestStores))),
                 "{result:?}"
             );
@@ -914,12 +914,12 @@ pub mod tests {
         ));
         let bad_declaration = r#"<svg xmlns="http://www.w3.org/2000/svg"><g xmlns:xml="urn:bad"><rect/></g><metadata><c2pa:manifest>c29tZQ==</c2pa:manifest></metadata></svg>"#;
         // asset-io rejects rebinding the reserved `xml` prefix as malformed XML.
-        #[cfg(feature = "asset_io")]
+        #[cfg(feature = "unstable_asset_io")]
         assert!(matches!(
             svg_io.read_c2pa(&mut Cursor::new(bad_declaration.as_bytes())),
             Err(Error::InvalidAsset(_))
         ));
-        #[cfg(not(feature = "asset_io"))]
+        #[cfg(not(feature = "unstable_asset_io"))]
         assert_eq!(
             svg_io
                 .read_c2pa(&mut Cursor::new(bad_declaration.as_bytes()))

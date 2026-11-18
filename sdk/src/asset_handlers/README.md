@@ -21,7 +21,7 @@ At startup, each handler is instantiated, asked for its `supported_types()` (e.g
 
 ### Experimental asset-io adapter
 
-The `asset_io` feature routes JPEG, PNG, SVG, RIFF, TIFF and DNG formats through
+The `unstable_asset_io` feature routes JPEG, PNG, SVG, RIFF, TIFF and DNG formats through
 [`AssetIoAdapter`](./asset_io_adapter.rs); PDF uses it when `pdf` is also enabled.
 Other formats keep their built-in handlers. `TiffIO` still reads ARW and NEF, which
 asset-io does not declare; those formats remain read-only.
@@ -36,7 +36,7 @@ transfer encodings such as SVG base64. Same-size manifest replacement uses
 
 The `asset_io_*_test` modules live alongside the handlers because they exercise
 crate-private handler and signing internals. They are unit tests enabled only
-with `asset_io`; public registry integration tests remain in
+with `unstable_asset_io`; public registry integration tests remain in
 [`sdk/tests/handler_registry.rs`](../../tests/handler_registry.rs).
 
 ### Lookup functions

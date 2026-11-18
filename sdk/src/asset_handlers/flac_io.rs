@@ -239,15 +239,15 @@ mod tests {
     use super::*;
 
     /// A new handler for `format`, of the implementation these tests run
-    /// against: asset-io's adapter with the `asset_io` feature, the legacy
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
     /// handler without it. Tests of the legacy handler's own internals
     /// construct it directly.
-    #[cfg(not(feature = "asset_io"))]
+    #[cfg(not(feature = "unstable_asset_io"))]
     fn test_handler(format: &str) -> FlacIO {
         FlacIO::new(format)
     }
 
-    #[cfg(feature = "asset_io")]
+    #[cfg(feature = "unstable_asset_io")]
     fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
         crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
     }
@@ -376,7 +376,7 @@ mod tests {
         match flac_io.read_c2pa(&mut cursor) {
             Err(Error::InvalidAsset(_)) => {}
             // asset-io reports an ID3 version it does not support.
-            Err(Error::NotImplemented(_)) if cfg!(feature = "asset_io") => {}
+            Err(Error::NotImplemented(_)) if cfg!(feature = "unstable_asset_io") => {}
             other => panic!("expected InvalidAsset, got {:?}", other),
         }
     }

@@ -3,9 +3,9 @@
 // The asset-io adapter against the handlers it replaces, through the same traits the SDK
 // uses, on every JPEG, PNG, SVG, RIFF, TIFF/DNG, MP3, FLAC, GIF and PDF fixture.
 //
-// Run with: cargo test --features asset_io asset_io_adapter
+// Run with: cargo test --features unstable_asset_io asset_io_adapter
 
-#![cfg(all(test, feature = "asset_io"))]
+#![cfg(all(test, feature = "unstable_asset_io"))]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::{fs, io::Cursor, mem::discriminant, path::PathBuf};

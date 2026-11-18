@@ -4,7 +4,7 @@
 // or the MIT license (http://opensource.org/licenses/MIT),
 // at your option.
 
-#![cfg(feature = "asset_io")]
+#![cfg(feature = "unstable_asset_io")]
 
 use c2pa::{Context, HandlerRegistry};
 

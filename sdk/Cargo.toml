@@ -43,7 +43,8 @@ unstable_plain_text = ["dep:unicode-normalization"]
 file_io = []
 # EXPERIMENT: BMFF, JPEG, PNG, SVG, RIFF, TIFF/DNG, MP3, FLAC and GIF use asset-io;
 # PDF does too with the pdf feature.
-asset_io = ["dep:asset-io"]
+# Exempt from semantic-versioning stability guarantees; see docs/experimental-features.md.
+unstable_asset_io = ["dep:asset-io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
 openssl = [
@@ -100,7 +101,7 @@ name = "redaction"
 # EXPERIMENT (local only, do not commit).
 [[example]]
 name = "asset_io_corpus"
-required-features = ["asset_io"]
+required-features = ["unstable_asset_io"]
 
 [lib]
 crate-type = ["lib"]
