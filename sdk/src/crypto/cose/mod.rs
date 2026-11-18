@@ -48,6 +48,7 @@ pub use sign::CosePayload;
 pub(crate) use sign::{cose_reserve_size, sign, sign_async};
 
 mod sign1;
+#[allow(deprecated)]
 pub use sign1::{
     cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, signing_time_from_sign1,
     signing_time_from_sign1_async,

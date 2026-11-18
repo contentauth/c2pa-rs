@@ -27,6 +27,39 @@
 //!
 //! For more information, see [CAI open source SDK - Rust library](https://opensource.contentauthenticity.org/docs/rust-sdk/)
 //!
+//! # Chrono migration
+//!
+//! The `chrono` crate is unmaintained ([RUSTSEC-2026-0543]). Starting with
+//! 0.92.3, the following Rust APIs carry compiler deprecation warnings ahead
+//! of their change or removal in **0.93.0 (scheduled for mid-January 2027)**:
+//!
+//! - `crypto::cose::signing_time_from_sign1` and `signing_time_from_sign1_async`.
+//! - `crypto::time_stamp::verify_time_stamp` and `verify_time_stamp_async`,
+//!   whose returned timestamp's `gen_time` supports chrono conversions.
+//! - `crypto::cose::CertificateInfo::date`.
+//! - `crypto::ocsp::OcspResponse::{next_update, revoked_at}`.
+//! - `identity::claim_aggregation::VerifiedIdentity::verified_at`.
+//! - `identity::claim_aggregation::IcaCredential::{valid_from, valid_until}`.
+//!
+//! This is an advance-notice security exception to the usual main-only
+//! deprecation process and replacement-availability requirement. The 0.92
+//! release line retains its existing signatures, date types and runtime
+//! behavior. The replacement APIs are **not available on stable yet**.
+//! Until upgrading, existing callers must continue using the chrono types;
+//! any temporary `#[allow(deprecated)]` should be scoped to those uses.
+//!
+//! When upgrading to 0.93, use `time::OffsetDateTime` in place of
+//! `chrono::DateTime<Utc>` and `chrono::DateTime<FixedOffset>` for the dates
+//! above, including conversions from the returned timestamp's `gen_time`.
+//! For example, a signing-time binding currently typed as
+//! `Option<chrono::DateTime<chrono::Utc>>` will become
+//! `Option<time::OffsetDateTime>`. Identity JSON still uses RFC 3339 strings,
+//! but leap-second inputs (`:60`) will be rejected rather than accepted or
+//! normalized. See [the migration PR] for the planned API and input changes.
+//!
+//! [RUSTSEC-2026-0543]: https://rustsec.org/advisories/RUSTSEC-2026-0543.html
+//! [the migration PR]: https://github.com/contentauth/c2pa-rs/pull/3105
+//!
 //! # Examples
 //!
 //! ## Reading a manifest

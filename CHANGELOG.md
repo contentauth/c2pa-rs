@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 As of December 2025 and until the 1.0.0 version is released, the CAI team will only make minor version changes (incrementing the `x` in `0.x.0`) if breaking changes are made. Features will now result in a patch version change (incrementing the `y` in `0.x.y`). This brings us into closer compliance with typical SemVer practice (and follows the default behavior of [`release-plz`](https://release-plz.dev/docs/config#the-features_always_increment_minor-field).
 
+## [Unreleased]
+
+### Deprecated
+
+* The chrono-based signing-time and timestamp-verification functions (sync and async), `CertificateInfo::date`, `OcspResponse::{next_update, revoked_at}`, `VerifiedIdentity::verified_at`, and `IcaCredential::{valid_from, valid_until}` carry advance compiler warnings for their change or removal in **0.93.0 (scheduled for mid-January 2027)**. These notices are a stable-line security exception because chrono is unmaintained (RUSTSEC-2026-0543). Existing signatures and behavior are unchanged; the `time::OffsetDateTime` replacements are not yet available on stable. See the [Rust migration guide](sdk/src/lib.rs) and [#3105](https://github.com/contentauth/c2pa-rs/pull/3105) for the planned type changes and rejection of leap-second timestamp inputs.
+
 ## [0.92.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.92.1...c2pa-v0.92.2)
 _16 November 2026_
 

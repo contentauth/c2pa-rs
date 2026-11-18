@@ -690,6 +690,7 @@ fn ocsp_signing_chain(certs: &[Vec<u8>], ctp: &CertificateTrustPolicy) -> Vec<Ve
     validation_log: &mut StatusTracker,
     context: &crate::context::Context,
 ))]
+#[allow(deprecated)]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
@@ -985,6 +986,7 @@ mod tests {
     // the x5chain per §14.5) is missed with the lone leaf, but detected once the
     // issuer is resolved from the anchor.
     #[test]
+    #[allow(deprecated)]
     fn revoked_lone_leaf_detected_after_issuer_resolved() {
         use chrono::{TimeZone, Utc};
 
@@ -1045,6 +1047,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn validate_fetched_ocsp_rejects_unauthorized_responder() {
         // A validly-signed "revoked" response whose responder is not authorized
         // (does not chain to a trust anchor with the OCSP-signing EKU) is
@@ -1066,6 +1069,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn validate_fetched_ocsp_accepts_current_responder_for_historical_signing_time() {
         // Live-fetched OCSP responses are signed by responder certificates that
         // rotate frequently (their `notBefore` is often newer than an asset's
@@ -1121,6 +1125,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn validate_fetched_ocsp_ignores_unusable_response() {
         // An undecodable response yields no cert data and no status.
         let chain = ocsp_signing_chain();
@@ -1157,6 +1162,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn process_ocsp_responses_skips_expired_good_response() {
         use crate::crypto::asn1::{rfc3161::MessageImprint, AlgorithmIdentifier, GeneralizedTime};
 

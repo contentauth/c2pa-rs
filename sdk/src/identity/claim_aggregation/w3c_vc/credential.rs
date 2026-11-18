@@ -52,10 +52,20 @@ where
 
     pub issuer: UriBuf,
 
+    /// See the [chrono migration guide](crate#chrono-migration).
+    #[deprecated(
+        since = "0.92.3",
+        note = "This date field uses the unmaintained chrono crate. Migrate to time::OffsetDateTime in 0.93.0; the replacement is not available on stable yet. Will be changed or removed in 0.93.0 (scheduled for mid-January 2027)."
+    )]
     #[serde(rename = "validFrom")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valid_from: Option<DateTime<FixedOffset>>,
 
+    /// See the [chrono migration guide](crate#chrono-migration).
+    #[deprecated(
+        since = "0.92.3",
+        note = "This date field uses the unmaintained chrono crate. Migrate to time::OffsetDateTime in 0.93.0; the replacement is not available on stable yet. Will be changed or removed in 0.93.0 (scheduled for mid-January 2027)."
+    )]
     #[serde(rename = "validUntil")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valid_until: Option<DateTime<FixedOffset>>,
@@ -69,6 +79,7 @@ where
     T: VerifiableCredentialSubtype,
 {
     /// Creates a new credential.
+    #[allow(deprecated)]
     pub fn new(id: Option<UriBuf>, issuer: UriBuf, credential_subjects: NEVec<T>) -> Self {
         let mut extra_contexts: Vec<IriBuf> = credential_subjects
             .first()

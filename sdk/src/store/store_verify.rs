@@ -19,6 +19,7 @@ use std::{
 use async_generic::async_generic;
 
 use super::store_core::MAX_INGREDIENT_DEPTH;
+#[allow(deprecated)]
 use crate::{
     assertion::AssertionBase,
     assertions::{CertificateStatus, Ingredient, Relationship, TimeStamp},
@@ -133,6 +134,7 @@ impl Store {
     }
 
     // Returns the timestamp info only if the token validates for the claim's signature.
+    #[allow(deprecated)]
     pub(crate) fn verified_timestamp_for_claim(
         claim: &Claim,
         time_stamp_token: &[u8],

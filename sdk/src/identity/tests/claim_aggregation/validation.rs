@@ -1239,6 +1239,7 @@ async fn invalid_time_stamp() {
 }
 
 #[c2pa_test_async]
+#[allow(deprecated)]
 async fn valid_from_missing() {
     // 8.1.7.2.6. Verify the credential’s validity range
     //

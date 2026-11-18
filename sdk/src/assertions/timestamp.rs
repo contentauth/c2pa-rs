@@ -97,6 +97,7 @@ impl TimeStamp {
     ///
     /// See [`TimeStamp::refresh_timestamp`] for more information.
     #[async_generic]
+    #[allow(deprecated)]
     pub(crate) fn send_timestamp_token_request(
         tsa_url: &str,
         headers: Option<Vec<(String, String)>>,

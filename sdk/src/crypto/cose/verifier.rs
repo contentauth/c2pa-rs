@@ -250,7 +250,8 @@ impl Verifier<'_> {
             .and_then(|attr| attr.ok())
             .map(|a| a.to_string());
 
-        Ok(CertificateInfo {
+        #[allow(deprecated)]
+        let info = CertificateInfo {
             alg: Some(alg),
             date: tst_info.map(|t| t.gen_time.clone().into()),
             cert_serial_number: Some(sign_cert.serial.clone()),
@@ -261,7 +262,9 @@ impl Verifier<'_> {
             // No revocation check runs here, so the status is unknown.
             revocation_status: None,
             ..Default::default()
-        })
+        };
+
+        Ok(info)
     }
 
     /// Verify certificate profile if so configured.

@@ -766,7 +766,9 @@ impl<'a> IcaSignatureVerifier<'a> {
         ica_credential: &IcaCredential,
         maybe_tst_info: Option<&TstInfo>,
     ) -> Result<(), (IcaValidationError, &'static str)> {
-        let Some(valid_from) = ica_credential.valid_from else {
+        #[allow(deprecated)]
+        let Some(valid_from) = ica_credential.valid_from
+        else {
             return Err((
                 IcaValidationError::MissingValidFromDate,
                 "cawg.ica.valid_from.missing",
@@ -809,7 +811,9 @@ impl<'a> IcaSignatureVerifier<'a> {
         ica_credential: &IcaCredential,
         maybe_tst_info: Option<&TstInfo>,
     ) -> Result<(), (IcaValidationError, &'static str)> {
-        let Some(valid_until) = ica_credential.valid_until else {
+        #[allow(deprecated)]
+        let Some(valid_until) = ica_credential.valid_until
+        else {
             // CAWG spec does not require a validUntil entry, so if there is not, we exit
             // quietly here.
             return Ok(());

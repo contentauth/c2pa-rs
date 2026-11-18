@@ -17,6 +17,7 @@ use async_generic::async_generic;
 use bcder::{decode::Constructed, encode::Values};
 use http::header;
 
+#[allow(deprecated)]
 use crate::{
     context::Context,
     crypto::{
@@ -39,6 +40,7 @@ use crate::{
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[async_generic]
+#[allow(deprecated)]
 pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,

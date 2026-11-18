@@ -34,7 +34,7 @@ impl Store {
     /// Return OCSP info if available
     // Currently only called from manifest_store behind a feature flag but this is allowable
     // anywhere so allow dead code here for future uses to compile
-    #[allow(dead_code)]
+    #[allow(dead_code, deprecated)]
     #[async_generic]
     pub fn get_ocsp_status(&self, context: &Context) -> Option<String> {
         let claim = self
