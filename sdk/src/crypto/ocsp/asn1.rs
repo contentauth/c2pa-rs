@@ -75,7 +75,9 @@ impl<'a> DecodeValue<'a> for GeneralizedTime {
             time::macros::format_description!("[year][month][day][hour][minute][second]"),
         )
         .map_err(|_| Self::TAG.value_error())?;
+
         let fraction = &text[14..text.len() - 1];
+
         let nanoseconds = if fraction.is_empty() {
             0
         } else {
@@ -91,6 +93,7 @@ impl<'a> DecodeValue<'a> for GeneralizedTime {
             digits.parse::<u32>().map_err(|_| Self::TAG.value_error())?
                 * 10u32.pow(9 - digits.len() as u32)
         };
+
         let datetime = datetime
             .replace_nanosecond(nanoseconds)
             .map_err(|_| Self::TAG.value_error())?
@@ -144,6 +147,7 @@ pub(crate) struct BasicOcspResponse {
     pub(crate) tbs_response_data: ResponseData,
     pub(crate) signature_algorithm: AlgorithmIdentifierOwned,
     pub(crate) signature: BitString,
+
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) certs: Option<Vec<Any>>,
 }
@@ -152,9 +156,11 @@ pub(crate) struct BasicOcspResponse {
 pub(crate) struct ResponseData {
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) version: Option<Int>,
+
     pub(crate) responder_id: ResponderId,
     pub(crate) produced_at: GeneralizedTime,
     pub(crate) responses: Vec<SingleResponse>,
+
     #[asn1(context_specific = "1", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) response_extensions: Option<Vec<Extension>>,
 }
@@ -163,6 +169,7 @@ pub(crate) struct ResponseData {
 pub(crate) enum ResponderId {
     #[asn1(context_specific = "1", tag_mode = "EXPLICIT", constructed = "true")]
     ByName(Any),
+
     #[asn1(context_specific = "2", tag_mode = "EXPLICIT", constructed = "true")]
     ByKey(OctetString),
 }
@@ -172,8 +179,10 @@ pub(crate) struct SingleResponse {
     pub(crate) cert_id: CertId,
     pub(crate) cert_status: CertStatus,
     pub(crate) this_update: GeneralizedTime,
+
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) next_update: Option<GeneralizedTime>,
+
     #[asn1(context_specific = "1", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) single_extensions: Option<Vec<Extension>>,
 }
@@ -189,6 +198,7 @@ pub(crate) struct CertId {
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub(crate) struct OcspRequest {
     pub(crate) tbs_request: TbsRequest,
+
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) optional_signature: Option<Any>,
 }
@@ -197,9 +207,12 @@ pub(crate) struct OcspRequest {
 pub(crate) struct TbsRequest {
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) version: Option<Int>,
+
     #[asn1(context_specific = "1", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) requestor_name: Option<Any>,
+
     pub(crate) request_list: Vec<Request>,
+
     #[asn1(context_specific = "2", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) request_extensions: Option<Vec<Extension>>,
 }
@@ -207,6 +220,7 @@ pub(crate) struct TbsRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub(crate) struct Request {
     pub(crate) req_cert: CertId,
+
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) single_request_extensions: Option<Vec<Extension>>,
 }
@@ -215,8 +229,10 @@ pub(crate) struct Request {
 pub(crate) enum CertStatus {
     #[asn1(context_specific = "0", tag_mode = "IMPLICIT")]
     Good(()),
+
     #[asn1(context_specific = "1", tag_mode = "IMPLICIT", constructed = "true")]
     Revoked(RevokedInfo),
+
     #[asn1(context_specific = "2", tag_mode = "IMPLICIT")]
     Unknown(()),
 }
@@ -224,6 +240,7 @@ pub(crate) enum CertStatus {
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub(crate) struct RevokedInfo {
     pub(crate) revocation_time: GeneralizedTime,
+
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) revocation_reason: Option<CrlReason>,
 }
@@ -246,8 +263,10 @@ pub(crate) enum CrlReason {
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub(crate) struct Extension {
     pub(crate) extn_id: ObjectIdentifier,
+
     #[asn1(default = "Default::default")]
     pub(crate) critical: bool,
+
     pub(crate) extn_value: OctetString,
 }
 
@@ -291,8 +310,10 @@ mod tests {
             (datetime!(2050-01-01 00:00 UTC), "20500101000000Z"),
         ] {
             let value = GeneralizedTime::try_from(datetime).unwrap();
+
             let encoded = value.to_der().unwrap();
             assert_eq!(encoded, encoded_time(expected));
+
             assert_eq!(
                 GeneralizedTime::from_der(&encoded).unwrap().datetime,
                 datetime
