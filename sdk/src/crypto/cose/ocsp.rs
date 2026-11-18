@@ -25,6 +25,7 @@ use crate::{
             cert_chain_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
             CertificateTrustError, CertificateTrustPolicy, CoseError,
         },
+        internal,
         ocsp::OcspResponse,
     },
     log_item,
@@ -564,7 +565,7 @@ fn issuer_response_authorized(
 
     let Ok(check_time) = x509_parser::time::ASN1Time::from_timestamp(
         responder_time
-            .unwrap_or_else(crate::crypto::internal::time::now)
+            .unwrap_or_else(internal::time::now)
             .unix_timestamp(),
     ) else {
         return false;
@@ -2666,10 +2667,8 @@ mod tests {
     fn fresh_basic_response() -> crate::crypto::ocsp::asn1::BasicOcspResponse {
         use crate::crypto::ocsp::test_responder::good_basic_response;
 
-        let now = OffsetDateTime::from_unix_timestamp(
-            crate::crypto::internal::time::now().unix_timestamp(),
-        )
-        .unwrap();
+        let now =
+            OffsetDateTime::from_unix_timestamp(internal::time::now().unix_timestamp()).unwrap();
         let mut basic = good_basic_response();
         basic.tbs_response_data.produced_at =
             (now - ::time::Duration::hours(1)).try_into().unwrap();
@@ -3410,7 +3409,7 @@ mod tests {
             eku.extn_value = OctetString::new(purposes.to_der().unwrap()).unwrap();
             cert.tbs_certificate.validity.not_after = x509_cert::time::Time::GeneralTime(
                 x509_cert::der::asn1::GeneralizedTime::from_system_time(
-                    (crate::crypto::internal::time::now() + ::time::Duration::days(1)).into(),
+                    (internal::time::now() + ::time::Duration::days(1)).into(),
                 )
                 .unwrap(),
             );

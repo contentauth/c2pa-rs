@@ -98,7 +98,7 @@ use x509_cert::{
     Certificate,
 };
 
-use crate::{Error, Result};
+use crate::{crypto::internal, Error, Result};
 
 /// OID id-ed25519 (1.3.101.112)
 const ED25519_OID: &[u64] = &[1, 3, 101, 112];
@@ -197,7 +197,7 @@ fn subject_public_key_info(verifying_key: &VerifyingKey) -> Result<SubjectPublic
 
 /// Validity: notBefore = now - 1 day, notAfter = now + 365 days.
 fn default_validity() -> Result<Validity> {
-    validity_at(crate::crypto::internal::time::now())
+    validity_at(internal::time::now())
 }
 
 fn validity_at(now: time::OffsetDateTime) -> Result<Validity> {
@@ -566,6 +566,8 @@ mod tests {
         time::{Time, Validity},
     };
 
+    use crate::crypto::internal;
+
     #[test]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
@@ -622,7 +624,7 @@ mod tests {
             key.verify_strict(certificate.tbs_certificate.as_ref(), &signature)
                 .expect("issuer signature");
 
-            let now = crate::crypto::internal::time::now().unix_timestamp();
+            let now = internal::time::now().unix_timestamp();
 
             assert!(certificate.validity().not_before.timestamp() < now);
             assert!(certificate.validity().not_after.timestamp() > now);

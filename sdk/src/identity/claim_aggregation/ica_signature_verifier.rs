@@ -21,6 +21,7 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy},
+        internal,
     },
     identity::{
         claim_aggregation::{
@@ -772,7 +773,7 @@ impl<'a> IcaSignatureVerifier<'a> {
             ));
         };
 
-        let now = crate::crypto::internal::time::now();
+        let now = internal::time::now();
 
         if now < valid_from {
             return Err((
@@ -813,7 +814,7 @@ impl<'a> IcaSignatureVerifier<'a> {
             return Ok(());
         };
 
-        let now = crate::crypto::internal::time::now();
+        let now = internal::time::now();
 
         if now > valid_until {
             return Err((

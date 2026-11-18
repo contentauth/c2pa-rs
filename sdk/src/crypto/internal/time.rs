@@ -114,15 +114,17 @@ pub(crate) mod rfc3339 {
         use serde::{Deserialize, Deserializer, Serializer};
         use time::OffsetDateTime;
 
-        use crate::crypto::internal::time::rfc3339::{format, parse};
+        use crate::crypto::internal;
 
         pub(crate) fn serialize<S: Serializer>(
             timestamp: &Option<OffsetDateTime>,
             serializer: S,
         ) -> Result<S::Ok, S::Error> {
             match timestamp {
-                Some(timestamp) => serializer
-                    .serialize_some(&format(*timestamp).map_err(serde::ser::Error::custom)?),
+                Some(timestamp) => serializer.serialize_some(
+                    &internal::time::rfc3339::format(*timestamp)
+                        .map_err(serde::ser::Error::custom)?,
+                ),
                 None => serializer.serialize_none(),
             }
         }
@@ -131,7 +133,7 @@ pub(crate) mod rfc3339 {
             deserializer: D,
         ) -> Result<Option<OffsetDateTime>, D::Error> {
             Option::<String>::deserialize(deserializer)?
-                .map(|value| parse(&value))
+                .map(|value| internal::time::rfc3339::parse(&value))
                 .transpose()
         }
     }
@@ -146,13 +148,13 @@ mod tests {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::crypto::internal::time;
+    use crate::crypto::internal;
 
     #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
     struct Timestamp {
-        #[serde(with = "super::rfc3339")]
+        #[serde(with = "internal::time::rfc3339")]
         value: ::time::OffsetDateTime,
-        #[serde(default, with = "super::rfc3339::option")]
+        #[serde(default, with = "internal::time::rfc3339::option")]
         optional: Option<::time::OffsetDateTime>,
     }
 
@@ -180,7 +182,7 @@ mod tests {
                     .unwrap()
                     .to_offset(::time::UtcOffset::from_whole_seconds(seconds).unwrap());
                 assert_eq!(
-                    time::format_with_offset(timestamp),
+                    internal::time::format_with_offset(timestamp),
                     format!("{local}{fraction}{offset}"),
                     "offset {seconds}, nanoseconds {nanoseconds}"
                 );
@@ -256,7 +258,7 @@ mod tests {
         wasm_bindgen_test
     )]
     fn now() {
-        let time_now = time::now();
+        let time_now = internal::time::now();
         let unix_ts = time_now.unix_timestamp();
         dbg!(&unix_ts);
 

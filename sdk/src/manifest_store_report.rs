@@ -17,9 +17,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::AssertionData, claim::Claim, crypto::base64, store::Store,
-    validation_results::ValidationResults, validation_status::ValidationStatus, Result,
-    ValidationState,
+    assertion::AssertionData,
+    claim::Claim,
+    crypto::{base64, internal},
+    store::Store,
+    validation_results::ValidationResults,
+    validation_status::ValidationStatus,
+    Result, ValidationState,
 };
 
 /// Low level JSON based representation of Manifest Store - used for debugging
@@ -125,9 +129,7 @@ impl ManifestReport {
                 alg: info.alg.map_or_else(String::new, |a| a.to_string()),
                 issuer: info.issuer_org,
                 common_name: info.common_name,
-                time: info
-                    .date
-                    .map(crate::crypto::internal::time::format_with_offset),
+                time: info.date.map(internal::time::format_with_offset),
             },
             None => SignatureReport::default(),
         };

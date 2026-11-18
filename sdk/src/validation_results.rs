@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::AssertionBase,
     assertions::Ingredient,
+    crypto::internal,
     jumbf::labels::{self, manifest_label_from_uri},
     spec_versions::C2PA_VALIDATOR_VERSION,
     status_tracker::{LogKind, StatusTracker},
@@ -360,9 +361,7 @@ impl ValidationResults {
                 results.add_status(status);
             }
         }
-        results.validation_time = Some(crate::crypto::internal::time::format_with_offset(
-            crate::crypto::internal::time::now(),
-        ));
+        results.validation_time = Some(internal::time::format_with_offset(internal::time::now()));
         results
     }
 

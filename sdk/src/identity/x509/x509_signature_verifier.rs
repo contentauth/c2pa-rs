@@ -20,9 +20,12 @@ use coset::CoseSign1;
 use serde::Serialize;
 
 use crate::{
-    crypto::cose::{
-        parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, CoseError, TrustAnchorType,
-        Verifier,
+    crypto::{
+        cose::{
+            parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, CoseError, TrustAnchorType,
+            Verifier,
+        },
+        internal,
     },
     identity::{
         identity_assertion::signature_verifier::ToCredentialSummary, SignatureVerifier,
@@ -228,10 +231,7 @@ impl X509SignatureReport {
                 alg: info.cert_info.alg,
                 issuer: info.cert_info.issuer_org.clone(),
                 common_name: info.cert_info.common_name.clone(),
-                time: info
-                    .cert_info
-                    .date
-                    .map(crate::crypto::internal::time::format_with_offset),
+                time: info.cert_info.date.map(internal::time::format_with_offset),
                 cert_serial_number: info
                     .cert_info
                     .cert_serial_number

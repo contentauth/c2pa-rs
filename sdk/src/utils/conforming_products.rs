@@ -188,6 +188,8 @@ mod tests {
             Certificate, TbsCertificate, Version,
         };
 
+        use crate::crypto::internal;
+
         // Deterministic key so tests are reproducible.
         let key = SigningKey::from_bytes(&[42u8; 32]);
         let vk = key.verifying_key();
@@ -224,7 +226,7 @@ mod tests {
         }
         let subject = RdnSequence(rdns);
 
-        let now = crate::crypto::internal::time::now();
+        let now = internal::time::now();
         let validity = Validity {
             not_before: Time::GeneralTime(
                 GeneralizedTime::from_system_time((now - ::time::Duration::days(1)).into())

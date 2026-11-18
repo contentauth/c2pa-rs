@@ -31,6 +31,7 @@ use crate::{
             cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
             signing_time_from_sign1, timestamp_token_bytes_from_sign1,
         },
+        internal,
         time_stamp::tsa_signer_cert_der_from_token,
     },
     error::{Error, Result},
@@ -490,7 +491,7 @@ impl<'a> CrJsonExporter<'a> {
         });
 
         let ts_time = signing_time_from_sign1(&sign1, data.as_ref(), false)
-            .map(crate::crypto::internal::time::format_with_offset);
+            .map(internal::time::format_with_offset);
 
         let tsa_cert_info = timestamp_token_bytes_from_sign1(&sign1).and_then(|token_bytes| {
             tsa_signer_cert_der_from_token(&token_bytes)
@@ -525,9 +526,10 @@ impl<'a> CrJsonExporter<'a> {
         let Some(vr) = self.reader.validation_results() else {
             return map;
         };
-        let validation_time = vr.validation_time().map(String::from).unwrap_or_else(|| {
-            crate::crypto::internal::time::format_with_offset(crate::crypto::internal::time::now())
-        });
+        let validation_time = vr
+            .validation_time()
+            .map(String::from)
+            .unwrap_or_else(|| internal::time::format_with_offset(internal::time::now()));
 
         if let Some(active_label) = self.reader.active_label() {
             let codes = vr.active_manifest().cloned().unwrap_or_default();
@@ -668,7 +670,7 @@ fn build_manifest_validation_results(
     let (codes, validation_time) = validation_map.get(label).cloned().unwrap_or_else(|| {
         (
             StatusCodes::default(),
-            crate::crypto::internal::time::format_with_offset(crate::crypto::internal::time::now()),
+            internal::time::format_with_offset(internal::time::now()),
         )
     });
     ManifestValidationResults {
@@ -783,8 +785,8 @@ fn parse_certificate_from_der(der: &[u8]) -> Result<Option<CrJsonCertInfo>> {
         issuer: Some(extract_dn_components(cert.issuer())?),
         subject: Some(extract_dn_components(cert.subject())?),
         validity: Some(CrJsonValidity {
-            not_before: crate::crypto::internal::time::format_with_offset(not_before),
-            not_after: crate::crypto::internal::time::format_with_offset(not_after),
+            not_before: internal::time::format_with_offset(not_before),
+            not_after: internal::time::format_with_offset(not_after),
         }),
     }))
 }

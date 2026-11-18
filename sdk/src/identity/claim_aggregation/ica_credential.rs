@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::{
-    crypto::asn1::rfc3161::TstInfo,
+    crypto::{asn1::rfc3161::TstInfo, internal},
     identity::{
         claim_aggregation::w3c_vc::credential::{CredentialV2, VerifiableCredentialSubtype},
         identity_assertion::signature_verifier::ToCredentialSummary,
@@ -162,7 +162,7 @@ pub struct VerifiedIdentity {
     ///
     /// Represented by [`OffsetDateTime`]. Leap-second inputs (`:60`) are rejected
     /// instead of silently normalized.
-    #[serde(rename = "verifiedAt", with = "crate::crypto::internal::time::rfc3339")]
+    #[serde(rename = "verifiedAt", with = "internal::time::rfc3339")]
     pub verified_at: OffsetDateTime,
 
     /// ## Identity provider details
@@ -218,12 +218,12 @@ pub struct IcaCredentialSummary {
     issuer: UriBuf,
 
     #[serde(rename = "validFrom")]
-    #[serde(with = "crate::crypto::internal::time::rfc3339::option")]
+    #[serde(with = "internal::time::rfc3339::option")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     valid_from: Option<OffsetDateTime>,
 
     #[serde(rename = "validUntil")]
-    #[serde(with = "crate::crypto::internal::time::rfc3339::option")]
+    #[serde(with = "internal::time::rfc3339::option")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     valid_until: Option<OffsetDateTime>,
 

@@ -21,6 +21,7 @@ use serde_json::Value;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest},
+    crypto::internal,
     error::Result,
     hashed_uri::HashedUri,
     utils::cbor_types::DateT,
@@ -57,7 +58,7 @@ impl AssertionMetadata {
     pub const LABEL: &'static str = labels::ASSERTION_METADATA;
 
     pub fn new() -> Self {
-        let now = crate::crypto::internal::time::now();
+        let now = internal::time::now();
         let (hour, minute, second) = now.to_hms();
         let date_time = format!(
             "{}T{hour:02}:{minute:02}:{second:02}.{:03}Z",

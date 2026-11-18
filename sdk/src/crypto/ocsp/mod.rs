@@ -23,7 +23,7 @@ use x509_parser::{certificate::X509Certificate, prelude::FromDer};
 
 use crate::{
     crypto::{
-        internal::time,
+        internal,
         ocsp::asn1::{
             BasicOcspResponse, CertId, CertStatus, CrlReason, OcspResponseStatus, ResponderId,
         },
@@ -60,7 +60,7 @@ impl Default for OcspResponse {
     fn default() -> Self {
         Self {
             ocsp_der: Vec::new(),
-            next_update: time::now(),
+            next_update: internal::time::now(),
             revoked_at: None,
             ocsp_certs: None,
             certificate_serial_num: String::new(),
@@ -95,7 +95,7 @@ impl OcspResponse {
             der,
             signing_cert_chain,
             signing_time,
-            time::now(),
+            internal::time::now(),
             validation_log,
         )
     }
@@ -628,7 +628,7 @@ mod tests {
 
     use crate::{
         crypto::{
-            internal::time,
+            internal,
             ocsp::{
                 test_responder::{encode_response, good_basic_response as basic_response},
                 OcspResponse,
@@ -931,7 +931,7 @@ mod tests {
             .unwrap_or_else(|| {
                 basic.tbs_response_data.produced_at.datetime + ::time::Duration::hours(24)
             });
-        assert!(time::now() > next_update);
+        assert!(internal::time::now() > next_update);
 
         let mut log = StatusTracker::default();
         OcspResponse::from_der_checked(
@@ -1547,7 +1547,7 @@ mod tests {
 
         let mut future = basic_response();
         let tomorrow = OffsetDateTime::from_unix_timestamp(
-            (crate::crypto::internal::time::now() + ::time::Duration::days(1)).unix_timestamp(),
+            (internal::time::now() + ::time::Duration::days(1)).unix_timestamp(),
         )
         .unwrap();
         future.tbs_response_data.responses[0].this_update = tomorrow.try_into().unwrap();
@@ -1666,7 +1666,7 @@ mod tests {
         ] {
             for future in [false, true] {
                 let revoked_at = if future {
-                    crate::crypto::internal::time::now() + ::time::Duration::days(365)
+                    internal::time::now() + ::time::Duration::days(365)
                 } else {
                     datetime!(2023-02-01 00:00:00 UTC)
                 };
@@ -1714,7 +1714,7 @@ mod tests {
     #[test]
     fn matching_good_response_suppresses_earlier_unknown_diagnostics() {
         let mut basic = basic_response();
-        basic.tbs_response_data.produced_at = (time::now() - ::time::Duration::hours(1))
+        basic.tbs_response_data.produced_at = (internal::time::now() - ::time::Duration::hours(1))
             .try_into()
             .unwrap();
         let good = basic.tbs_response_data.responses[0].clone();
@@ -1772,7 +1772,7 @@ mod tests {
     #[test]
     fn later_good_response_keeps_earlier_revoked_at_but_discards_its_diagnostic() {
         let mut basic = basic_response();
-        basic.tbs_response_data.produced_at = (time::now() - ::time::Duration::hours(1))
+        basic.tbs_response_data.produced_at = (internal::time::now() - ::time::Duration::hours(1))
             .try_into()
             .unwrap();
         let good = basic.tbs_response_data.responses[0].clone();

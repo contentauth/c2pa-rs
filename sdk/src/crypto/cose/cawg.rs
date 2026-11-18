@@ -29,6 +29,7 @@ use super::{
 use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
+        internal,
         time_stamp::{verify_time_stamp, TimeStampError},
     },
     log_item,
@@ -329,7 +330,7 @@ impl Verifier<'_> {
 
             let acceptable = interim_certificate_is_acceptable(
                 &certificates[0],
-                crate::crypto::internal::time::now(),
+                internal::time::now(),
                 timestamp,
                 &effective_policy,
             );

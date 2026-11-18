@@ -996,15 +996,13 @@ mod ocsp_reporting_tests {
     fn fresh_good_reports_once_after_collection() {
         use ::time::{Duration, OffsetDateTime};
 
-        use crate::crypto::ocsp::test_responder::TestResponder;
+        use crate::crypto::{internal, ocsp::test_responder::TestResponder};
 
         let context = context(true);
         let responder = TestResponder::new();
         let mut basic = good_basic_response();
-        let now = OffsetDateTime::from_unix_timestamp(
-            crate::crypto::internal::time::now().unix_timestamp(),
-        )
-        .unwrap();
+        let now =
+            OffsetDateTime::from_unix_timestamp(internal::time::now().unix_timestamp()).unwrap();
         basic.tbs_response_data.produced_at = (now - Duration::hours(1)).try_into().unwrap();
         basic.tbs_response_data.responses[0].this_update =
             (now - Duration::hours(1)).try_into().unwrap();
