@@ -27,8 +27,9 @@ IPHONEOS_DEPLOYMENT_TARGET ?= 15.0
 
 # Workaround for cross installation issue with static-mut-refs warning
 # See: https://github.com/cross-rs/cross/issues/1561
-# This clears RUSTFLAGS to prevent -D warnings from failing the cross installation
-CROSS_INSTALL_RUSTFLAGS = RUSTFLAGS=""
+# This clears RUSTFLAGS and relaxes CARGO_BUILD_WARNINGS to prevent denied
+# warnings from failing the cross installation
+CROSS_INSTALL_RUSTFLAGS = RUSTFLAGS="" CARGO_BUILD_WARNINGS=warn
 
 # Android 16KB page size alignment requirement
 ANDROID_LINKER_FLAGS = -C link-arg=-Wl,-z,max-page-size=16384

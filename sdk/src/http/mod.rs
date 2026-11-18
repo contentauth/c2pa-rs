@@ -134,6 +134,47 @@ pub use http;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RequestTimeout(pub Duration);
 
+/// Adds a default [`RequestTimeout`] to requests that do not set one.
+pub(crate) struct DefaultTimeoutResolver<T> {
+    inner: T,
+    timeout: Duration,
+}
+
+impl<T> DefaultTimeoutResolver<T> {
+    pub(crate) fn new(inner: T, timeout: Duration) -> Self {
+        Self { inner, timeout }
+    }
+
+    fn apply(&self, mut request: Request<Vec<u8>>) -> Request<Vec<u8>> {
+        if request.extensions().get::<RequestTimeout>().is_none() {
+            request
+                .extensions_mut()
+                .insert(RequestTimeout(self.timeout));
+        }
+        request
+    }
+}
+
+impl<T: SyncHttpResolver> SyncHttpResolver for DefaultTimeoutResolver<T> {
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        self.inner.http_resolve(self.apply(request))
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncHttpResolver> AsyncHttpResolver for DefaultTimeoutResolver<T> {
+    async fn http_resolve_async(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        self.inner.http_resolve_async(self.apply(request)).await
+    }
+}
+
 /// A resolver for sync (blocking) HTTP requests.
 //
 // This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] for consistency with the
@@ -601,7 +642,7 @@ pub mod tests {
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn slow_server(delay_body: bool) -> (String, std::thread::JoinHandle<()>) {
+    pub(crate) fn slow_server(delay_body: bool) -> (String, std::thread::JoinHandle<()>) {
         use std::{
             io::{BufRead, BufReader, Write},
             net::TcpListener,

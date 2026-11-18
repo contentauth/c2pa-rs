@@ -287,6 +287,48 @@ mod tests {
     use crate::identity::claim_aggregation::w3c_vc::{did::Did, did_web};
 
     #[test]
+    fn resolve_applies_default_request_timeout() {
+        use std::{
+            io::Read,
+            sync::{Arc, Mutex},
+            time::Duration,
+        };
+
+        use http::{Request, Response};
+
+        use crate::{
+            http::{HttpResolverError, RequestTimeout, SyncHttpResolver},
+            Context,
+        };
+
+        struct CaptureTimeout(Arc<Mutex<Option<RequestTimeout>>>);
+
+        impl SyncHttpResolver for CaptureTimeout {
+            fn http_resolve(
+                &self,
+                request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                *self.0.lock().unwrap() = request.extensions().get::<RequestTimeout>().copied();
+                Ok(Response::builder()
+                    .status(404)
+                    .body(Box::new(std::io::empty()) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(None));
+        let context = Context::new()
+            .with_settings_value("core.http_request_timeout_in_ms", 250u64)
+            .unwrap()
+            .with_resolver(CaptureTimeout(seen.clone()));
+        assert!(did_web::resolve(&did("did:web:example.com"), &context).is_err());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some(RequestTimeout(Duration::from_millis(250)))
+        );
+    }
+
+    #[test]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
