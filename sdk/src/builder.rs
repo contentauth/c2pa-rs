@@ -1534,29 +1534,32 @@ impl Builder {
     /// ```
     pub fn with_archive(self, stream: impl Read + Seek + Send) -> Result<Self> {
         let mut stream = stream;
-        Self::old_from_archive(&mut stream).or_else(|_| {
-            // if the old method fails, try the new method
-            // Archives contain unsigned working stores (signed with BoxHash placeholder)
+        // A legacy ZIP archive that loads must still pass the claim version check.
+        if let Ok(builder) = Self::old_from_archive(&mut stream) {
+            builder.check_claim_version()?;
+            return Ok(builder);
+        }
+        // if the old method fails, try the new method
+        // Archives contain unsigned working stores (signed with BoxHash placeholder)
 
-            let mut validation_log = crate::status_tracker::StatusTracker::default();
-            stream.rewind()?; // Ensure stream is at the start
+        let mut validation_log = crate::status_tracker::StatusTracker::default();
+        stream.rewind()?; // Ensure stream is at the start
 
-            // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
-            let store = Store::from_stream(
-                "application/c2pa",
-                &mut stream,
-                &mut validation_log,
-                &self.context,
-            )?;
+        // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
+        let store = Store::from_stream(
+            "application/c2pa",
+            &mut stream,
+            &mut validation_log,
+            &self.context,
+        )?;
 
-            let mut reader = Reader::from_shared_context(&self.context);
-            reader.with_store(store, &mut validation_log)?;
-            reader.into_builder()
-        })
+        let mut reader = Reader::from_shared_context(&self.context);
+        reader.with_store(store, &mut validation_log)?;
+        reader.into_builder()
     }
 
-    // Convert a Manifest into a Claim
-    fn to_claim(&self) -> Result<Claim> {
+    /// Only C2PA v2 claims can be signed.
+    fn check_claim_version(&self) -> Result<()> {
         if self.claim_version() != 2 {
             return Err(Error::BadParam(format!(
                 "unsupported claim_version {}: signing C2PA v1 claims was removed in 0.93.0, \
@@ -1564,6 +1567,12 @@ impl Builder {
                 self.claim_version()
             )));
         }
+        Ok(())
+    }
+
+    // Convert a Manifest into a Claim
+    fn to_claim(&self) -> Result<Claim> {
+        self.check_claim_version()?;
 
         // utility function to add created or gathered assertions
         fn add_assertion(
@@ -11025,6 +11034,27 @@ mod tests {
                 .unwrap();
 
         let result = Builder::from_context(context).with_archive(Cursor::new(jumbf));
+        assert!(matches!(result, Err(Error::BadParam(_))), "{result:?}");
+    }
+
+    #[test]
+    fn test_with_archive_rejects_v1_zip_archive() {
+        use std::io::Write as _;
+
+        use zip::{write::SimpleFileOptions, ZipWriter};
+
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("manifest.json", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .write_all(
+                br#"{"claim_version":1,"title":"Legacy","format":"application/octet-stream","instance_id":"xmp:iid:1","ingredients":[],"assertions":[],"no_embed":false,"timestamp_manifest_labels":[]}"#,
+            )
+            .unwrap();
+        let zip = writer.finish().unwrap();
+
+        let result = Builder::default().with_archive(zip);
         assert!(matches!(result, Err(Error::BadParam(_))), "{result:?}");
     }
 
