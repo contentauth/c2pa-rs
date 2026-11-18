@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+### Removed
+
+* C2PA v1 claim signing was removed in 0.93.0: signing with `claim_version` set to
+  `1` now returns an error. Omit `claim_version` or set it to `2`. Reading and
+  validating existing v1 claims is unaffected. See the
+  [migration guide](docs/c2pa-v1-signing-migration.md).
+
 ### Deprecated
 
 * C2PA v1 claim signing is deprecated in 0.92.0 and will be removed in 0.93.0,

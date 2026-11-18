@@ -1102,7 +1102,8 @@ impl Reader {
     /// Convert the Reader back into a Builder.
     /// This can be used to modify an existing manifest store.
     /// # Errors
-    /// Returns an [`Error`] if there is no active manifest.
+    /// Returns an [`Error`] if there is no active manifest, or [`Error::BadParam`] if the active
+    /// manifest is a C2PA v1 claim, which can no longer be signed.
     pub fn into_builder(mut self) -> Result<crate::Builder> {
         // Preserve the Reader's context in the new Builder
         let context = self.context;
@@ -1110,12 +1111,15 @@ impl Reader {
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();
-                if parts.is_v1 {
-                    builder.definition.claim_version = Some(1);
-                }
             }
             builder.definition.label = Some(label.to_string());
             if let Some(mut manifest) = self.manifests.remove(label) {
+                if manifest.claim_version() == Some(1) {
+                    return Err(Error::BadParam(
+                        "cannot convert a C2PA v1 manifest to a Builder: signing v1 claims was removed in 0.93.0"
+                            .to_string(),
+                    ));
+                }
                 builder.definition.claim_generator_info =
                     manifest.claim_generator_info.take().unwrap_or_default();
                 builder.definition.format = manifest.format().unwrap_or_default().to_string();
