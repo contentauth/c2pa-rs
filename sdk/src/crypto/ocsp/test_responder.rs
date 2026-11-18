@@ -24,13 +24,7 @@ use ed25519_dalek::Signer;
 #[cfg(feature = "openssl")]
 pub(crate) use responder::TestResponder;
 use x509_cert::{
-    der::{
-        asn1::{
-            BitString as BitString07, ObjectIdentifier as ObjectIdentifier07,
-            OctetString as OctetString07,
-        },
-        Decode as DecodeDer, Encode as EncodeDer,
-    },
+    der::{asn1 as cert_asn1, Decode as DecodeDer, Encode as EncodeDer},
     spki::AlgorithmIdentifierOwned,
     Certificate,
 };
@@ -72,7 +66,7 @@ impl IssuerResponder {
         .collect();
 
         let algorithm = AlgorithmIdentifierOwned {
-            oid: ObjectIdentifier07::new_unwrap("1.3.101.112"),
+            oid: cert_asn1::ObjectIdentifier::new_unwrap("1.3.101.112"),
             parameters: None,
         };
 
@@ -80,24 +74,25 @@ impl IssuerResponder {
         chain[1]
             .tbs_certificate
             .subject_public_key_info
-            .subject_public_key = BitString07::from_bytes(&key.verifying_key().to_bytes()).unwrap();
+            .subject_public_key =
+            cert_asn1::BitString::from_bytes(&key.verifying_key().to_bytes()).unwrap();
 
-        let key_usage = BitString07::new(1, vec![0x06]).unwrap();
+        let key_usage = cert_asn1::BitString::new(1, vec![0x06]).unwrap();
         chain[1]
             .tbs_certificate
             .extensions
             .as_mut()
             .unwrap()
             .push(x509_cert::ext::Extension {
-                extn_id: ObjectIdentifier07::new_unwrap("2.5.29.15"),
+                extn_id: cert_asn1::ObjectIdentifier::new_unwrap("2.5.29.15"),
                 critical: true,
-                extn_value: OctetString07::new(key_usage.to_der().unwrap()).unwrap(),
+                extn_value: cert_asn1::OctetString::new(key_usage.to_der().unwrap()).unwrap(),
             });
 
         for cert in &mut chain {
             cert.signature_algorithm = algorithm.clone();
             cert.tbs_certificate.signature = algorithm.clone();
-            cert.signature = BitString07::from_bytes(
+            cert.signature = cert_asn1::BitString::from_bytes(
                 &key.sign(&cert.tbs_certificate.to_der().unwrap()).to_bytes(),
             )
             .unwrap();
@@ -169,9 +164,10 @@ impl IssuerResponder {
         cert.tbs_certificate.subject_public_key_info.algorithm = algorithm;
         cert.tbs_certificate
             .subject_public_key_info
-            .subject_public_key = BitString07::from_bytes(&key.verifying_key().to_bytes()).unwrap();
+            .subject_public_key =
+            cert_asn1::BitString::from_bytes(&key.verifying_key().to_bytes()).unwrap();
 
-        cert.signature = BitString07::from_bytes(
+        cert.signature = cert_asn1::BitString::from_bytes(
             &self
                 .key
                 .sign(&cert.tbs_certificate.to_der().unwrap())
