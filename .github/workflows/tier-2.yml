@@ -132,6 +132,9 @@ jobs:
       - name: Build C library for emscripten
         if: matrix.target == 'wasm32-unknown-emscripten'
         env:
+          # Keep cache-generation INFO logs out of linker stderr without
+          # disabling compiler/linker diagnostics or Rust's warning checks.
+          EMCC_LOGGING: "0"
           RUSTFLAGS: -C target-feature=+atomics,+bulk-memory -C link-arg=-pthread -C link-arg=-sUSE_PTHREADS=1 -C link-arg=-sSIDE_MODULE=1 -C link-arg=-flto
         run: make release TARGET=${{ matrix.target }}
         working-directory: ./c2pa_c_ffi

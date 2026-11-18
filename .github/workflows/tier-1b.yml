@@ -110,6 +110,15 @@ jobs:
           # harmless, so allow warnings on Windows instead of failing the build.
           build-warnings: ${{ runner.os == 'Windows' && 'warn' || 'deny' }}
 
+      - name: Select Windows Perl for vendored OpenSSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $perl = (Get-Command perl.exe).Source
+          & $perl -MLocale::Maketext::Simple -MIPC::Cmd -e 'print "$^V\n"'
+          if ($LASTEXITCODE -ne 0) { throw "OpenSSL requires a complete Perl installation" }
+          "OPENSSL_SRC_PERL=$perl" >> $env:GITHUB_ENV
+
       - name: Run tests
         shell: bash
         env:
@@ -206,6 +215,15 @@ jobs:
           # default `deny` setting turns into errors. The missing symbols are
           # harmless, so allow warnings on Windows instead of failing the build.
           build-warnings: ${{ runner.os == 'Windows' && 'warn' || 'deny' }}
+
+      - name: Select Windows Perl for vendored OpenSSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $perl = (Get-Command perl.exe).Source
+          & $perl -MLocale::Maketext::Simple -MIPC::Cmd -e 'print "$^V\n"'
+          if ($LASTEXITCODE -ne 0) { throw "OpenSSL requires a complete Perl installation" }
+          "OPENSSL_SRC_PERL=$perl" >> $env:GITHUB_ENV
 
       - name: Run tests
         shell: bash
