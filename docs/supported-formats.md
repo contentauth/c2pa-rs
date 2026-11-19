@@ -33,12 +33,12 @@ The following table summarizes the supported media (asset) file formats. This in
 | `wav`           | `audio/wav`                                                                     |
 | `webp`          | `image/webp`                                                                    |
 
-* Requires the non-default `unstable_plain_text` feature.
+<sup>*</sup> Requires the non-default `unstable_plain_text` feature.
 
-## Experimental feature: asset I/O
+## Experimental feature: asset_io
 
-The experimental, non-default `unstable_asset_io` feature routes every container that
-`asset-io` 0.5 supports through it: JPEG, PNG, SVG, RIFF (WAV, WebP, AVI),
+The Rust library experimental, non-default `unstable_asset_io` feature routes every container that
+[`asset-io`](https://github.com/contentauth/asset-io) 0.5 supports through it: JPEG, PNG, SVG, RIFF (WAV, WebP, AVI),
 TIFF/DNG (ARW and NEF read only), MP3, FLAC, GIF, ISO BMFF (MP4, MOV, M4A, HEIC,
 HEIF, AVIF), and `.c2pa` sidecars. PDF uses it when the `pdf` feature is also
 enabled. JPEG XL, ZIP-based formats and text keep their legacy handlers, as do
