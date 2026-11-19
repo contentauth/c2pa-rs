@@ -213,7 +213,6 @@ pub mod dynamic_assertion;
 pub mod http;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
-#[doc(hidden)]
 pub mod identity;
 
 /// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
