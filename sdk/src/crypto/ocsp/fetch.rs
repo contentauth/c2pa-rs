@@ -560,6 +560,14 @@ mod tests {
             assert_eq!(requests.len(), 1);
             assert_eq!(requests[0].method(), http::Method::GET);
             assert_eq!(requests[0].headers()[header::HOST], "leaf-ocsp.test");
+            assert_eq!(
+                requests[0]
+                    .extensions()
+                    .get::<crate::http::RequestTimeout>(),
+                Some(&crate::http::RequestTimeout(
+                    std::time::Duration::from_secs(10)
+                ))
+            );
             assert!(requests[0].body().is_empty());
             let request_data = process_ocsp_responders(&ca_chain(), 0).unwrap();
             assert_eq!(

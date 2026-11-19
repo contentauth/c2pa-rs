@@ -11,16 +11,20 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, OnceLock,
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
+    time::Duration,
 };
 
 use crate::{
-    asset_io::{AssetIO, HandlerRegistry},
+    asset_io::HandlerRegistry,
     http::{
         restricted::{MetadataGuardResolver, RedirectResolver, RestrictedResolver},
-        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
+        AsyncGenericResolver, AsyncHttpResolver, DefaultTimeoutResolver, SyncGenericResolver,
+        SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
@@ -496,17 +500,28 @@ impl Context {
     /// Returns a reference to the sync resolver.
     ///
     /// When no custom resolver is set, the default resolver is assembled from the
-    /// [`allow_redirects`] and [`allowed_network_hosts`] settings.
+    /// [`allow_redirects`] and [`allowed_network_hosts`] settings. Requests without a
+    /// [`RequestTimeout`] receive [`http_request_timeout_in_ms`].
     ///
     /// [`allow_redirects`]: crate::settings::Core::allow_redirects
     /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    /// [`http_request_timeout_in_ms`]: crate::settings::Core::http_request_timeout_in_ms
+    /// [`RequestTimeout`]: crate::http::RequestTimeout
     pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
-        match &self.sync_resolver_state {
+        let resolver = match &self.sync_resolver_state {
             SyncResolverState::Custom(resolver) => resolver.clone(),
             SyncResolverState::Default(once_lock) => once_lock
                 .get_or_init(|| self.build_default_sync_resolver())
                 .clone(),
-        }
+        };
+        Arc::new(DefaultTimeoutResolver::new(
+            resolver,
+            self.http_request_timeout(),
+        ))
+    }
+
+    fn http_request_timeout(&self) -> Duration {
+        Duration::from_millis(self.settings.core.http_request_timeout_in_ms)
     }
 
     /// Builds the default sync resolver stack from the [`allow_redirects`] and
@@ -542,16 +557,23 @@ impl Context {
     ///
     /// When no custom resolver is set, the default resolver is assembled from the
     /// [`allow_redirects`] and [`allowed_network_hosts`] settings, mirroring the sync resolver.
+    /// Requests without a [`RequestTimeout`] receive [`http_request_timeout_in_ms`].
     ///
     /// [`allow_redirects`]: crate::settings::Core::allow_redirects
     /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    /// [`http_request_timeout_in_ms`]: crate::settings::Core::http_request_timeout_in_ms
+    /// [`RequestTimeout`]: crate::http::RequestTimeout
     pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
-        match &self.async_resolver_state {
+        let resolver = match &self.async_resolver_state {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
             AsyncResolverState::Default(once_lock) => once_lock
                 .get_or_init(|| self.build_default_async_resolver())
                 .clone(),
-        }
+        };
+        Arc::new(DefaultTimeoutResolver::new(
+            resolver,
+            self.http_request_timeout(),
+        ))
     }
 
     /// Builds the default async resolver stack. Mirrors [`build_default_sync_resolver`].
@@ -579,35 +601,53 @@ impl Context {
     ///
     /// # Arguments
     ///
-    /// * `handler` - Any type implementing `AssetIO`
+    /// * `handler` - An asset-io container handler.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// # use c2pa::{Context, AssetIO};
-    /// let context = Context::new().with_io_handler(MyCustomHandler::new(""));
+    /// # use c2pa::Context;
+    /// let context = Context::new().with_io_handler(MyCustomContainer);
     /// let reader = c2pa::Reader::from_context(context);
     /// ```
-    #[allow(unused)] // not public yet, but used in tests
-    pub(crate) fn with_io_handler(mut self, handler: impl AssetIO + 'static) -> Self {
+    #[cfg(feature = "unstable_asset_io")]
+    pub fn with_io_handler(
+        mut self,
+        handler: impl ::asset_io::container_api::ContainerHandler + 'static,
+    ) -> Self {
         self.io.add_handler(handler);
         self
     }
 
     /// Register a custom IO handler on this Context (mutable variant).
-    #[allow(unused)] // not public yet, but used in tests
-    pub(crate) fn add_io_handler(&mut self, handler: impl AssetIO + 'static) {
+    #[cfg(feature = "unstable_asset_io")]
+    pub fn add_io_handler(
+        &mut self,
+        handler: impl ::asset_io::container_api::ContainerHandler + 'static,
+    ) {
         self.io.add_handler(handler);
     }
 
     /// Returns this Context's [`HandlerRegistry`], for looking up asset I/O handlers and
     /// their derived metadata (supported formats, MIME types, container families, ...).
     ///
-    /// Custom handlers registered via [`with_io_handler`](Self::with_io_handler) are searched
+    /// Custom handlers registered on this Context are searched
     /// before the built-in global registry; last-registered wins when two handlers claim the
     /// same format.
+    #[cfg(feature = "unstable_asset_io")]
+    pub fn io(&self) -> &HandlerRegistry {
+        &self.io
+    }
+
+    #[cfg(not(feature = "unstable_asset_io"))]
     pub(crate) fn io(&self) -> &HandlerRegistry {
         &self.io
+    }
+
+    /// Returns this Context's registry for registering asset-io container handlers.
+    #[cfg(feature = "unstable_asset_io")]
+    pub fn io_mut(&mut self) -> &mut HandlerRegistry {
+        &mut self.io
     }
 
     /// Configure this Context with a custom cryptographic signer.
@@ -728,10 +768,14 @@ impl Context {
             SignerState::FromSettings(once_lock) => {
                 let result = once_lock.get_or_init(|| {
                     if let Some(signer_settings) = &self.settings.signer {
-                        let c2pa_signer = signer_settings.clone().c2pa_signer()?;
+                        let timeout = self.http_request_timeout();
+                        let c2pa_signer =
+                            signer_settings.clone().c2pa_signer_with_timeout(timeout)?;
 
                         if let Some(cawg_settings) = &self.settings.cawg_x509_signer {
-                            cawg_settings.clone().cawg_signer(c2pa_signer)
+                            cawg_settings
+                                .clone()
+                                .cawg_signer_with_timeout(c2pa_signer, timeout)
                         } else {
                             Ok(c2pa_signer)
                         }
@@ -1362,6 +1406,110 @@ mod tests {
         assert_eq!(buffer, b"mock response");
     }
 
+    #[test]
+    fn test_resolver_applies_default_request_timeout() {
+        use std::{
+            io::Read,
+            sync::{Arc, Mutex},
+            time::Duration,
+        };
+
+        use http::{Request, Response};
+
+        use crate::http::{RequestTimeout, SyncHttpResolver};
+
+        struct CaptureTimeout(Arc<Mutex<Option<RequestTimeout>>>);
+
+        impl SyncHttpResolver for CaptureTimeout {
+            fn http_resolve(
+                &self,
+                request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+                *self.0.lock().unwrap() = request.extensions().get::<RequestTimeout>().copied();
+                Ok(Response::builder()
+                    .status(200)
+                    .body(Box::new(std::io::empty()) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        for (context, explicit, expected) in [
+            (Context::new(), None, 10_000),
+            (
+                Context::new()
+                    .with_settings_value("core.http_request_timeout_in_ms", 250u64)
+                    .unwrap(),
+                None,
+                250,
+            ),
+            (Context::new(), Some(42), 42),
+        ] {
+            let seen = Arc::new(Mutex::new(None));
+            let context = context.with_resolver(CaptureTimeout(seen.clone()));
+            let mut request = Request::get("https://example.com");
+            if let Some(ms) = explicit {
+                request = request.extension(RequestTimeout(Duration::from_millis(ms)));
+            }
+            context
+                .resolver()
+                .http_resolve(request.body(Vec::new()).unwrap())
+                .unwrap();
+            assert_eq!(
+                *seen.lock().unwrap(),
+                Some(RequestTimeout(Duration::from_millis(expected)))
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_async_resolver_applies_default_request_timeout() {
+        use std::{
+            io::Read,
+            sync::{Arc, Mutex},
+            time::Duration,
+        };
+
+        use async_trait::async_trait;
+        use http::{Request, Response};
+
+        use crate::http::{AsyncHttpResolver, RequestTimeout};
+
+        struct CaptureTimeout(Arc<Mutex<Option<RequestTimeout>>>);
+
+        #[async_trait]
+        impl AsyncHttpResolver for CaptureTimeout {
+            async fn http_resolve_async(
+                &self,
+                request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+                *self.0.lock().unwrap() = request.extensions().get::<RequestTimeout>().copied();
+                Ok(Response::builder()
+                    .status(200)
+                    .body(Box::new(std::io::empty()) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(None));
+        let context = Context::new()
+            .with_settings_value("core.http_request_timeout_in_ms", 250u64)
+            .unwrap()
+            .with_resolver_async(CaptureTimeout(seen.clone()));
+        let request = Request::get("https://example.com")
+            .body(Vec::new())
+            .unwrap();
+        context
+            .resolver_async()
+            .http_resolve_async(request)
+            .await
+            .unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some(RequestTimeout(Duration::from_millis(250)))
+        );
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_custom_async_resolver() {
@@ -1683,7 +1831,8 @@ mod tests {
             }
         }
 
-        let ctx = Context::new().with_io_handler(CustomHandler);
+        let mut ctx = Context::new();
+        ctx.io.add_boxed_handler(Box::new(CustomHandler));
 
         // Custom handler claims "image/jpeg" — it should win over the built-in.
         let handler = ctx.io().handler("image/jpeg");
@@ -1773,9 +1922,9 @@ mod tests {
             }
         }
 
-        let ctx = Context::new()
-            .with_io_handler(HandlerA)
-            .with_io_handler(HandlerB);
+        let mut ctx = Context::new();
+        ctx.io.add_boxed_handler(Box::new(HandlerA));
+        ctx.io.add_boxed_handler(Box::new(HandlerB));
         let reader = ctx.io().reader("x-custom/test").unwrap();
         let mut stream = std::io::Cursor::new(vec![]);
         // HandlerB was registered last, so it should win.

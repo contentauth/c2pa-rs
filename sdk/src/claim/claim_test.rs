@@ -1793,6 +1793,66 @@ fn test_claim_signature_not_validated_after_credential_rejected() {
 }
 
 #[test]
+fn test_profile_rejection_is_not_signature_mismatch() {
+    use crate::{crypto::cose::CertificateProfileError, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let signature_uri = to_signature_uri(claim.label());
+
+    for (label, error, expected_mismatch) in [
+        (
+            signature_uri.clone(),
+            Error::CertificateProfileError(CertificateProfileError::InvalidEku),
+            false,
+        ),
+        (
+            "self#jumbf=/c2pa/other/c2pa.signature".to_owned(),
+            Error::CertificateProfileError(CertificateProfileError::InvalidEku),
+            true,
+        ),
+        (signature_uri.clone(), Error::CoseSignature, true),
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+
+        log_item!(label, "signing credential rejected", "test")
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+            .failure_no_throw(&mut validation_log, Error::CoseSignature);
+
+        Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Err(error),
+            &mut validation_log,
+            &Context::new(),
+        )
+        .expect("verification should continue to report validation statuses");
+
+        assert!(validation_log.has_status(validation_status::SIGNING_CREDENTIAL_INVALID));
+        assert!(!validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+
+        assert_eq!(
+            validation_log.has_status(validation_status::CLAIM_SIGNATURE_MISMATCH),
+            expected_mismatch,
+        );
+    }
+
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+
+    Claim::verify_internal(
+        &claim,
+        &StoreValidationInfo::default(),
+        Err(Error::CoseSignature),
+        &mut validation_log,
+        &Context::new(),
+    )
+    .expect("verification should report an unaccompanied signature failure");
+
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_MISMATCH));
+}
+
+#[test]
 fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
     let mut validation_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut claim = create_test_claim().expect("create test claim");

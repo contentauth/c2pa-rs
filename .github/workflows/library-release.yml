@@ -64,11 +64,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
-        with:
-          toolchain: stable
-
       # Use a separate target directory for Android cross builds to prevent
       # host-compiled build scripts from being reused inside the cross Docker
       # container, which causes glibc version mismatches on x86_64 targets.
@@ -78,6 +73,9 @@ jobs:
         run: |
           echo "CARGO_TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
           echo "TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
 
       - name: Set up Emscripten
         if: matrix.target == 'wasm32-unknown-emscripten'
@@ -98,9 +96,6 @@ jobs:
         with:
           path: ~/emsdk
           key: emsdk-${{ runner.os }}-latest
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Build Windows release
         if: matrix.os == 'windows-latest'
@@ -129,14 +124,18 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
-          path: target-${{ matrix.target }}/artifacts/
+          path: target-${{ matrix.target }}/artifacts/c2pa-v*-${{ matrix.target }}.zip
+          if-no-files-found: error
 
+      # Universal macOS builds also package both thin architectures. Upload only
+      # this job's target so parallel downloads never overwrite the same ZIP.
       - name: Upload build artifacts (Non-Android)
         if: "!contains(matrix.target, 'android')"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
-          path: target/artifacts/
+          path: target/artifacts/c2pa-v*-${{ matrix.target }}.zip
+          if-no-files-found: error
 
   release:
     needs: build
@@ -152,6 +151,13 @@ jobs:
 
       - name: List downloaded artifacts
         run: ls -lh dist
+
+      - name: Validate release archives
+        run: |
+          set -euo pipefail
+          for archive in dist/*.zip; do
+            unzip -t "$archive"
+          done
 
       - name: Resolve release tag
         id: extract_tag

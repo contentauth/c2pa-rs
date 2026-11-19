@@ -27,7 +27,7 @@ use sha2::{Sha256, Sha384, Sha512};
 use crate::{
     crypto::{
         asn1::rfc3161::{Accuracy, TstInfo},
-        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy, TrustAnchorType},
+        cose::{CertificateRole, CertificateTrustPolicy, TrustAnchorType},
         time_stamp::{
             response::{
                 signed_data_and_bytes_from_time_stamp_response,
@@ -44,6 +44,7 @@ use crate::{
     },
 };
 
+#[cfg(all(test, feature = "openssl", not(target_arch = "wasm32")))]
 const TIMESTAMP_OID_STR: &str = "1.3.6.1.5.5.7.3.8";
 
 // when signed attributes are present the digest is the DER
@@ -595,18 +596,14 @@ pub fn verify_time_stamp(
 
         // the certificate must be on the trust list to be considered valid
         if verify_trust {
-            let mut adjusted_ctp = CertificateTrustPolicy::default();
-
             // Order certificates from leaf to root before trust validation
             let ordered_cert_ders = order_certificates_leaf_to_root(&cert_ders, cert_pos)?;
 
-            // make sure this is a timestamping EKU
-            adjusted_ctp.clear_ekus();
-            adjusted_ctp.add_mandatory_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
             let mut profile_log = StatusTracker::default();
-            let profile_result = check_end_entity_certificate_profile(
+
+            let profile_result = CertificateRole::TimestampSigner.check_profile(
                 &ordered_cert_ders[0],
-                &adjusted_ctp,
+                &CertificateTrustPolicy::new(),
                 &mut profile_log,
                 Some(&tst),
             );

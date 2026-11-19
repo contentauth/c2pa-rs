@@ -933,25 +933,37 @@ fn test_builder_pdf() -> Result<()> {
     Ok(())
 }
 
-// A PDF that already has a manifest embedded must still sign cleanly: the
-// existing manifest is removed and replaced, not appended alongside it.
+// Edit adds a standard manifest, including when a PDF already has manifest history.
+// PDF update manifests are not covered: the C2PA spec assumes an update keeps the
+// store's offset, which a PDF incremental update cannot.
 #[test]
 #[cfg(feature = "pdf")]
 fn test_builder_pdf_resign_already_signed() -> Result<()> {
     let context = test_context().into_shared();
 
-    let mut source = Cursor::new(include_bytes!("fixtures/express-signed.pdf"));
+    let mut source = Cursor::new(include_bytes!("fixtures/express-signed.pdf").to_vec());
     let format = "application/pdf";
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut source)?;
+    let mut manifest_count = reader.manifests().len();
 
-    let mut builder = Builder::from_shared_context(&context);
-    builder.set_intent(BuilderIntent::Edit);
+    for _ in 0..2 {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
 
-    let mut dest = Cursor::new(Vec::new());
-    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(context.signer()?, format, &mut source, &mut dest)?;
 
-    dest.set_position(0);
-    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
-    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        if cfg!(feature = "unstable_asset_io") {
+            assert!(dest.get_ref().starts_with(source.get_ref()));
+        }
+
+        dest.set_position(0);
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        manifest_count += 1;
+        assert_eq!(reader.manifests().len(), manifest_count);
+        source = dest;
+    }
 
     Ok(())
 }

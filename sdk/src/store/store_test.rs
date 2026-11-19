@@ -58,14 +58,14 @@ use crate::{
     asset_io::ReadWriteSeek,
     claim::{AssertionStoreJsonFormat, Claim, ClaimAssertion, ClaimAssetData},
     context::Context,
-    crypto::cose::CertificateTrustPolicy,
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
     jumbf::{boxes::C2PA_REDACTION_UUID, labels::to_assertion_uri},
     jumbf_io::load_jumbf_from_stream,
-    settings::{Settings, SettingsValidate},
+    settings::{Settings, SettingsValidate, TrustAnchor, TrustListKind},
     status_tracker::{ErrorBehavior, LogItem, StatusTracker},
     store::{InvalidClaimError, Store, StoreValidationInfo},
     utils::{
@@ -4403,7 +4403,7 @@ async fn test_boxhash_embeddable_manifest_async() {
 
     let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
-    // remove any existing manifest
+    // the asset has a manifest, which the new one replaces
     jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
 
     // build new asset in memory inserting new manifest
@@ -4419,7 +4419,12 @@ async fn test_boxhash_embeddable_manifest_async() {
     // write composed bytes
     out_stream.write_all(&cm).unwrap();
 
-    // write bytes after
+    // skip the old manifest, then write bytes after
+    input_file
+        .seek(std::io::SeekFrom::Current(
+            i64::try_from(cai_loc.length).unwrap(),
+        ))
+        .unwrap();
     let mut after_buf = Vec::new();
     input_file.read_to_end(&mut after_buf).unwrap();
     out_stream.write_all(&after_buf).unwrap();
@@ -4479,7 +4484,7 @@ fn test_boxhash_embeddable_manifest() {
 
     let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
-    // remove any existing manifest
+    // the asset has a manifest, which the new one replaces
     jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
 
     // build new asset in memory inserting new manifest
@@ -4495,7 +4500,12 @@ fn test_boxhash_embeddable_manifest() {
     // write composed bytes
     out_stream.write_all(&cm).unwrap();
 
-    // write bytes after
+    // skip the old manifest, then write bytes after
+    input_file
+        .seek(std::io::SeekFrom::Current(
+            i64::try_from(cai_loc.length).unwrap(),
+        ))
+        .unwrap();
     let mut after_buf = Vec::new();
     input_file.read_to_end(&mut after_buf).unwrap();
     out_stream.write_all(&after_buf).unwrap();
@@ -5887,12 +5897,13 @@ mod remote_manifest_response_tests {
     use super::*;
     use crate::{
         http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
-        settings::DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
+        settings::{DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS, DEFAULT_MAX_MANIFEST_RESPONSE_SIZE},
     };
 
     const TEST_RESPONSE_SIZE: u64 = 16;
 
     struct Resolver {
+        expected_timeout_in_ms: u64,
         content_length: Option<&'static str>,
         body_length: u64,
         error_after: Option<u64>,
@@ -5940,8 +5951,14 @@ mod remote_manifest_response_tests {
     impl SyncHttpResolver for Resolver {
         fn http_resolve(
             &self,
-            _request: http::Request<Vec<u8>>,
+            request: http::Request<Vec<u8>>,
         ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+            assert_eq!(
+                request.extensions().get::<crate::http::RequestTimeout>(),
+                Some(&crate::http::RequestTimeout(
+                    std::time::Duration::from_millis(self.expected_timeout_in_ms,)
+                ))
+            );
             let mut response = http::Response::builder().status(200);
             if let Some(len) = self.content_length {
                 response = response.header(http::header::CONTENT_LENGTH, len);
@@ -5990,6 +6007,7 @@ mod remote_manifest_response_tests {
     ) -> (Result<Vec<u8>>, usize) {
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let resolver = Arc::new(Resolver {
+            expected_timeout_in_ms: context.settings().core.http_request_timeout_in_ms,
             content_length,
             body_length,
             error_after,
@@ -6015,11 +6033,82 @@ mod remote_manifest_response_tests {
     }
 
     #[c2pa_test_async]
+    async fn test_remote_manifest_request_timeout_reaches_custom_resolvers() {
+        for use_async in [false, true] {
+            for timeout_in_ms in [1, 250, 10_000] {
+                let context = Context::new()
+                    .with_settings_value("core.http_request_timeout_in_ms", timeout_in_ms)
+                    .unwrap();
+                let (result, bytes_read) =
+                    fetch_with_context(context, None, 3, None, use_async).await;
+                assert_eq!(result.unwrap(), b"xxx");
+                assert_eq!(bytes_read, 3);
+            }
+        }
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(feature = "http_ureq", feature = "http_reqwest_blocking")
+    ))]
+    #[test]
+    fn test_remote_manifest_sync_timeout_bounds_headers_and_body() {
+        use std::time::{Duration, Instant};
+
+        let context = Context::new()
+            .with_settings_value("core.http_request_timeout_in_ms", 100u64)
+            .unwrap();
+        // Exclude lazy HTTP client initialization from the request timeout measurement.
+        let _resolver = context.resolver();
+
+        for delay_body in [false, true] {
+            let (url, server) = crate::http::tests::slow_server(delay_body);
+            let started = Instant::now();
+            let result = Store::fetch_remote_manifest(&url, &context);
+            let elapsed = started.elapsed();
+            server.join().unwrap();
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(_))),
+                "{result:?}"
+            );
+            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
+            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+        }
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "http_reqwest"))]
+    #[tokio::test]
+    async fn test_remote_manifest_async_timeout_bounds_headers_and_body() {
+        use std::time::{Duration, Instant};
+
+        let context = Context::new()
+            .with_settings_value("core.http_request_timeout_in_ms", 100u64)
+            .unwrap();
+        // Exclude lazy HTTP client initialization from the request timeout measurement.
+        let _resolver = context.resolver_async();
+
+        for delay_body in [false, true] {
+            let (url, server) = crate::http::tests::slow_server(delay_body);
+            let started = Instant::now();
+            let result = Store::fetch_remote_manifest_async(&url, &context).await;
+            let elapsed = started.elapsed();
+            server.join().unwrap();
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(_))),
+                "{result:?}"
+            );
+            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
+            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+        }
+    }
+
+    #[c2pa_test_async]
     async fn test_remote_manifest_overflow_probe_retries_interrupted() {
         for use_async in [false, true] {
             for body_length in [TEST_RESPONSE_SIZE, TEST_RESPONSE_SIZE + 1] {
                 let bytes_read = Arc::new(AtomicUsize::new(0));
                 let resolver = Arc::new(Resolver {
+                    expected_timeout_in_ms: DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS,
                     content_length: None,
                     body_length,
                     error_after: None,
@@ -6731,6 +6820,102 @@ fn test_from_context_without_default_ekus() {
         .ctp
         .has_allowed_eku(&eku(c2pa_claim_signing))
         .is_none());
+}
+
+#[test]
+fn test_from_context_allowed_list_is_manifest_only() {
+    // C2PA 2.5 13.4.3: only the private credential store, a manifest entry's allowed list,
+    // trusts a claim signer directly.
+    let claim_signer_chain_pem = include_bytes!("../../tests/fixtures/certs/es256.pub");
+    let claim_signer_chain_der =
+        crate::crypto::cert_chain_pem_to_der(claim_signer_chain_pem).unwrap();
+    let allowed_list_with_claim_signer =
+        String::from_utf8(claim_signer_chain_pem.to_vec()).unwrap();
+
+    // The store's only trust entry has the given kind, no anchors, and the claim signer on allow list.
+    let allowed_list_trusts_claim_signer = |kind: TrustListKind| {
+        let mut settings = Settings::default();
+        settings.trust.anchors = Some(vec![TrustAnchor {
+            trust_anchors: String::new(),
+            trust_uri: None,
+            trust_kind: kind,
+            trust_config: None,
+            allowed_list: Some(allowed_list_with_claim_signer.clone()),
+            trusted_ica_issuers: None,
+        }]);
+        let store = Store::from_context(&Context::new().with_settings(settings).unwrap());
+
+        store
+            .ctp
+            .check_certificate_trust_for(
+                Some(TrustAnchorType::Manifest),
+                &claim_signer_chain_der[1..],
+                &claim_signer_chain_der[0],
+                None,
+            )
+            .is_ok()
+    };
+
+    for kind in [
+        TrustListKind::Manifest,
+        TrustListKind::TSA,
+        TrustListKind::CAWG,
+    ] {
+        let expected = match kind {
+            TrustListKind::Manifest => true,
+            TrustListKind::TSA | TrustListKind::CAWG => false,
+        };
+        assert_eq!(
+            allowed_list_trusts_claim_signer(kind.clone()),
+            expected,
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn test_from_context_allowed_list_authorizes_ocsp_responder_for_manifest_only() {
+    // An allowed-list hit is an explicitly trusted responder (RFC 6960 section 3.2 case 2),
+    // which `delegated_response_authorized` checks with an untyped trust check.
+    let responder_pem = include_bytes!("../../tests/fixtures/crypto/ocsp/ocsp_responder.pem");
+    let responder_der = crate::crypto::cert_chain_pem_to_der(responder_pem)
+        .unwrap()
+        .remove(0);
+    let allowed_list_with_responder = String::from_utf8(responder_pem.to_vec()).unwrap();
+
+    for kind in [
+        TrustListKind::Manifest,
+        TrustListKind::TSA,
+        TrustListKind::CAWG,
+    ] {
+        let expected = match kind {
+            TrustListKind::Manifest => true,
+            TrustListKind::TSA | TrustListKind::CAWG => false,
+        };
+
+        // The store's only trust entry has this kind, no anchors, and the responder on allow list.
+        let mut settings = Settings::default();
+        settings.trust.anchors = Some(vec![TrustAnchor {
+            trust_anchors: String::new(),
+            trust_uri: None,
+            trust_kind: kind.clone(),
+            trust_config: None,
+            allowed_list: Some(allowed_list_with_responder.clone()),
+            trusted_ica_issuers: None,
+        }]);
+        let store = Store::from_context(&Context::new().with_settings(settings).unwrap());
+
+        let result = store.ctp.check_certificate_trust(
+            std::slice::from_ref(&responder_der),
+            &responder_der,
+            None,
+        );
+        assert_eq!(
+            matches!(result, Ok((TrustAnchorType::EndEntity, _))),
+            expected,
+            "{kind:?}: {result:?}"
+        );
+    }
 }
 
 #[test]
