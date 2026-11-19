@@ -3,8 +3,9 @@
 `contentauth-pki` is an **unpublished, provisional**
 workspace crate. The acquisition foundation implements host-driven RFC 3161
 timestamp acquisition. Subsequent layers add deterministic timestamp
-cryptographic verification, X.509 certificate/profile/chain mechanics, and
-deterministic OCSP parsing and signature/CertID verification. Application roles,
+cryptographic verification, X.509 certificate/profile/chain mechanics,
+deterministic OCSP parsing and signature/CertID verification, and certificate-backed
+COSE Sign1 verification. Application roles,
 profile policy selection, trust, OCSP acquisition and acceptance, and COSE
 orchestration remain in the C2PA SDK.
 
@@ -274,14 +275,58 @@ cryptography alone never enables trusted CAWG signing-time association.
 `signer_certificate_from_token` is explicitly **unverified** certificate lookup.
 `token_from_response` only extracts/re-encodes a bare token for `sigTst2`; legacy
 `sigTst` keeps the original response bytes. Both packaging and validation reuse
-the relocated private codecs. RFC 3161 uses CMS, so verification adds no COSE
-dependency or public X.509 codec API.
+the relocated private codecs. RFC 3161 uses CMS; its verifier does not call COSE
+verification or expose a public X.509 codec API.
 
 The independent crate defaults to `rust_native_crypto`. Hosts may instead use
 `default-features = false` with `openssl`; the SDK forwards its selected backend
 without enabling the independent crate's defaults. Both sync/async SDK adapters
 use the same deterministic verifier. Browser verification uses Rust-native
 primitives; no browser executor or clock is introduced.
+
+## COSE verification boundary
+
+`cose::ParsedSign1::from_tagged_slice` decodes tagged Sign1 without authenticating
+its payload or headers. The opaque parser retains the original protected-header
+bytes, including accepted noncanonical encodings. Algorithm decoding accepts the
+same ES256/384/512, PS256/384/512, and Ed25519 labels as the SDK, including its
+legacy private-label representation; unprotected algorithms are not selected.
+
+The host must explicitly select `CertificateHeaderPolicy::C2pa`. This preserves
+integer label 33 over text `x5chain` in either header; duplicate same labels across
+protected/unprotected headers are rejected before value decoding, even when
+malformed. A single certificate byte string (including a legacy empty byte string)
+or nonempty array of byte strings is decoded without skipping malformed members.
+Certificate decoding and signature verification are subsequent, separate checks.
+No new header/profile acceptance rules are introduced.
+
+`verify_signature` selects `Payload::Embedded` or `Payload::Detached(bytes)` and
+external AAD, constructs the exact Sign1 signature input, checks the leaf key's
+algorithm/EC curve, and invokes the existing raw verifier. Detached bytes override
+any encoded payload, preserving SDK behavior. ECDSA remains P1363, not DER;
+algorithm, certificate, encoding, and raw-verifier failures remain distinct.
+`SignatureVerifiedPayload` exposes the exact verified payload, algorithm, and
+parsed certificate whose key verified it. This is **not** certificate issuance,
+chain/profile validity, trust, revocation, or application acceptance.
+
+Unprotected headers are not authenticated, even after payload verification.
+Timestamps and OCSP claims still require their own checks. The SDK retains role/
+EKU selection, trust/profile/time policy, CAWG acceptance, timestamp and OCSP
+orchestration, settings/context, I/O, and C2PA/CAWG status reporting. Its public
+`coset` helpers remain compatible through a feature-gated structural bridge;
+there is no new SDK deprecation. Its previous error/status mappings and check
+ordering remain in the SDK adapter.
+
+COSE verification errors are non-exhaustive: downstream matches must retain an
+unknown-error arm. The SDK preserves every known category and reports future
+unmapped categories as internal errors rather than accepting verification.
+The SDK's existing `CoseError` is also non-exhaustive; downstream exhaustive
+matches require an additional arm.
+
+See the `cose` module's host-independent example. The embedded unit tests reuse
+existing signing fixtures for every supported algorithm and independently encode
+a noncanonical protected-header signature input; SDK claim, CAWG, profile, and
+reporting regressions continue to run on both backends.
 
 ## Private codecs and compatibility
 
@@ -296,11 +341,14 @@ this crate and do not depend on the SDK fixture directory.
 
 `asn1` and `timestamp::response` are private. Timestamp response interpretation
 lives alongside acquisition, rather than in the shared ASN.1 codec layer.
-The opt-in `sdk-compat` bridge now exposes only the legacy timestamp facts and
+The opt-in `sdk-compat` bridge exposes the legacy timestamp facts and
 request structures still needed by SDK timestamp/OCSP consumers
 and acquisition adapters. `verified_timestamp_info` adapts a `VerifiedTimestamp`
 to the existing SDK `TstInfo` contract; it does not validate trust. CMS signer/data
 types, response wrappers, and token/response codecs are no longer exported.
+Its `cose` module narrowly adapts existing SDK `coset::CoseSign1` APIs, including
+unverified unprotected metadata, to the shared parsing/verification implementation.
+The independent COSE API does not expose the mutable parser representation.
 The bridge is provisional, not a supported codec API. Legacy CMS decoding is
 compiled only for codec tests. Original MPL-2.0 source notices are retained
 in the codec files; surrounding code uses the repository's MIT/Apache licensing.
@@ -313,20 +361,23 @@ crate. SDK packaging/publication is intentionally unsupported on this branch.
 No release automation, crate publication, or repository move is authorized.
 The crate's name, API, and compatibility feature are experimental.
 
-**Source-breaking SDK change:** `TimeStampError` is now `#[non_exhaustive]`,
-as is the new crate's `AcquisitionError`. Downstream exhaustive matches on
-`TimeStampError` must add a wildcard arm. Existing variants and their typed
-mappings remain unchanged; an unknown future acquisition failure is surfaced
-as an SDK internal error with its diagnostic, not treated as success.
+**Source-breaking SDK changes:** `TimeStampError` and `CoseError` are now
+`#[non_exhaustive]`, as are the new crate's public error enums. Downstream
+exhaustive matches must add a wildcard arm. Existing variants and their typed
+mappings remain unchanged; unknown future failures are surfaced as SDK errors
+with their diagnostics, not treated as success. Constructible public error
+structs (`timestamp::verification::VerificationError`, `x509::profile::ProfileError`,
+and `ocsp::InvalidStatusTime`) retain their existing fields and construction syntax.
 
 ## Subsequent bounded layers
 
-1. Extract OCSP parsing and verification using the shared certificate foundation,
-   then host-driven acquisition. Preserve issuer-signed responses, authoritative
+1. Extract host-driven OCSP acquisition atop the deterministic verification core.
+   Preserve issuer-signed responses, authoritative
    status reporting, and bounded reads. #3026 verification-resource budgets remain
    unresolved; this layer neither invents budgets nor claims they are solved.
-2. Move COSE verification/signing orchestration atop those primitives while the
-   SDK retains C2PA/CAWG mapping, settings, resolver wiring, and SDK policy.
+2. Consider bounded COSE signing/assembly extraction separately. Verification
+   orchestration, C2PA/CAWG mapping, settings, resolver wiring, application roles,
+   and SDK acceptance policy remain host-side; no generic signing API is added.
 
 Each layer depends on the shared codec/fact boundary below it and should carry
 its own focused host-independent and SDK parity regressions. C API suspension/

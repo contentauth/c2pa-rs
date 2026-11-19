@@ -13,11 +13,8 @@
 
 use async_generic::async_generic;
 use c2pa_raw_crypto::SigningAlg;
-use coset::{
-    cbor::value::Value,
-    iana::{self, Algorithm, EnumI64},
-    CoseSign1, Label, RegisteredLabelWithPrivate, TaggedCborSerializable,
-};
+use contentauth_pki::{cose::CertificateHeaderPolicy, sdk_compat::cose as pki_cose};
+use coset::CoseSign1;
 
 use crate::{
     crypto::cose::{
@@ -36,20 +33,16 @@ pub fn parse_cose_sign1(
     data: &[u8],
     validation_log: &mut StatusTracker,
 ) -> Result<CoseSign1, CoseError> {
-    let mut sign1 = <coset::CoseSign1 as TaggedCborSerializable>::from_tagged_slice(cose_bytes)
-        .map_err(|coset_error| {
+    let mut sign1 = pki_cose::parse_tagged(cose_bytes)
+        .map_err(CoseError::from)
+        .inspect_err(|error| {
             log_item!(
                 "Cose_Sign1",
                 "could not parse signature",
                 "parse_cose_sign1"
             )
             .validation_status(CLAIM_SIGNATURE_MISMATCH)
-            .failure_no_throw(
-                validation_log,
-                CoseError::CborParsingError(coset_error.to_string()),
-            );
-
-            CoseError::CborParsingError(coset_error.to_string())
+            .failure_no_throw(validation_log, error);
         })?;
 
     // Temporarily restore the payload into the signature for verification check.
@@ -58,37 +51,9 @@ pub fn parse_cose_sign1(
     Ok(sign1)
 }
 
-/// TO DO: Documentation for this function.
+/// Decode the protected signing algorithm without authenticating the signature.
 pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, CoseError> {
-    let Some(ref alg) = sign1.protected.header.alg else {
-        return Err(CoseError::UnsupportedSigningAlgorithm);
-    };
-
-    match alg {
-        RegisteredLabelWithPrivate::PrivateUse(a) => match a {
-            -39 => Ok(SigningAlg::Ps512),
-            -38 => Ok(SigningAlg::Ps384),
-            -37 => Ok(SigningAlg::Ps256),
-            -36 => Ok(SigningAlg::Es512),
-            -35 => Ok(SigningAlg::Es384),
-            -7 => Ok(SigningAlg::Es256),
-            -8 => Ok(SigningAlg::Ed25519),
-            _ => Err(CoseError::UnsupportedSigningAlgorithm),
-        },
-
-        RegisteredLabelWithPrivate::Assigned(a) => match a {
-            Algorithm::PS512 => Ok(SigningAlg::Ps512),
-            Algorithm::PS384 => Ok(SigningAlg::Ps384),
-            Algorithm::PS256 => Ok(SigningAlg::Ps256),
-            Algorithm::ES512 => Ok(SigningAlg::Es512),
-            Algorithm::ES384 => Ok(SigningAlg::Es384),
-            Algorithm::ES256 => Ok(SigningAlg::Es256),
-            Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
-            _ => Err(CoseError::UnsupportedSigningAlgorithm),
-        },
-
-        _ => Err(CoseError::UnsupportedSigningAlgorithm),
-    }
+    pki_cose::signing_algorithm(sign1).map_err(Into::into)
 }
 
 /// Extract the signing certificate chain, preferring integer label 33 over "x5chain".
@@ -96,60 +61,12 @@ pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, Co
 /// C2PA 2.5 section 13.5 treats the two labels as one credential, but rejects
 /// the same label appearing in both protected and unprotected headers.
 pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
-    let (protected_integer, protected_text) = x5chain_header_values(&sign1.protected.header);
-    let (unprotected_integer, unprotected_text) = x5chain_header_values(&sign1.unprotected);
-
-    // Check label presence before parsing, so malformed duplicates are rejected too.
-    if (protected_integer.is_some() && unprotected_integer.is_some())
-        || (protected_text.is_some() && unprotected_text.is_some())
-    {
-        return Err(CoseError::MultipleSigningCertificateChains);
-    }
-
-    let value = protected_integer
-        .or(unprotected_integer)
-        .or(protected_text)
-        .or(unprotected_text)
-        .ok_or(CoseError::MissingSigningCertificateChain)?;
-
-    cert_chain_from_cbor_value(value.clone())
-}
-
-fn x5chain_header_values(header: &coset::Header) -> (Option<&Value>, Option<&Value>) {
-    let integer = header.rest.iter().find_map(|(label, value)| {
-        (*label == Label::Int(iana::HeaderParameter::X5Chain.to_i64())).then_some(value)
-    });
-    let text = header.rest.iter().find_map(|(label, value)| {
-        matches!(label, Label::Text(text) if text == "x5chain").then_some(value)
-    });
-
-    (integer, text)
-}
-
-fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
-    match value {
-        Value::Array(cert_chain) => {
-            // Every entry must be a certificate. Skipping a malformed entry would
-            // promote the next certificate to signing certificate.
-            let certs = cert_chain
-                .into_iter()
-                .map(|c| match c {
-                    Value::Bytes(der_bytes) => Ok(der_bytes),
-                    _ => Err(CoseError::MissingSigningCertificateChain),
-                })
-                .collect::<Result<Vec<Vec<u8>>, CoseError>>()?;
-
-            if certs.is_empty() {
-                Err(CoseError::MissingSigningCertificateChain)
-            } else {
-                Ok(certs)
-            }
-        }
-
-        Value::Bytes(ref der_bytes) => Ok(vec![der_bytes.clone()]),
-
-        _ => Err(CoseError::MissingSigningCertificateChain),
-    }
+    Ok(
+        pki_cose::certificate_chain(sign1, CertificateHeaderPolicy::C2pa)?
+            .into_iter()
+            .map(<[u8]>::to_vec)
+            .collect(),
+    )
 }
 
 /// Return the time of signing for this signature.
@@ -184,7 +101,11 @@ pub fn signing_time_from_sign1(
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use coset::{CoseSign1Builder, HeaderBuilder};
+    use coset::{
+        cbor::value::Value,
+        iana::{self, Algorithm, EnumI64},
+        CoseSign1Builder, HeaderBuilder, Label, RegisteredLabelWithPrivate, TaggedCborSerializable,
+    };
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -273,8 +194,15 @@ mod tests {
             // A non-certificate entry would promote the next one to signing certificate.
             Value::Array(vec![Value::Null, Value::Bytes(vec![1])]),
         ] {
+            let mut malformed = CoseSign1::default();
+            malformed
+                .protected
+                .header
+                .rest
+                .push((Label::Int(33), value));
+
             assert!(matches!(
-                cert_chain_from_cbor_value(value),
+                cert_chain_from_sign1(&malformed),
                 Err(CoseError::MissingSigningCertificateChain)
             ));
         }
