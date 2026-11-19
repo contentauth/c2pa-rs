@@ -112,17 +112,36 @@ impl Verifier<'_> {
         tst_info: Option<&TstInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
-        if !matches!(self, Self::IgnoreProfileAndTrustPolicy) {
-            let sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
+        let sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
+        let certificates = if !matches!(self, Self::IgnoreProfileAndTrustPolicy) {
             let certificates = cert_chain_from_sign1(&sign1)?;
+
             role.check_purpose(&certificates[0], validation_log)?;
-        }
+
+            Some(certificates)
+        } else {
+            None
+        };
 
         if _sync {
-            self.verify_signature(cose_sign1, data, additional_data, tst_info, validation_log)
+            self.verify_parsed_signature(
+                &sign1,
+                certificates,
+                data,
+                additional_data,
+                tst_info,
+                validation_log,
+            )
         } else {
-            self.verify_signature_async(cose_sign1, data, additional_data, tst_info, validation_log)
-                .await
+            self.verify_parsed_signature_async(
+                &sign1,
+                certificates,
+                data,
+                additional_data,
+                tst_info,
+                validation_log,
+            )
+            .await
         }
     }
 
@@ -138,7 +157,39 @@ impl Verifier<'_> {
     ) -> Result<CertificateInfo, CoseError> {
         let sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
 
-        let Ok(alg) = signing_alg_from_sign1(&sign1) else {
+        if _sync {
+            self.verify_parsed_signature(
+                &sign1,
+                None,
+                data,
+                additional_data,
+                tst_info,
+                validation_log,
+            )
+        } else {
+            self.verify_parsed_signature_async(
+                &sign1,
+                None,
+                data,
+                additional_data,
+                tst_info,
+                validation_log,
+            )
+            .await
+        }
+    }
+
+    #[async_generic]
+    fn verify_parsed_signature(
+        &self,
+        sign1: &CoseSign1,
+        certificates: Option<Vec<Vec<u8>>>,
+        data: &[u8],
+        additional_data: &[u8],
+        tst_info: Option<&TstInfo>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<CertificateInfo, CoseError> {
+        let Ok(alg) = signing_alg_from_sign1(sign1) else {
             log_item!(
                 "Cose_Sign1",
                 "unsupported or missing Cose algorithm",
@@ -150,7 +201,7 @@ impl Verifier<'_> {
             return Err(CoseError::UnsupportedSigningAlgorithm);
         };
 
-        if pki_cose::check_signature_encoding(&sign1, alg).is_err() {
+        if pki_cose::check_signature_encoding(sign1, alg).is_err() {
             // Should have been in P1363 format, not DER.
             log_item!(
                 "Cose_Sign1",
@@ -163,12 +214,19 @@ impl Verifier<'_> {
             return Err(CoseError::InvalidEcdsaSignature);
         }
 
+        // Role-aware calls already extracted the chain before checking purpose.
+        // Direct calls must reject algorithm/encoding faults before chain faults.
+        let certs = match certificates {
+            Some(certificates) => certificates,
+            None => cert_chain_from_sign1(sign1)?,
+        };
+
         // check the trust for this item
         let trust_log_start = validation_log.logged_items().len();
         let result = if _sync {
-            self.verify_trust(&sign1, tst_info, validation_log)
+            self.verify_trust_with_chain(&certs, tst_info, validation_log)
         } else {
-            self.verify_trust_async(&sign1, tst_info, validation_log)
+            self.verify_trust_with_chain_async(&certs, tst_info, validation_log)
                 .await
         }; // Ignore errors here - they have already been logged.
 
@@ -190,13 +248,9 @@ impl Verifier<'_> {
 
         // check the profile of the cert
         let profile_log_start = validation_log.logged_items().len();
-        let profile_failed = if _sync {
-            self.verify_profile(&sign1, tst_info, override_ekus, validation_log)
-        } else {
-            self.verify_profile_async(&sign1, tst_info, override_ekus, validation_log)
-                .await
-        }
-        .is_err(); // Errors have already been logged.
+        let profile_failed = self
+            .verify_profile_with_chain(&certs, tst_info, override_ekus, validation_log)
+            .is_err(); // Errors have already been logged.
 
         // A certificate that fails the profile check is not a trusted signing
         // credential, even when it chains to a trust anchor.
@@ -208,31 +262,26 @@ impl Verifier<'_> {
             validation_log.remove_status_since(trust_log_start, SIGNING_CREDENTIAL_TRUSTED);
         }
 
-        let certs = cert_chain_from_sign1(&sign1)?;
-        let verified = pki_cose::verify_signature(
-            &sign1,
-            data,
-            additional_data,
-            CertificateHeaderPolicy::C2pa,
-        )
-        .map_err(|error| {
-            if matches!(error, VerificationError::IncompatibleCertificateKey) {
-                log_item!(
-                    "Cose_Sign1",
-                    "certificate key algorithm does not match COSE signing algorithm",
-                    "verify_cose"
-                )
-                .validation_status(SIGNING_CREDENTIAL_INVALID)
-                .failure_no_throw(
-                    validation_log,
-                    CoseError::RawSignatureValidationError(
-                        RawSignatureValidationError::InvalidPublicKey,
-                    ),
-                );
-            }
+        let verified =
+            pki_cose::verify_signature(sign1, data, additional_data, CertificateHeaderPolicy::C2pa)
+                .map_err(|error| {
+                    if matches!(error, VerificationError::IncompatibleCertificateKey) {
+                        log_item!(
+                            "Cose_Sign1",
+                            "certificate key algorithm does not match COSE signing algorithm",
+                            "verify_cose"
+                        )
+                        .validation_status(SIGNING_CREDENTIAL_INVALID)
+                        .failure_no_throw(
+                            validation_log,
+                            CoseError::RawSignatureValidationError(
+                                RawSignatureValidationError::InvalidPublicKey,
+                            ),
+                        );
+                    }
 
-            CoseError::from(error)
-        })?;
+                    CoseError::from(error)
+                })?;
         let sign_cert = verified.signer_certificate();
 
         Ok(CertificateInfo {
@@ -250,10 +299,33 @@ impl Verifier<'_> {
     }
 
     /// Verify certificate profile if so configured.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Retain the standalone COSE compatibility wrapper."
+        )
+    )]
     #[async_generic]
     pub(crate) fn verify_profile(
         &self,
         sign1: &CoseSign1,
+        tst_info: Option<&TstInfo>,
+        additional_ekus: Option<String>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<(), CoseError> {
+        if matches!(self, Self::IgnoreProfileAndTrustPolicy) {
+            return Ok(());
+        }
+
+        let certs = cert_chain_from_sign1(sign1)?;
+
+        self.verify_profile_with_chain(&certs, tst_info, additional_ekus, validation_log)
+    }
+
+    fn verify_profile_with_chain(
+        &self,
+        certs: &[Vec<u8>],
         tst_info: Option<&TstInfo>,
         additional_ekus: Option<String>,
         validation_log: &mut StatusTracker,
@@ -267,7 +339,6 @@ impl Verifier<'_> {
             }
         };
 
-        let certs = cert_chain_from_sign1(sign1)?;
         let end_entity_cert_der = &certs[0];
 
         if let Some(ekus) = additional_ekus {
@@ -291,10 +362,41 @@ impl Verifier<'_> {
     }
 
     /// Verify certificate trust if so configured.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Retain the standalone COSE compatibility wrapper."
+        )
+    )]
     #[async_generic]
     pub(crate) fn verify_trust(
         &self,
         sign1: &CoseSign1,
+        tst_info_res: Option<&TstInfo>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<(TrustAnchorType, Option<String>), CoseError> {
+        if matches!(
+            self,
+            Self::VerifyCertificateProfileOnly(_) | Self::IgnoreProfileAndTrustPolicy
+        ) {
+            return Ok((TrustAnchorType::NoCheck, None));
+        }
+
+        let certs = cert_chain_from_sign1(sign1)?;
+
+        if _sync {
+            self.verify_trust_with_chain(&certs, tst_info_res, validation_log)
+        } else {
+            self.verify_trust_with_chain_async(&certs, tst_info_res, validation_log)
+                .await
+        }
+    }
+
+    #[async_generic]
+    fn verify_trust_with_chain(
+        &self,
+        certs: &[Vec<u8>],
         tst_info_res: Option<&TstInfo>,
         validation_log: &mut StatusTracker,
     ) -> Result<(TrustAnchorType, Option<String>), CoseError> {
@@ -315,7 +417,6 @@ impl Verifier<'_> {
             }
         };
 
-        let certs = cert_chain_from_sign1(sign1)?;
         let end_entity_cert_der = &certs[0];
         let chain_der = &certs[1..];
 
@@ -536,6 +637,211 @@ mod tests {
                 .await
                 .is_err());
             assert!(log.has_status(expected_status));
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn role_and_direct_paths_preserve_failure_precedence() {
+        use coset::TaggedCborSerializable;
+
+        use super::*;
+        use crate::crypto::cose::{
+            cose_signer::tests::TestSigner, sign, CertificateProfileError, TimeStampStorage,
+        };
+
+        let signer = TestSigner::new(SigningAlg::Es256);
+        let signature = sign(
+            &signer,
+            b"data",
+            None,
+            TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(),
+        )
+        .unwrap();
+
+        let original = CoseSign1::from_tagged_slice(&signature).unwrap();
+        let policy = CertificateTrustPolicy::default();
+
+        for use_async in [false, true] {
+            for ignore_policy in [false, true] {
+                let verifier = if ignore_policy {
+                    Verifier::IgnoreProfileAndTrustPolicy
+                } else {
+                    Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(&policy))
+                };
+
+                for missing_chain in [false, true] {
+                    let mut sign1 = original.clone();
+                    sign1.protected.original_data = None;
+                    sign1.protected.header.alg = None;
+
+                    if missing_chain {
+                        sign1.protected.header.rest.clear();
+                        sign1.unprotected.rest.clear();
+                    }
+
+                    let bytes = sign1.to_tagged_vec().unwrap();
+                    let mut log = StatusTracker::default();
+
+                    let error = if use_async {
+                        verifier
+                            .verify_signature_for_role_async(
+                                CertificateRole::TimestampSigner,
+                                &bytes,
+                                b"data",
+                                b"",
+                                None,
+                                &mut log,
+                            )
+                            .await
+                    } else {
+                        verifier.verify_signature_for_role(
+                            CertificateRole::TimestampSigner,
+                            &bytes,
+                            b"data",
+                            b"",
+                            None,
+                            &mut log,
+                        )
+                    }
+                    .unwrap_err();
+
+                    if ignore_policy {
+                        assert!(matches!(error, CoseError::UnsupportedSigningAlgorithm));
+                        assert_eq!(log.logged_items().len(), 1);
+                        assert!(log.has_status(ALGORITHM_UNSUPPORTED));
+                    } else if missing_chain {
+                        assert!(matches!(error, CoseError::MissingSigningCertificateChain));
+                        assert!(log.logged_items().is_empty());
+                    } else {
+                        assert!(matches!(
+                            error,
+                            CoseError::CertificateProfileError(CertificateProfileError::InvalidEku)
+                        ));
+                        assert_eq!(log.logged_items().len(), 1);
+                        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+                    }
+
+                    let mut log = StatusTracker::default();
+
+                    let error = if use_async {
+                        verifier
+                            .verify_signature_async(&bytes, b"data", b"", None, &mut log)
+                            .await
+                    } else {
+                        verifier.verify_signature(&bytes, b"data", b"", None, &mut log)
+                    }
+                    .unwrap_err();
+
+                    assert!(matches!(error, CoseError::UnsupportedSigningAlgorithm));
+                    assert_eq!(log.logged_items().len(), 1);
+                    assert!(log.has_status(ALGORITHM_UNSUPPORTED));
+                }
+            }
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn shared_inputs_preserve_results_and_status_order() {
+        use coset::TaggedCborSerializable;
+
+        use super::*;
+        use crate::crypto::cose::{cose_signer::tests::TestSigner, sign, TimeStampStorage};
+
+        let signer = TestSigner::new(SigningAlg::Es256);
+        let signature = sign(
+            &signer,
+            b"data",
+            None,
+            TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(),
+        )
+        .unwrap();
+
+        let original = CoseSign1::from_tagged_slice(&signature).unwrap();
+        let mut no_chain = original.clone();
+        no_chain.protected.original_data = None;
+        no_chain.protected.header.rest.clear();
+        no_chain.unprotected.rest.clear();
+
+        let mut der_signature = original;
+        der_signature.signature = vec![0x30, 6, 2, 1, 1, 2, 1, 2];
+
+        let policy = CertificateTrustPolicy::default();
+
+        for verifier in [
+            Verifier::IgnoreProfileAndTrustPolicy,
+            Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(&policy)),
+            Verifier::VerifyTrustPolicy(Cow::Borrowed(&policy)),
+        ] {
+            for (bytes, payload, aad, succeeds) in [
+                (signature.clone(), b"data".as_slice(), b"".as_slice(), true),
+                (signature.clone(), b"tampered", b"", false),
+                (signature.clone(), b"data", b"tampered", false),
+                (
+                    no_chain.clone().to_tagged_vec().unwrap(),
+                    b"data",
+                    b"",
+                    false,
+                ),
+                (
+                    der_signature.clone().to_tagged_vec().unwrap(),
+                    b"data",
+                    b"",
+                    false,
+                ),
+                (vec![0xff], b"data", b"", false),
+            ] {
+                for use_async in [false, true] {
+                    let mut direct_log = StatusTracker::default();
+                    let mut role_log = StatusTracker::default();
+
+                    let (direct, role) = if use_async {
+                        (
+                            verifier
+                                .verify_signature_async(&bytes, payload, aad, None, &mut direct_log)
+                                .await,
+                            verifier
+                                .verify_signature_for_role_async(
+                                    CertificateRole::ClaimSigner,
+                                    &bytes,
+                                    payload,
+                                    aad,
+                                    None,
+                                    &mut role_log,
+                                )
+                                .await,
+                        )
+                    } else {
+                        (
+                            verifier.verify_signature(&bytes, payload, aad, None, &mut direct_log),
+                            verifier.verify_signature_for_role(
+                                CertificateRole::ClaimSigner,
+                                &bytes,
+                                payload,
+                                aad,
+                                None,
+                                &mut role_log,
+                            ),
+                        )
+                    };
+
+                    assert_eq!(direct.is_ok(), succeeds);
+                    assert_eq!(format!("{direct:?}"), format!("{role:?}"));
+                    assert_eq!(
+                        direct_log
+                            .logged_items()
+                            .iter()
+                            .map(|item| (&item.validation_status, &item.err_val))
+                            .collect::<Vec<_>>(),
+                        role_log
+                            .logged_items()
+                            .iter()
+                            .map(|item| (&item.validation_status, &item.err_val))
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
         }
     }
 
