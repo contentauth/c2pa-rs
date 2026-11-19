@@ -9,9 +9,9 @@ The following table summarizes the supported media (asset) file formats. This in
 
 `txt` requires the non-default `unstable_plain_text` feature.
 
-| Extensions      | MIME type                                                                      |
+| Extensions      | MIME type                                                                       |
 | --------------- | ------------------------------------------------------------------------------- |
-| `arw`           | `image/x-sony-arw` <br/>Read-only
+| `arw` (read-only) | `image/x-sony-arw`                                                            |
 | `avi`           | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`  |
 | `avif`          | `image/avif`                                                                    |
 | `c2pa`          | `application/x-c2pa-manifest-store`                                             |
@@ -26,6 +26,7 @@ The following table summarizes the supported media (asset) file formats. This in
 | `mp3`           | `audio/mpeg`                                                                    |
 | `mp4`           | `video/mp4`, `application/mp4` <br/>Fragmented MP4 (DASH) supported only for file-based operations from the Rust library. |
 | `mov`           | `video/quicktime`                                                               |
+| `nef` (read-only) | `image/x-nikon-nef`                                                           |
 | `pdf`           | `application/pdf`                                                               |
 | `png`           | `image/png`                                                                     |
 | `svg`           | `image/svg+xml`                                                                 |
