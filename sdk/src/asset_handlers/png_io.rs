@@ -666,6 +666,20 @@ pub mod tests {
     use memchr::memmem;
 
     use super::*;
+
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "unstable_asset_io"))]
+    fn test_handler(format: &str) -> PngIO {
+        PngIO::new(format)
+    }
+
+    #[cfg(feature = "unstable_asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
     use crate::{
         assertions::ExclusionKind,
         utils::{
@@ -715,7 +729,7 @@ pub mod tests {
     fn test_png_xmp() {
         let ap = test::fixture_path("libpng-test_with_url.png");
 
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         let xmp = png_io
             .read_xmp(&mut std::fs::File::open(ap).unwrap())
             .unwrap();
@@ -741,7 +755,7 @@ pub mod tests {
             .open(output)
             .unwrap();
 
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         //let _orig_xmp = png_io
         //    .read_xmp(&mut source_stream )
         //    .unwrap();
@@ -788,7 +802,7 @@ pub mod tests {
     fn test_write_cai_using_stream_existing_cai_data() {
         let source = include_bytes!("../../tests/fixtures/exp-test1.png");
         let mut stream = Cursor::new(source.to_vec());
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
 
         // cai data already exists
         assert!(matches!(
@@ -814,7 +828,7 @@ pub mod tests {
     fn test_write_cai_using_stream_no_cai_data() {
         let source = include_bytes!("../../tests/fixtures/libpng-test.png");
         let mut stream = Cursor::new(source.to_vec());
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
 
         // no cai data present in stream.
         assert!(matches!(
@@ -840,7 +854,7 @@ pub mod tests {
     fn test_write_cai_data_to_stream_wrong_format() {
         let source = include_bytes!("../../tests/fixtures/C.jpg");
         let mut stream = Cursor::new(source.to_vec());
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
 
         let output: Vec<u8> = Vec::new();
         let mut output_stream = Cursor::new(output);
@@ -854,7 +868,7 @@ pub mod tests {
     fn test_stream_object_locations() {
         let source = include_bytes!("../../tests/fixtures/exp-test1.png");
         let mut stream = Cursor::new(source.to_vec());
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         let cai_pos = png_io
             .get_object_locations(&mut stream)
             .unwrap()
@@ -870,7 +884,7 @@ pub mod tests {
     fn test_stream_object_locations_with_incorrect_file_type() {
         let source = include_bytes!("../../tests/fixtures/unsupported_type.txt");
         let mut stream = Cursor::new(source.to_vec());
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         assert!(matches!(
             png_io.get_object_locations(&mut stream),
             Err(Error::InvalidAsset(_))
@@ -882,7 +896,7 @@ pub mod tests {
         let source = include_bytes!("../../tests/fixtures/libpng-test.png");
         let mut stream = Cursor::new(source.to_vec());
 
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         assert!(png_io
             .get_object_locations(&mut stream)
             .unwrap()
@@ -897,7 +911,7 @@ pub mod tests {
         let output = test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
         std::fs::copy(source, &output).unwrap();
 
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         png_io.remove_c2pa_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
@@ -915,7 +929,7 @@ pub mod tests {
         let source_bytes = std::fs::read(source).unwrap();
         let mut source_stream = Cursor::new(source_bytes);
 
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         let png_writer = png_io.get_writer("png").unwrap();
 
         let output_bytes = Vec::new();
@@ -952,14 +966,14 @@ pub mod tests {
         data.extend_from_slice(&(u32::MAX - 11).to_be_bytes());
         data.extend_from_slice(b"caBX");
 
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         let mut stream = Cursor::new(data);
         assert!(png_io.get_object_locations(&mut stream).is_err());
     }
 
     #[test]
     fn test_embeddable_manifest() {
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
 
         let source = crate::utils::test::fixture_path("exp-test1.png");
 
@@ -1053,7 +1067,7 @@ pub mod tests {
         data.extend_from_slice(b"IEND");
         data.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
 
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         let mut stream = Cursor::new(data);
         // Pre-fix: debug builds panicked with "attempt to subtract with
         // overflow"; release builds performed a wrapped-length read.
@@ -1097,7 +1111,7 @@ pub mod tests {
         data.extend_from_slice(b"IEND");
         data.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
 
-        let png_io = PngIO {};
+        let png_io = test_handler("png");
         let mut stream = Cursor::new(data);
         assert!(png_io.read_xmp(&mut stream).is_none());
     }

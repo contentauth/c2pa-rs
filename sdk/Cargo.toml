@@ -40,6 +40,12 @@ unstable_builder_filter = []
 # NFC. Experimental feature: exempt from the crate's usual semantic-versioning stability
 # guarantees and may change or be removed in any release. See docs/experimental-features.md.
 unstable_plain_text = ["dep:unicode-normalization"]
+
+# EXPERIMENT: BMFF, JPEG, PNG, SVG, RIFF, TIFF/DNG, MP3, FLAC and GIF use asset-io;
+# PDF does too with the pdf feature.
+# Exempt from semantic-versioning stability guarantees; see docs/experimental-features.md.
+unstable_asset_io = ["dep:asset-io"]
+
 file_io = ["dep:glob"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -94,10 +100,16 @@ name = "progress"
 [[example]]
 name = "redaction"
 
+[[example]]
+name = "asset_io_corpus"
+required-features = ["unstable_asset_io"]
+
 [lib]
 crate-type = ["lib"]
 
 [dependencies]
+# EXPERIMENT: asset-io integration.
+asset-io = { version = "0.7.0", optional = true, default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf", "tiff", "id3", "gif", "c2pa"] }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"

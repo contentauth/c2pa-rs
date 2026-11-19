@@ -237,6 +237,20 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "unstable_asset_io"))]
+    fn test_handler(format: &str) -> FlacIO {
+        FlacIO::new(format)
+    }
+
+    #[cfg(feature = "unstable_asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
     use crate::{
         asset_handlers::id3_helper::test_helpers,
         error::Error,
@@ -254,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_write_flac() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-out.flac");
         test_helpers::run_write_read_roundtrip(&handler, &fixture(), &out);
@@ -262,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_patch_write_flac() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-patch.flac");
         test_helpers::run_patch_same_size(&handler, &fixture(), &out);
@@ -270,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_patch_cai_store_size_mismatch() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "patch_mismatch.flac");
         test_helpers::run_patch_size_mismatch(&handler, &fixture(), &out);
@@ -278,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_remove_c2pa_flac() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "sample1-nomanifest.flac");
         test_helpers::run_remove_manifest(&handler, &fixture(), &out);
@@ -286,13 +300,13 @@ mod tests {
 
     #[test]
     fn test_remote_ref_flac() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         test_helpers::run_remote_ref_xmp(&handler, &handler, &fixture());
     }
 
     #[test]
     fn test_get_object_locations_flac_structure() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "locs_struct.flac");
         test_helpers::run_get_object_locations_structure(&handler, &fixture(), &out);
@@ -300,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_remove_cai_store_from_stream() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "stream_remove.flac");
         test_helpers::run_remove_from_stream(&handler, &fixture(), &out);
@@ -308,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_write_cai_empty_store_removes_manifest() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "empty_write.flac");
         test_helpers::run_write_cai_empty_removes(&handler, &fixture(), &out);
@@ -316,13 +330,13 @@ mod tests {
 
     #[test]
     fn test_supported_types() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         test_helpers::run_supported_types(&handler, "flac", "audio/flac");
     }
 
     #[test]
     fn test_embed_reference_file_path() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "embed_ref.flac");
         test_helpers::run_embed_reference_file_path(&handler, &handler, &fixture(), &out);
@@ -330,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_read_cai_success_with_manifest() {
-        let handler = FlacIO::new("flac");
+        let handler = test_handler("flac");
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "with_manifest.flac");
         test_helpers::run_read_cai_success_with_manifest(&handler, &fixture(), &out);
@@ -340,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_read_cai_store_no_id3() {
-        let flac_io = FlacIO::new("flac");
+        let flac_io = test_handler("flac");
         let mut cursor = Cursor::new(MINIMAL_FLAC);
         match flac_io.read_c2pa(&mut cursor) {
             Err(Error::JumbfNotFound) => {}
@@ -350,29 +364,31 @@ mod tests {
 
     #[test]
     fn test_read_cai_unsupported_type() {
-        test_helpers::run_read_cai_unsupported_type(&FlacIO::new("flac"));
+        test_helpers::run_read_cai_unsupported_type(&test_handler("flac"));
     }
 
     #[test]
     fn test_read_cai_invalid_id3_version() {
-        let flac_io = FlacIO::new("flac");
+        let flac_io = test_handler("flac");
         let mut buf = test_helpers::id3_header(1, 0).to_vec();
         buf.extend_from_slice(MINIMAL_FLAC);
         let mut cursor = Cursor::new(buf);
         match flac_io.read_c2pa(&mut cursor) {
             Err(Error::InvalidAsset(_)) => {}
+            // asset-io reports an ID3 version it does not support.
+            Err(Error::NotImplemented(_)) if cfg!(feature = "unstable_asset_io") => {}
             other => panic!("expected InvalidAsset, got {:?}", other),
         }
     }
 
     #[test]
     fn test_read_cai_io_error_too_short() {
-        test_helpers::run_read_cai_io_error_too_short(&FlacIO::new("flac"));
+        test_helpers::run_read_cai_io_error_too_short(&test_handler("flac"));
     }
 
     #[test]
     fn test_read_cai_invalid_flac_after_id3() {
-        let flac_io = FlacIO::new("flac");
+        let flac_io = test_handler("flac");
         let mut buf = test_helpers::id3_header(4, 0).to_vec();
         buf.extend_from_slice(b"XXXX");
         buf.extend_from_slice(MINIMAL_FLAC);
@@ -385,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_read_cai_too_many_manifest_stores() {
-        test_helpers::run_read_cai_too_many_manifest_stores(&FlacIO::new("flac"), MINIMAL_FLAC);
+        test_helpers::run_read_cai_too_many_manifest_stores(&test_handler("flac"), MINIMAL_FLAC);
     }
 
     #[test]
@@ -393,12 +409,12 @@ mod tests {
         // CAI-13353 / VULN-38328 regression: a compressed ID3v2.4 frame must
         // not be allowed to decompress without bound. FLAC shares the same
         // ID3 parsing path as MP3, so it is affected too.
-        test_helpers::run_read_cai_zlib_bomb_rejected(&FlacIO::new("flac"), MINIMAL_FLAC);
+        test_helpers::run_read_cai_zlib_bomb_rejected(&test_handler("flac"), MINIMAL_FLAC);
     }
 
     #[test]
     fn test_get_handler_and_reader() {
-        let flac_io = FlacIO::new("flac");
+        let flac_io = test_handler("flac");
         let handler = flac_io.get_handler("audio/flac");
         let reader = flac_io.get_reader();
         let mut cursor = Cursor::new(MINIMAL_FLAC);

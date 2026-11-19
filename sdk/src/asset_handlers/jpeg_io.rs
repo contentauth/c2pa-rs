@@ -1076,6 +1076,20 @@ pub mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
+
+    /// A new handler for `format`, of the implementation these tests run
+    /// against: asset-io's adapter with the `unstable_asset_io` feature, the legacy
+    /// handler without it. Tests of the legacy handler's own internals
+    /// construct it directly.
+    #[cfg(not(feature = "unstable_asset_io"))]
+    fn test_handler(format: &str) -> JpegIO {
+        JpegIO::new(format)
+    }
+
+    #[cfg(feature = "unstable_asset_io")]
+    fn test_handler(format: &str) -> crate::asset_handlers::asset_io_adapter::AssetIoAdapter {
+        crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new(format)
+    }
     use crate::{
         assertions::ExclusionKind,
         utils::io_utils::{safe_vec, tempdirectory},
@@ -1084,9 +1098,13 @@ pub mod tests {
     // limit must be rejected with an error, not crash the encoder (previously the
     // oversized segment panicked in img-parts via `(len-2).try_into().unwrap()`).
     #[test]
+    #[cfg_attr(
+        feature = "unstable_asset_io",
+        ignore = "asset-io writes XMP over one segment as extended XMP"
+    )]
     fn write_xmp_oversized_is_rejected_not_panic() {
         use crate::asset_io::WriteXmp;
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
         let src = include_bytes!("../../tests/fixtures/C.jpg");
 
         // One byte too big: signature prefix + xmp == MAX_JPEG_SEGMENT_PAYLOAD + 1.
@@ -1184,7 +1202,7 @@ pub mod tests {
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 
         std::fs::copy(source, &output).unwrap();
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
 
         jpeg_io.remove_c2pa_store(&output).unwrap();
 
@@ -1203,7 +1221,7 @@ pub mod tests {
         let source_bytes = std::fs::read(source).unwrap();
         let mut source_stream = Cursor::new(source_bytes);
 
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
         let jpg_writer = jpeg_io.get_writer("jpg").unwrap();
 
         let output_bytes = Vec::new();
@@ -1231,7 +1249,7 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
 
         let test_msg = "this some test xmp data";
-        let handler = JpegIO::new("");
+        let handler = test_handler("jpg");
 
         // write xmp
         let assetio_handler = handler.get_handler("jpg");
@@ -1260,7 +1278,7 @@ pub mod tests {
         let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
 
         let test_msg = "this some test xmp data";
-        let handler = JpegIO::new("");
+        let handler = test_handler("jpg");
 
         let assetio_handler = handler.get_handler("jpg");
 
@@ -1289,7 +1307,7 @@ pub mod tests {
 
     #[test]
     fn test_embeddable_manifest() {
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
 
         let source = crate::utils::test::fixture_path("CA.jpg");
 
@@ -1348,10 +1366,14 @@ pub mod tests {
 
         let mut stream = Cursor::new(&data);
 
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
 
         let result = jpeg_io.get_object_locations(&mut stream);
+        // asset-io reads it as SOI, fill bytes and EOI followed by trailing data.
+        #[cfg(not(feature = "unstable_asset_io"))]
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
+        #[cfg(feature = "unstable_asset_io")]
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -1394,7 +1416,7 @@ pub mod tests {
 
         let mut stream = Cursor::new(&data);
 
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
 
         let result = jpeg_io.get_object_locations(&mut stream);
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
@@ -1424,7 +1446,7 @@ pub mod tests {
 
         let mut stream = Cursor::new(&data);
 
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
 
         let _ = jpeg_io.get_object_locations(&mut stream);
     }
@@ -1435,7 +1457,7 @@ pub mod tests {
         let source = crate::utils::test::fixture_path("CA.jpg");
         let mut source_stream = std::fs::File::open(source).unwrap();
 
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
         let output = Vec::new();
         let mut output_stream = Cursor::new(output);
 
@@ -1504,7 +1526,7 @@ pub mod tests {
     // (unhashed) bytes. get_object_locations must reject it (C2PA 15.12.1).
     #[test]
     fn noncontiguous_cai_segments_rejected() {
-        let jpeg_io = JpegIO {};
+        let jpeg_io = test_handler("jpg");
         let source = crate::utils::test::fixture_path("CA.jpg");
         let mut buf = Vec::new();
         std::fs::File::open(&source)
@@ -1541,7 +1563,8 @@ pub mod tests {
     }
 
     // End-to-end: a signed update-manifest asset with a non-contiguous CAI
-    // injection must not validate as Valid/Trusted through the Reader.
+    // injection must not validate as Valid/Trusted through the Reader
+    // (either Invalid, or refused as having two manifest stores).
     #[test]
     fn noncontiguous_cai_injection_rejected_by_reader() {
         use crate::{Context, Reader, ValidationState};
@@ -1574,10 +1597,12 @@ pub mod tests {
         let mut out = Cursor::new(Vec::new());
         jpeg.encoder().write_to(&mut out).unwrap();
 
-        let tampered = Reader::from_context(Context::new())
-            .with_stream("image/jpeg", out)
-            .unwrap();
-        assert_eq!(tampered.validation_state(), ValidationState::Invalid);
+        // Rejected either way: the reader reports the asset as Invalid, or (when the
+        // JPEG is read through asset-io) refuses it for having two manifest stores.
+        match Reader::from_context(Context::new()).with_stream("image/jpeg", out) {
+            Ok(tampered) => assert_eq!(tampered.validation_state(), ValidationState::Invalid),
+            Err(e) => assert!(matches!(e, Error::TooManyManifestStores), "{e:?}"),
+        }
     }
 
     // End-to-end: a real box-hash-signed JPEG with a PDF appended after the EOI
