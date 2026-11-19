@@ -10,7 +10,7 @@ publish = false
 
 [features]
 # Provisional bridge until timestamp verification moves out of the SDK.
-sdk-compat = []
+sdk-compat = ["dep:hex"]
 
 [dependencies]
 bcder = "0.7.6"
@@ -18,7 +18,7 @@ bytes = "1.11.1"
 chrono = { version = "0.4.44", default-features = false, features = ["std"] }
 contentauth-sans-io-core = "0.2.0"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
-hex = "0.4.3"
+hex = { version = "0.4.3", optional = true }
 http = "1.4.1"
 rasn = "0.28.13"
 rasn-cms = "0.28.13"
@@ -26,4 +26,5 @@ sha2 = "0.11.0"
 thiserror = "2.0.18"
 
 [dev-dependencies]
+hex = "0.4.3"
 pem = "4.0.0"
