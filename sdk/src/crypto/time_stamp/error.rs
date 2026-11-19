@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use contentauth_pki::timestamp::acquisition::AcquisitionError;
+use contentauth_pki::timestamp::{
+    acquisition::AcquisitionError,
+    verification::{VerificationError, VerificationErrorKind},
+};
 use thiserror::Error;
 
 use crate::http::HttpResolverError;
@@ -111,9 +114,65 @@ impl From<AcquisitionError> for TimeStampError {
     }
 }
 
+impl From<VerificationError> for TimeStampError {
+    fn from(error: VerificationError) -> Self {
+        match error.kind {
+            VerificationErrorKind::DecodeError(message) => Self::DecodeError(message),
+
+            VerificationErrorKind::InvalidData | VerificationErrorKind::NoMatchingCertificate => {
+                Self::InvalidData
+            }
+
+            VerificationErrorKind::UnsupportedAlgorithm => Self::UnsupportedAlgorithm,
+            VerificationErrorKind::SignatureMismatch => Self::Untrusted,
+
+            kind => Self::InternalError(format!(
+                "unrecognized timestamp verification error: {kind}; stage: {:?}; {}",
+                error.stage, error.diagnostic
+            )),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verification_failures_retain_sdk_error_categories_and_details() {
+        use contentauth_pki::timestamp::verification::VerificationStage;
+
+        for (kind, expected) in [
+            (
+                VerificationErrorKind::DecodeError("invalid CMS".into()),
+                "decode error (invalid CMS)",
+            ),
+            (
+                VerificationErrorKind::InvalidData,
+                "time stamp does not match data",
+            ),
+            (
+                VerificationErrorKind::NoMatchingCertificate,
+                "time stamp does not match data",
+            ),
+            (
+                VerificationErrorKind::UnsupportedAlgorithm,
+                "time stamp contains an unsupported algorithm",
+            ),
+            (
+                VerificationErrorKind::SignatureMismatch,
+                "time stamp authority is untrusted",
+            ),
+        ] {
+            let error = VerificationError {
+                stage: VerificationStage::Signature,
+                kind,
+                diagnostic: "timestamp verification failed",
+            };
+
+            assert_eq!(TimeStampError::from(error).to_string(), expected);
+        }
+    }
 
     #[test]
     fn acquisition_failures_retain_sdk_error_categories_and_details() {
