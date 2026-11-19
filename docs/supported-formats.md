@@ -49,6 +49,15 @@ the legacy ID3 decoder stops before reaching it.
 | `wav`           | `audio/wav`                                                                     |
 | `webp`          | `image/webp`                                                                    |
 
+## Sidecar-only formats
+
+The C2PA specification does not allow a manifest to be embedded in the following formats, because their record grammar has no place for one. Sign them with `Builder::set_no_embed(true)` and store the returned manifest store as a sidecar (external manifest). The data hash covers the complete file, and the asset is not modified. Signing without `no_embed` returns `Error::UnsupportedType`.
+
+| Extensions | MIME type                   |
+| ---------- | --------------------------- |
+| `csv`      | `text/csv`                  |
+| `tsv`      | `text/tab-separated-values` |
+
 ## Experimental feature: Text formats
 
 The Rust library supports the following text formats when the `unstable_structured_text` feature is enabled.
