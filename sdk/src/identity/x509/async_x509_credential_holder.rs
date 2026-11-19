@@ -51,6 +51,10 @@ impl AsyncX509CredentialHolder {
     /// [`RawSigner`] together with its signing certificate chain (each
     /// certificate in DER form, end-entity first).
     ///
+    /// Like [`super::X509CredentialHolder`], this holder does not acquire
+    /// timestamps. The enclosing manifest generator must arrange the valid
+    /// timestamp required by the interim emailProtection trust model.
+    ///
     /// [`RawSigner`]: crate::RawSigner
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_async_raw_signer(
@@ -104,6 +108,7 @@ impl AsyncCredentialHolder for AsyncX509CredentialHolder {
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Context::new(), // RawSignerCoseSigner has no timestamp service or network requests.
         )
         .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))?)
     }

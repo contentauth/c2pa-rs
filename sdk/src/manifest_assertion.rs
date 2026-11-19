@@ -5,7 +5,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Se
 use serde_json::Value;
 
 use crate::{
-    assertion::{AssertionBase, AssertionDecodeError},
+    assertion::{AssertionBase, AssertionData, AssertionDecodeError},
     assertions::labels,
     crypto::base64::decode_b64_wrapped,
     error::{Error, Result},
@@ -140,6 +140,9 @@ impl ManifestAssertion {
 
     /// Creates a ManifestAssertion from an AssertionBase object
     ///
+    /// CBOR byte strings use the json_b64 `b64'<base64>'` representation,
+    /// preserving their distinction from numeric arrays.
+    ///
     /// # Example: Creating a custom assertion an Action assertion
     ///
     /// ```
@@ -155,10 +158,13 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
-        Ok(Self::new(
-            data.label().to_owned(),
-            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
-        ))
+        let assertion = data.to_assertion()?;
+        let value = match assertion.decode_data() {
+            AssertionData::Cbor(_) => assertion.as_json_object()?,
+            _ => serde_json::to_value(data)
+                .map_err(|err| Error::AssertionEncoding(err.to_string()))?,
+        };
+        Ok(Self::new(data.label().to_owned(), value))
     }
 
     /// Creates an Assertion object from a ManifestAssertion
@@ -194,7 +200,7 @@ impl ManifestAssertion {
     }
 }
 
-/// Reverses crJSON's `b64'<base64>'` byte-string wrapper (as produced for CBOR
+/// Reverses the json_b64 `b64'<base64>'` byte-string wrapper (as produced for CBOR
 /// byte strings when building this assertion's JSON value) back into a JSON
 /// number array, so typed structs with `Vec<u8>`/`serde_bytes` fields (e.g. the
 /// internal `IdentityAssertion`'s `signature`/`pad1`/`pad2`) still deserialize
@@ -223,7 +229,9 @@ pub(crate) mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::{c2pa_action, Action, Actions};
+    use crate::assertions::{
+        c2pa_action, Action, Actions, AssertionMetadata, EmbeddedData, Metadata,
+    };
 
     #[test]
     fn test_manifest_assertion() {
@@ -245,6 +253,57 @@ pub(crate) mod tests {
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let ma2 = ManifestAssertion::from_assertion(&actions).expect("from_assertion");
         let _actions2: Actions = ma2.to_assertion().expect("to_assertion");
+    }
+
+    #[test]
+    fn from_cbor_assertion_preserves_bytes_and_arrays() {
+        let metadata: AssertionMetadata = serde_json::from_value(serde_json::json!({
+            "reference": {
+                "url": "https://example.test/assertion",
+                "alg": "sha256",
+                "hash": [96, 128]
+            },
+            "values": [96, 384]
+        }))
+        .unwrap();
+        let assertion = ManifestAssertion::from_assertion(&metadata).unwrap();
+        let value = assertion.value().unwrap();
+        assert_eq!(value["reference"]["hash"], "b64'YIA='");
+        assert_eq!(value["values"], serde_json::json!([96, 384]));
+        let decoded: AssertionMetadata = assertion.to_assertion().unwrap();
+        assert_eq!(decoded, metadata);
+    }
+
+    #[test]
+    fn from_json_assertion_preserves_serialization() {
+        let metadata = Metadata::new(
+            "org.example.metadata",
+            r#"{
+                "@context": {"ex": "https://example.test/"},
+                "ex:values": [96, 384],
+                "ex:large": 18446744073709551615
+            }"#,
+        )
+        .unwrap();
+        let assertion = ManifestAssertion::from_assertion(&metadata).unwrap();
+        assert_eq!(
+            assertion.value().unwrap(),
+            &serde_json::to_value(&metadata).unwrap()
+        );
+    }
+
+    #[test]
+    fn from_binary_assertion_preserves_serialization() {
+        let data = EmbeddedData::new(
+            "org.example.binary",
+            "application/octet-stream",
+            vec![96, 128],
+        );
+        let assertion = ManifestAssertion::from_assertion(&data).unwrap();
+        assert_eq!(
+            assertion.value().unwrap(),
+            &serde_json::to_value(&data).unwrap()
+        );
     }
 
     #[test]

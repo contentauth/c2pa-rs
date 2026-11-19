@@ -524,6 +524,8 @@ fn child_image_and_parent_builder(resolver: &RecordingResolver) -> (Cursor<Vec<u
     let parent_context = Context::new()
         .with_settings(parent_settings)
         .unwrap()
+        .with_settings_value("core.time_stamp_retry_delay_in_ms", 0u64)
+        .unwrap()
         .with_resolver(resolver.clone());
     #[cfg(not(target_arch = "wasm32"))]
     let parent_context = parent_context.with_resolver_async(resolver.clone());
@@ -534,9 +536,9 @@ fn child_image_and_parent_builder(resolver: &RecordingResolver) -> (Cursor<Vec<u
     (child_image, builder)
 }
 
-// Assert `resolver` saw exactly one time authority request and that it carried the signer's
+// Assert `resolver` saw the expected attempts and that every attempt carried the signer's
 // headers alongside the SDK's `Content-Type`.
-fn assert_tsa_request_has_signer_headers(resolver: &RecordingResolver) {
+fn assert_tsa_request_has_signer_headers(resolver: &RecordingResolver, expected_attempts: usize) {
     let requests = resolver.requests.lock().unwrap();
     let tsa_requests: Vec<_> = requests
         .iter()
@@ -544,23 +546,25 @@ fn assert_tsa_request_has_signer_headers(resolver: &RecordingResolver) {
         .collect();
     assert_eq!(
         tsa_requests.len(),
-        1,
-        "expected one time authority request, got {requests:?}"
+        expected_attempts,
+        "unexpected time authority request count: {requests:?}"
     );
 
-    let headers = tsa_requests[0].headers();
-    assert_eq!(
-        headers
-            .get("Authorization")
-            .and_then(|value| value.to_str().ok()),
-        Some(MOCK_TSA_AUTHORIZATION)
-    );
-    assert_eq!(
-        headers
-            .get("Content-Type")
-            .and_then(|value| value.to_str().ok()),
-        Some("application/timestamp-query")
-    );
+    for request in tsa_requests {
+        let headers = request.headers();
+        assert_eq!(
+            headers
+                .get("Authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some(MOCK_TSA_AUTHORIZATION)
+        );
+        assert_eq!(
+            headers
+                .get("Content-Type")
+                .and_then(|value| value.to_str().ok()),
+            Some("application/timestamp-query")
+        );
+    }
 }
 
 // Sign a manifest with a child ingredient, then sign the parent with a signer that authenticates
@@ -582,7 +586,7 @@ fn timestamp_assertion_sends_signer_tsa_headers() {
     );
     assert!(result.is_err());
 
-    assert_tsa_request_has_signer_headers(&resolver);
+    assert_tsa_request_has_signer_headers(&resolver, 3);
 }
 
 // Same as `timestamp_assertion_sends_signer_tsa_headers`, through `Builder::sign_async`.
@@ -602,5 +606,5 @@ async fn timestamp_assertion_sends_signer_tsa_headers_async() {
         .await;
     assert!(result.is_err());
 
-    assert_tsa_request_has_signer_headers(&resolver);
+    assert_tsa_request_has_signer_headers(&resolver, 1);
 }

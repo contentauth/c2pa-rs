@@ -229,6 +229,7 @@ impl TstContainer {
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
         tss: TimeStampStorage,
+        context: &crate::Context,
     ))]
 pub(crate) fn add_sigtst_header(
     ts_provider: &dyn CoseSigner,
@@ -236,13 +237,14 @@ pub(crate) fn add_sigtst_header(
     p_header: &ProtectedHeader,
     mut header_builder: HeaderBuilder,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<HeaderBuilder, CoseError> {
     let sd = cose_countersign_data(data, p_header);
 
     let maybe_cts = if _sync {
-        ts_provider.send_time_stamp_request(&sd)
+        ts_provider.send_time_stamp_request(&sd, context)
     } else {
-        ts_provider.send_time_stamp_request(&sd).await
+        ts_provider.send_time_stamp_request(&sd, context).await
     };
 
     if let Some(cts) = maybe_cts {
@@ -425,10 +427,16 @@ mod tests {
             TimeStampStorage::V1_sigTst,
             TimeStampStorage::V2_sigTst2_CTT,
         ] {
-            let header =
-                add_sigtst_header(&signer, b"data", &protected, HeaderBuilder::new(), version)
-                    .unwrap()
-                    .build();
+            let header = add_sigtst_header(
+                &signer,
+                b"data",
+                &protected,
+                HeaderBuilder::new(),
+                version,
+                &crate::Context::new(),
+            )
+            .unwrap()
+            .build();
             assert!(header.rest.is_empty());
             let header = add_sigtst_header_async(
                 &signer,
@@ -436,6 +444,7 @@ mod tests {
                 &protected,
                 HeaderBuilder::new(),
                 version,
+                &crate::Context::new(),
             )
             .await
             .unwrap()
@@ -449,7 +458,8 @@ mod tests {
                 b"data",
                 &protected,
                 HeaderBuilder::new(),
-                TimeStampStorage::V2_sigTst2_CTT
+                TimeStampStorage::V2_sigTst2_CTT,
+                &crate::Context::new(),
             ),
             Err(CoseError::TimeStampError(TimeStampError::DecodeError(_)))
         ));
@@ -459,7 +469,8 @@ mod tests {
                 b"data",
                 &protected,
                 HeaderBuilder::new(),
-                TimeStampStorage::V2_sigTst2_CTT
+                TimeStampStorage::V2_sigTst2_CTT,
+                &crate::Context::new(),
             )
             .await,
             Err(CoseError::TimeStampError(TimeStampError::DecodeError(_)))
@@ -503,14 +514,27 @@ mod tests {
                 timestamptoken_from_timestamprsp(signer.timestamp.as_ref().unwrap()).unwrap(),
                 token
             );
-            let sync = add_sigtst_header(&signer, data, &protected, HeaderBuilder::new(), version)
-                .unwrap()
-                .build();
-            let asynchronous =
-                add_sigtst_header_async(&signer, data, &protected, HeaderBuilder::new(), version)
-                    .await
-                    .unwrap()
-                    .build();
+            let sync = add_sigtst_header(
+                &signer,
+                data,
+                &protected,
+                HeaderBuilder::new(),
+                version,
+                &crate::Context::new(),
+            )
+            .unwrap()
+            .build();
+            let asynchronous = add_sigtst_header_async(
+                &signer,
+                data,
+                &protected,
+                HeaderBuilder::new(),
+                version,
+                &crate::Context::new(),
+            )
+            .await
+            .unwrap()
+            .build();
             assert_eq!(sync, asynchronous);
             let sign1 = coset::CoseSign1 {
                 protected: protected.clone(),

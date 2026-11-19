@@ -796,7 +796,11 @@ impl crate::Signer for TestGoodSigner {
         1024
     }
 
-    fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+    fn send_timestamp_request(
+        &self,
+        _message: &[u8],
+        _context: &crate::Context,
+    ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }
 }
@@ -825,6 +829,7 @@ impl AsyncSigner for AsyncTestGoodSigner {
     async fn send_timestamp_request(
         &self,
         _message: &[u8],
+        _context: &crate::Context,
     ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }

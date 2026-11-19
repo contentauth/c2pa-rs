@@ -83,23 +83,29 @@ use crate::crypto::cose::{
     signer: &dyn AsyncCoseSigner,
     data: &[u8],
     box_size: Option<usize>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    context: &crate::Context
 ))]
 pub(crate) fn sign(
     signer: &dyn CoseSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
         match tss {
-            TimeStampStorage::V1_sigTst => sign_v1(signer, data, box_size, tss),
-            TimeStampStorage::V2_sigTst2_CTT => sign_v2(signer, data, box_size, tss),
+            TimeStampStorage::V1_sigTst => sign_v1(signer, data, box_size, tss, context),
+            TimeStampStorage::V2_sigTst2_CTT => sign_v2(signer, data, box_size, tss, context),
         }
     } else {
         match tss {
-            TimeStampStorage::V1_sigTst => sign_v1_async(signer, data, box_size, tss).await,
-            TimeStampStorage::V2_sigTst2_CTT => sign_v2_async(signer, data, box_size, tss).await,
+            TimeStampStorage::V1_sigTst => {
+                sign_v1_async(signer, data, box_size, tss, context).await
+            }
+            TimeStampStorage::V2_sigTst2_CTT => {
+                sign_v2_async(signer, data, box_size, tss, context).await
+            }
         }
     }
 }
@@ -108,13 +114,15 @@ pub(crate) fn sign(
     signer: &dyn AsyncCoseSigner,
     data: &[u8],
     box_size: Option<usize>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    context: &crate::Context
 ))]
 pub(crate) fn sign_v1(
     signer: &dyn CoseSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
@@ -129,9 +137,9 @@ pub(crate) fn sign_v1(
 
     // V1: Generate time stamp then sign.
     let unprotected_header = if _sync {
-        build_unprotected_header(signer, data, &protected_header, tss)?
+        build_unprotected_header(signer, data, &protected_header, tss, context)?
     } else {
-        build_unprotected_header_async(signer, data, &protected_header, tss).await?
+        build_unprotected_header_async(signer, data, &protected_header, tss, context).await?
     };
 
     let sign1_builder = CoseSign1Builder::new()
@@ -195,18 +203,37 @@ pub(crate) fn sign_v1(
     signer: &dyn AsyncCoseSigner,
     data: &[u8],
     box_size: Option<usize>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    context: &crate::Context
 ))]
 pub(crate) fn sign_v2(
     signer: &dyn CoseSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
-        sign_v2_embedded(signer, data, box_size, CosePayload::Detached, None, tss)
+        sign_v2_embedded(
+            signer,
+            data,
+            box_size,
+            CosePayload::Detached,
+            None,
+            tss,
+            context,
+        )
     } else {
-        sign_v2_embedded_async(signer, data, box_size, CosePayload::Detached, None, tss).await
+        sign_v2_embedded_async(
+            signer,
+            data,
+            box_size,
+            CosePayload::Detached,
+            None,
+            tss,
+            context,
+        )
+        .await
     }
 }
 
@@ -285,7 +312,8 @@ pub enum CosePayload {
     box_size: Option<usize>,
     payload: CosePayload,
     content_type: Option<ContentType>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    context: &crate::Context
 ))]
 pub(crate) fn sign_v2_embedded(
     signer: &dyn CoseSigner,
@@ -294,6 +322,7 @@ pub(crate) fn sign_v2_embedded(
     payload: CosePayload,
     content_type: Option<ContentType>,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
@@ -369,9 +398,10 @@ pub(crate) fn sign_v2_embedded(
 
     // Fill in the unprotected header with time stamp data.
     let unprotected_header = if _sync {
-        build_unprotected_header(signer, &sig_data_cbor, &protected_header, tss)?
+        build_unprotected_header(signer, &sig_data_cbor, &protected_header, tss, context)?
     } else {
-        build_unprotected_header_async(signer, &sig_data_cbor, &protected_header, tss).await?
+        build_unprotected_header_async(signer, &sig_data_cbor, &protected_header, tss, context)
+            .await?
     };
 
     sign1.unprotected = unprotected_header;
@@ -431,12 +461,13 @@ fn build_protected_header(
     Ok(ph2)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncCoseSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage,))]
+#[async_generic(async_signature(signer: &dyn AsyncCoseSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage, context: &crate::Context,))]
 fn build_unprotected_header(
     signer: &dyn CoseSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     tss: TimeStampStorage,
+    context: &crate::Context,
 ) -> Result<Header, CoseError> {
     // signed_data_from_time_stamp_response
 
@@ -445,9 +476,9 @@ fn build_unprotected_header(
     let unprotected_h = HeaderBuilder::new();
 
     let mut unprotected_h = if _sync {
-        add_sigtst_header(signer, data, p_header, unprotected_h, tss)?
+        add_sigtst_header(signer, data, p_header, unprotected_h, tss, context)?
     } else {
-        add_sigtst_header_async(signer, data, p_header, unprotected_h, tss).await?
+        add_sigtst_header_async(signer, data, p_header, unprotected_h, tss, context).await?
     };
 
     // Set the OCSP responder responses if available.
@@ -636,8 +667,10 @@ mod tests {
                 TimeStampStorage::V1_sigTst,
                 TimeStampStorage::V2_sigTst2_CTT,
             ] {
-                let sync = sign(&signer, DATA, None, storage).unwrap();
-                let asynchronous = sign_async(&signer, DATA, None, storage).await.unwrap();
+                let sync = sign(&signer, DATA, None, storage, &crate::Context::new()).unwrap();
+                let asynchronous = sign_async(&signer, DATA, None, storage, &crate::Context::new())
+                    .await
+                    .unwrap();
                 assert_signature(&sync, alg, &signer.certs, false);
                 assert_signature(&asynchronous, alg, &signer.certs, false);
             }
@@ -661,6 +694,7 @@ mod tests {
                 CosePayload::Embedded,
                 content_type.clone(),
                 TimeStampStorage::V2_sigTst2_CTT,
+                &crate::Context::new(),
             )
             .unwrap();
             let asynchronous = sign_v2_embedded_async(
@@ -670,6 +704,7 @@ mod tests {
                 CosePayload::Embedded,
                 content_type.clone(),
                 TimeStampStorage::V2_sigTst2_CTT,
+                &crate::Context::new(),
             )
             .await
             .unwrap();
@@ -696,8 +731,10 @@ mod tests {
                 TimeStampStorage::V1_sigTst,
                 TimeStampStorage::V2_sigTst2_CTT,
             ] {
-                let sync = sign(&signer, DATA, None, storage).unwrap();
-                let asynchronous = sign_async(&signer, DATA, None, storage).await.unwrap();
+                let sync = sign(&signer, DATA, None, storage, &crate::Context::new()).unwrap();
+                let asynchronous = sign_async(&signer, DATA, None, storage, &crate::Context::new())
+                    .await
+                    .unwrap();
                 for encoded in [sync, asynchronous] {
                     let signature = CoseSign1::from_tagged_slice(&encoded).unwrap().signature;
                     let mut expected = vec![0; size];
@@ -720,11 +757,11 @@ mod tests {
                 signer.fail_certs = fail_certs;
                 signer.fail_sign = !fail_certs;
                 assert!(matches!(
-                    sign(&signer, DATA, None, storage),
+                    sign(&signer, DATA, None, storage, &crate::Context::new()),
                     Err(CoseError::RawSignerError(_))
                 ));
                 assert!(matches!(
-                    sign_async(&signer, DATA, None, storage).await,
+                    sign_async(&signer, DATA, None, storage, &crate::Context::new()).await,
                     Err(CoseError::RawSignerError(_))
                 ));
             }
@@ -737,8 +774,12 @@ mod tests {
                 TestSigner::new(SigningAlg::Ed25519).certs,
             ] {
                 signer.certs = certs;
-                assert!(sign(&signer, DATA, None, storage).is_err());
-                assert!(sign_async(&signer, DATA, None, storage).await.is_err());
+                assert!(sign(&signer, DATA, None, storage, &crate::Context::new()).is_err());
+                assert!(
+                    sign_async(&signer, DATA, None, storage, &crate::Context::new())
+                        .await
+                        .is_err()
+                );
             }
         }
     }

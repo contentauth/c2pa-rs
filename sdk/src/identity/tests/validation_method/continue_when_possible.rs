@@ -24,11 +24,13 @@ use crate::{
     crypto::cose::{CertificateTrustPolicy, TrustAnchorType, Verifier},
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
     status_tracker::{LogKind, StatusTracker},
-    validation_status::{CAWG_X509_CREDENTIAL_TRUSTED, CAWG_X509_SIGNATURE_VALIDATED},
+    validation_status::{CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_VALIDATED},
     SigningAlg,
 };
 
 fn trusted_x509_verifier() -> X509SignatureVerifier<'static> {
+    // These older emailProtection fixtures have no accepted S/MIME policy.
+    // The configured CA establishes a chain, not CAWG credential trust.
     let mut policy = CertificateTrustPolicy::default();
     policy
         .add_trust_anchors(
@@ -213,7 +215,7 @@ async fn assertion_not_in_claim_v1() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -222,12 +224,12 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -343,7 +345,7 @@ async fn duplicate_assertion_reference() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -352,11 +354,11 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -451,7 +453,7 @@ async fn no_hard_binding() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -460,12 +462,12 @@ async fn no_hard_binding() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -760,7 +762,7 @@ async fn pad1_invalid() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -769,12 +771,12 @@ async fn pad1_invalid() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -869,7 +871,7 @@ async fn pad2_invalid() {
     );
 
     let log = &status_tracker.logged_items()[1];
-    assert_eq!(log.kind, LogKind::Success);
+    assert_eq!(log.kind, LogKind::Failure);
 
     assert_eq!(
         log.label,
@@ -878,12 +880,12 @@ async fn pad2_invalid() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
+        "certificate does not satisfy the CAWG X.509 trust model"
     );
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        CAWG_X509_CREDENTIAL_TRUSTED
+        CAWG_X509_CREDENTIAL_UNTRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];

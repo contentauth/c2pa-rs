@@ -51,12 +51,12 @@ use crate::{
     error::{Error, Result},
     jumbf::labels::manifest_label_from_uri,
     maybe_send_sync::MaybeSend,
-    resource_store::{ResourceRef, ResourceResolver, ResourceStore},
+    resource_store::{ResourceRef, ResourceResolver, ResourceStore, UriOrResource},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
-        hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
-        path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
+        merkle::MerkleAccumulator, mime::format_to_mime, path_utils::sanitize_archive_path,
+        xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
@@ -242,9 +242,9 @@ impl TryFrom<serde_json::Value> for ManifestDefinition {
     }
 }
 
-/// Fixes up CBOR assertion data that was converted generically from JSON, where the
-/// spec requires byte strings that JSON cannot express (see #2689).
-fn normalize_cbor_assertion(label: &str, value: &mut c2pa_cbor::Value) {
+/// Retains legacy numeric-array input for soft-binding byte fields (see #2689).
+/// Explicit json_b64 byte markers are decoded generically before this step.
+fn normalize_legacy_cbor_assertion(label: &str, value: &mut c2pa_cbor::Value) {
     if labels::base(label) == labels::SOFT_BINDING {
         crate::assertions::soft_binding_bytes_to_bstr(value);
     }
@@ -273,7 +273,8 @@ pub enum AssertionData {
 pub struct AssertionDefinition {
     /// An assertion label in reverse domain format
     pub label: String,
-    /// The assertion data
+    /// The assertion data. For CBOR assertions, JSON input accepts json_b64
+    /// `b64'<base64>'` strings for byte fields at any depth.
     pub data: AssertionData,
     /// The kind of assertion data, either Cbor or Json (defaults to Cbor)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -303,9 +304,9 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
         let data = match helper.kind {
             Some(ManifestAssertionKind::Json) => AssertionData::Json(helper.data),
             Some(ManifestAssertionKind::Cbor) | None => {
-                let mut cbor_val =
-                    c2pa_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
-                normalize_cbor_assertion(&helper.label, &mut cbor_val);
+                let mut cbor_val = crate::utils::json_b64::from_json_b64(helper.data)
+                    .map_err(serde::de::Error::custom)?;
+                normalize_legacy_cbor_assertion(&helper.label, &mut cbor_val);
                 AssertionData::Cbor(cbor_val)
             }
             _ => {
@@ -837,8 +838,8 @@ impl Builder {
         let assertion_data = match kind {
             Some(ManifestAssertionKind::Json) => AssertionData::Json(serde_json::to_value(data)?),
             _ => {
-                let mut value = c2pa_cbor::value::to_value(data)?;
-                normalize_cbor_assertion(&label, &mut value);
+                let mut value = crate::utils::json_b64::from_json_b64(data)?;
+                normalize_legacy_cbor_assertion(&label, &mut value);
                 AssertionData::Cbor(value)
             }
         };
@@ -851,6 +852,9 @@ impl Builder {
         Ok(self)
     }
 
+    /// Byte strings can be supplied as json_b64 `b64'<base64>'` strings at any depth.
+    /// Numeric arrays remain arrays, except for legacy soft-binding byte fields.
+    ///
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion. The data can be any Serde-serializable type or an AssertionDefinition.
@@ -1820,41 +1824,53 @@ impl Builder {
             actions = actions.update_action(update.0, update.1);
         }
 
-        if let Some(templates) = actions.templates.as_mut() {
-            for template in templates {
-                // replace icon with hashed_uri
-                template.icon = match template.icon.take() {
-                    Some(icon) => Some(icon.to_hashed_uri(&self.resources, claim)?),
-                    None => None,
-                };
+        self.resolve_action_icons(&mut actions, claim)?;
 
-                // replace software agent with hashed_uri
-                template.software_agent = match template.software_agent.take() {
-                    Some(mut info) => {
-                        if let Some(icon) = info.icon.as_mut() {
-                            let icon = icon.to_hashed_uri(&self.resources, claim)?;
-                            info.set_icon(icon);
-                        }
-                        Some(info)
-                    }
-                    agent => agent,
-                };
+        Ok(actions)
+    }
+
+    /// Converts every resource-reference icon in `actions` into a hashed URI, adding the icon
+    /// assertions (or v1 data boxes) to `claim`.
+    ///
+    /// Covers top-level `softwareAgents`, per-action `softwareAgent`, and template `icon` and
+    /// `softwareAgent` icons. Icons that are already hashed URIs are left unchanged.
+    fn resolve_action_icons(&self, actions: &mut Actions, claim: &mut Claim) -> Result<()> {
+        let resolve_info = |info: &mut ClaimGeneratorInfo, claim: &mut Claim| -> Result<()> {
+            if let Some(icon) = info.icon.as_ref() {
+                let icon = icon.to_hashed_uri(&self.resources, claim)?;
+                info.set_icon(icon);
+            }
+            Ok(())
+        };
+
+        if let Some(agents) = actions.software_agents.as_mut() {
+            for info in agents {
+                resolve_info(info, claim)?;
             }
         }
 
-        // convert icons in software agents to hashed uris
-        for action in actions.actions_mut().iter_mut() {
-            if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) = action.software_agent() {
-                if let Some(icon) = info.icon.as_ref() {
-                    let mut info = info.to_owned();
-                    let icon_uri = icon.to_hashed_uri(&self.resources, claim)?;
-                    let update = info.set_icon(icon_uri);
-                    *action = std::mem::take(action).set_software_agent(update.to_owned());
+        if let Some(templates) = actions.templates.as_mut() {
+            for template in templates {
+                if let Some(icon) = template.icon.take() {
+                    template.icon = Some(icon.to_hashed_uri(&self.resources, claim)?);
+                }
+                if let Some(info) = template.software_agent.as_mut() {
+                    resolve_info(info, claim)?;
                 }
             }
         }
 
-        Ok(actions)
+        for action in actions.actions_mut().iter_mut() {
+            if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) = action.software_agent() {
+                if matches!(info.icon, Some(UriOrResource::ResourceRef(_))) {
+                    let mut info = info.to_owned();
+                    resolve_info(&mut info, claim)?;
+                    *action = std::mem::take(action).set_software_agent(info);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the position in `pending` of the Actions assertion that must carry the
@@ -2174,6 +2190,8 @@ impl Builder {
         self.merge_actions_settings(&mut designated)?;
         self.insert_auto_inception_action(&mut designated, ingredient_map)?;
         self.insert_auto_placed_actions(&mut designated, ingredient_map)?;
+        // Settings-supplied templates and actions carry resource-reference icons.
+        self.resolve_action_icons(&mut designated, claim)?;
 
         let has_inception = designated
             .actions()
@@ -3782,8 +3800,7 @@ impl Builder {
 
 impl std::fmt::Display for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut json = serde_json::to_value(self).map_err(|_| std::fmt::Error)?;
-        json = hash_to_b64(json);
+        let json = crate::utils::json_b64::to_json_b64(self).map_err(|_| std::fmt::Error)?;
         let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
         f.write_str(&output)
     }
@@ -4063,6 +4080,358 @@ mod tests {
     const TEST_IMAGE_TIFF: &[u8] = include_bytes!("../tests/fixtures/test.tiff");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
     const TEST_MANIFEST_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+
+    fn json_report_reader(mut builder: Builder) -> Reader {
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut output)
+            .unwrap();
+        output.rewind().unwrap();
+        Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap()
+    }
+
+    fn json_report_assertions(
+        reader: &Reader,
+        label: &str,
+    ) -> (serde_json::Value, serde_json::Value) {
+        let normal: serde_json::Value =
+            serde_json::from_str(&reader.json_checked().unwrap()).unwrap();
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let active = normal["active_manifest"].as_str().unwrap();
+        let assertion = normal["manifests"][active]["assertions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|assertion| assertion["label"] == label)
+            .unwrap();
+        (
+            assertion["data"].clone(),
+            detailed["manifests"][active]["assertion_store"][label].clone(),
+        )
+    }
+
+    #[test]
+    fn json_b64_byte_markers_work_for_custom_assertions() {
+        let data = json!({
+            "bytes": "b64'YIA='",
+            "empty": "b64''",
+            "values": [96, 384],
+            "nested": [{"bytes": "b64'AP8='"}, "b64'YIA='"]
+        });
+        let mut builder = Builder::default()
+            .with_definition(
+                json!({"assertions": [
+                    {"label": "org.example.nested", "data": data},
+                    {"label": "org.example.root", "data": "b64'YIA='"},
+                    {"label": "org.example.json", "kind": "Json", "data": data}
+                ]})
+                .to_string(),
+            )
+            .unwrap();
+        builder
+            .add_assertion("org.example.added", &data)
+            .unwrap()
+            .add_assertion("org.example.added_root", &"b64'YIA='")
+            .unwrap()
+            .add_assertion_json("org.example.added_json", &data)
+            .unwrap();
+
+        let expected = crate::utils::json_b64::from_json_b64(&data).unwrap();
+        let check = |builder: &Builder| {
+            for index in [0, 3] {
+                assert!(matches!(
+                    &builder.definition.assertions[index].data,
+                    AssertionData::Cbor(value) if value == &expected
+                ));
+            }
+            for index in [1, 4] {
+                assert!(matches!(
+                    &builder.definition.assertions[index].data,
+                    AssertionData::Cbor(c2pa_cbor::Value::Bytes(bytes)) if bytes == &[96, 128]
+                ));
+            }
+            for index in [2, 5] {
+                assert!(matches!(
+                    &builder.definition.assertions[index].data,
+                    AssertionData::Json(value) if value == &data
+                ));
+            }
+        };
+        check(&builder);
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        archive.rewind().unwrap();
+        let builder = Builder::default().with_archive(&mut archive).unwrap();
+        check(&builder);
+
+        let definitions = builder.definition.assertions.clone();
+        let reader = json_report_reader(builder);
+        let claims = reader.store.claims();
+        let claim = claims.last().unwrap();
+        for definition in definitions {
+            let stored = claim
+                .claim_assertion_store()
+                .iter()
+                .find(|assertion| assertion.label() == definition.label)
+                .unwrap();
+            match &definition.data {
+                AssertionData::Cbor(expected) => {
+                    assert_eq!(stored.assertion().mime_type(), "application/cbor");
+                    let value: c2pa_cbor::Value =
+                        c2pa_cbor::from_slice(stored.assertion().data()).unwrap();
+                    assert_eq!(&value, expected);
+                }
+                AssertionData::Json(expected) => {
+                    assert_eq!(stored.assertion().mime_type(), "application/json");
+                    assert_eq!(
+                        &serde_json::from_slice::<serde_json::Value>(stored.assertion().data())
+                            .unwrap(),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn json_reports_preserve_numeric_arrays() {
+        let data = json!({
+            "values": [96, 384],
+            "hash": [0, 255],
+            "empty": [],
+            "negative": [-1, -256],
+            "fractional": [1.5, 2.5],
+            "large": [u32::MAX],
+            "nested": [[96, 384], {"values": [0, 255]}]
+        });
+        let mut builder = Builder::default()
+            .with_definition(
+                json!({"assertions": [
+                    {"label": "org.example.nested", "data": data},
+                    {"label": "org.example.root", "data": [96, 384]},
+                    {"label": "org.example.json", "kind": "Json", "data": data}
+                ]})
+                .to_string(),
+            )
+            .unwrap();
+        builder
+            .add_assertion(
+                "c2pa.assertion.metadata",
+                &AssertionMetadata::new().set_field("values", json!([96, 384])),
+            )
+            .unwrap()
+            .add_assertion(
+                "c2pa.actions",
+                &json!({"actions": [{
+                    "action": "c2pa.created",
+                    "digitalSourceType": DigitalSourceType::Empty,
+                    "parameters": {"values": [96, 384]}
+                }]}),
+            )
+            .unwrap();
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(display["assertions"][0]["data"], data);
+        assert_eq!(display["assertions"][1]["data"], json!([96, 384]));
+        assert_eq!(display["assertions"][2]["data"], data);
+        builder
+            .add_assertion_json("org.example.unsigned", &json!([i64::MAX]))
+            .unwrap();
+
+        let reader = json_report_reader(builder);
+        for (label, expected) in [
+            ("org.example.nested", data.clone()),
+            ("org.example.root", json!([96, 384])),
+            ("org.example.json", data),
+            ("org.example.unsigned", json!([i64::MAX])),
+        ] {
+            let (normal, detailed) = json_report_assertions(&reader, label);
+            assert_eq!(normal, expected, "{label}: normal report");
+            assert_eq!(detailed, expected, "{label}: detailed report");
+            let typed: serde_json::Value = reader
+                .active_manifest()
+                .unwrap()
+                .find_assertion(label)
+                .unwrap();
+            assert_eq!(typed, expected);
+        }
+        let (normal, detailed) = json_report_assertions(&reader, "c2pa.assertion.metadata");
+        assert_eq!(normal["values"], json!([96, 384]));
+        assert_eq!(detailed["values"], json!([96, 384]));
+        let actions = reader
+            .active_manifest()
+            .unwrap()
+            .assertions
+            .iter()
+            .find(|assertion| assertion.label().starts_with("c2pa.actions"))
+            .unwrap();
+        let (normal, detailed) = json_report_assertions(&reader, actions.label());
+        assert_eq!(
+            normal["actions"][0]["parameters"]["values"],
+            json!([96, 384])
+        );
+        assert_eq!(
+            detailed["actions"][0]["parameters"]["values"],
+            json!([96, 384])
+        );
+    }
+
+    #[test]
+    fn json_reports_preserve_bytes_and_claim_hashes() {
+        #[derive(Serialize)]
+        struct Data {
+            bytes: serde_bytes::ByteBuf,
+            empty: serde_bytes::ByteBuf,
+            nested: Vec<serde_bytes::ByteBuf>,
+            values: Vec<u64>,
+        }
+        let mut builder = Builder::default();
+        builder
+            .add_assertion(
+                "org.example.bytes",
+                &Data {
+                    bytes: serde_bytes::ByteBuf::from(vec![96, 128]),
+                    empty: serde_bytes::ByteBuf::new(),
+                    nested: vec![
+                        serde_bytes::ByteBuf::from(vec![0, 255]),
+                        serde_bytes::ByteBuf::new(),
+                    ],
+                    values: vec![0, 255],
+                },
+            )
+            .unwrap()
+            .add_assertion(
+                "org.example.root",
+                &serde_bytes::ByteBuf::from(vec![96, 128]),
+            )
+            .unwrap();
+        let expected = json!({
+            "bytes": "b64'YIA='",
+            "empty": "b64''",
+            "nested": ["b64'AP8='", "b64''"],
+            "values": [0, 255]
+        });
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(display["assertions"][0]["data"], expected);
+        assert_eq!(display["assertions"][1]["data"], json!("b64'YIA='"));
+        let serialized = serde_json::to_value(&builder).unwrap();
+        assert_eq!(
+            serialized["assertions"][0]["data"]["bytes"],
+            json!([96, 128])
+        );
+        assert_eq!(
+            serialized["assertions"][0]["data"]["values"],
+            json!([0, 255])
+        );
+        let reader = json_report_reader(builder);
+        let (normal, detailed) = json_report_assertions(&reader, "org.example.bytes");
+        assert_eq!(normal, expected);
+        assert_eq!(detailed, expected);
+        let (normal, detailed) = json_report_assertions(&reader, "org.example.root");
+        assert_eq!(normal, json!("b64'YIA='"));
+        assert_eq!(detailed, json!("b64'YIA='"));
+
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json()).unwrap();
+        let claims = reader.store.claims();
+        let claim = claims.last().unwrap();
+        let references = detailed["manifests"][claim.label()]["claim"]["created_assertions"]
+            .as_array()
+            .unwrap();
+        assert!(!references.is_empty());
+        for reference in references {
+            let original = claim
+                .assertions()
+                .iter()
+                .find(|assertion| reference["url"] == assertion.url())
+                .unwrap();
+            assert_eq!(
+                reference["hash"],
+                json!(crate::crypto::base64::encode_b64_wrapped(&original.hash()))
+            );
+        }
+    }
+
+    #[test]
+    fn json_reports_preserve_metadata_references() {
+        let metadata = json!({
+            "reference": {
+                "url": "https://example.test/assertion",
+                "alg": "sha256",
+                "hash": [96, 128]
+            },
+            "values": [96, 384]
+        });
+        let mut builder = Builder::default()
+            .with_definition(
+                json!({
+                    "metadata": [metadata],
+                    "ingredients": [{
+                        "title": "source",
+                        "format": "image/jpeg",
+                        "metadata": metadata
+                    }]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder
+            .add_assertion(
+                "c2pa.assertion.metadata",
+                &serde_json::from_value::<AssertionMetadata>(metadata.clone()).unwrap(),
+            )
+            .unwrap();
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(
+            display["metadata"][0]["reference"]["hash"],
+            json!("b64'YIA='")
+        );
+        assert_eq!(
+            display["ingredients"][0]["metadata"]["reference"]["hash"],
+            json!("b64'YIA='")
+        );
+        assert_eq!(display["metadata"][0]["values"], json!([96, 384]));
+        let reader = json_report_reader(builder);
+        let (normal, detailed) = json_report_assertions(&reader, "c2pa.assertion.metadata");
+        assert_eq!(normal["reference"]["hash"], json!("b64'YIA='"));
+        assert_eq!(detailed["reference"]["hash"], json!("b64'YIA='"));
+
+        let mut serialized = serde_json::to_value(&reader).unwrap();
+        let active = serialized["active_manifest"].as_str().unwrap().to_owned();
+        serialized["manifests"][&active]["metadata"] = json!([metadata]);
+        serialized["manifests"][&active]["ingredients"][0]["metadata"] = metadata.clone();
+        let reader: Reader = serde_json::from_value(serialized).unwrap();
+        let normal: serde_json::Value =
+            serde_json::from_str(&reader.json_checked().unwrap()).unwrap();
+        let active = normal["active_manifest"].as_str().unwrap();
+        let manifest = &normal["manifests"][active];
+        assert_eq!(
+            manifest["metadata"][0]["reference"]["hash"],
+            json!("b64'YIA='")
+        );
+        assert_eq!(
+            manifest["ingredients"][0]["metadata"]["reference"]["hash"],
+            json!("b64'YIA='")
+        );
+        assert_eq!(manifest["metadata"][0]["values"], json!([96, 384]));
+        builder = Builder::default()
+            .with_definition(
+                json!({"claim_generator_info": [{
+                    "name": "test",
+                    "icon": metadata["reference"]
+                }]})
+                .to_string(),
+            )
+            .unwrap();
+        let display: serde_json::Value = serde_json::from_str(&builder.to_string()).unwrap();
+        assert_eq!(
+            display["claim_generator_info"][0]["icon"]["hash"],
+            json!("b64'YIA='")
+        );
+    }
 
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]
@@ -5487,6 +5856,134 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    fn sign_and_read_actions(builder: &mut Builder) -> Actions {
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "{:?}",
+            reader.validation_status()
+        );
+
+        reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap()
+    }
+
+    fn assert_resolved_icon(icon: Option<&UriOrResource>) {
+        // The reader may present a resolved icon as a resource ref to the embedded assertion.
+        let url = match icon.expect("icon missing") {
+            UriOrResource::HashedUri(uri) => uri.url(),
+            UriOrResource::ResourceRef(resource) => resource.identifier.clone(),
+        };
+        assert!(
+            url.contains(labels::ICON),
+            "icon must reference an embedded icon assertion: {icon:?}"
+        );
+    }
+
+    #[test]
+    fn test_builder_resolves_top_level_software_agent_icons() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let definition = json!({
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.created",
+                        "digitalSourceType": DigitalSourceType::Empty.to_string(),
+                        "softwareAgentIndex": 0
+                    }],
+                    "softwareAgents": [{
+                        "name": "TestApp",
+                        "icon": {"format": "image/png", "identifier": "icon.png"}
+                    }]
+                }
+            }]
+        })
+        .to_string();
+
+        let context = Context::new().with_signer(test_signer(SigningAlg::Ps256));
+        let mut builder = Builder::from_context(context)
+            .with_definition(definition.as_str())
+            .unwrap();
+        builder
+            .add_resource("icon.png", Cursor::new(b"png data"))
+            .unwrap();
+
+        let actions = sign_and_read_actions(&mut builder);
+
+        let agents = actions.software_agents().as_ref().unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_resolved_icon(agents[0].icon.as_ref());
+    }
+
+    #[test]
+    fn test_builder_resolves_settings_action_icons() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.actions.auto_created_action]
+                    enabled = true
+                    source_type = (DigitalSourceType::Empty.to_string())
+
+                    [[builder.actions.templates]]
+                    action = (c2pa_action::EDITED)
+                    icon = { format = "image/png", identifier = "icon.png" }
+                    software_agent = { name = "TemplateApp", icon = { format = "image/png", identifier = "icon.png" } }
+
+                    [[builder.actions.actions]]
+                    action = (c2pa_action::EDITED)
+                    software_agent = { name = "ActionApp", icon = { format = "image/png", identifier = "icon.png" } }
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+        let mut builder = Builder::from_context(context);
+        builder
+            .add_resource("icon.png", Cursor::new(b"png data"))
+            .unwrap();
+
+        let actions = sign_and_read_actions(&mut builder);
+
+        let templates = actions.templates().as_ref().unwrap();
+        assert_eq!(templates.len(), 1);
+        assert_resolved_icon(templates[0].icon.as_ref());
+        assert_resolved_icon(templates[0].software_agent.as_ref().unwrap().icon.as_ref());
+
+        let edited = actions
+            .actions()
+            .iter()
+            .find(|action| action.action() == c2pa_action::EDITED)
+            .unwrap();
+        let info = match edited.software_agent() {
+            Some(SoftwareAgent::ClaimGeneratorInfo(info)) => Some(info),
+            _ => None,
+        }
+        .expect("expected claim generator info software agent");
+        assert_resolved_icon(info.icon.as_ref());
     }
 
     // Per Gavin's review feedback on #2503: settings-defined actions with no inception step

@@ -117,6 +117,97 @@ End-to-end protection requires the binding or HTTP adapter to enforce a limit
 while receiving the response, before buffering or copying it.
 Increasing it allows correspondingly larger Store allocations.
 
+### Configuring HTTP request timeouts
+
+`core.http_request_timeout_in_ms` sets the total time limit, in **milliseconds**, for
+SDK HTTP requests: remote manifest fetches, OCSP fetches, CAWG `did:web` resolution and
+settings-based remote signing. Time-stamp requests use their own settings (see below).
+The default is **10,000 ms** (10 seconds). The value must be positive; zero does not
+disable the timeout.
+
+For example, to limit each request to two seconds:
+
+```rust
+use c2pa::{Context, Result};
+
+fn main() -> Result<()> {
+    let context = Context::new()
+        .with_settings_value("core.http_request_timeout_in_ms", 2_000u64)?;
+    Ok(())
+}
+```
+
+Native built-in reqwest and ureq resolvers enforce the limit while receiving headers
+and the response body. SDK-managed redirects share the same budget. A remote manifest
+timeout returns `Error::RemoteManifestFetch`.
+
+The limit is added by `Context::resolver()` and `Context::resolver_async()`, so custom
+resolvers must honor the `c2pa::http::RequestTimeout` request extension. C and C++ HTTP
+resolver callbacks receive the remaining limit as `C2paHttpRequest.timeout_ms` (0 means no
+limit) and must apply it to their HTTP client; the SDK cannot interrupt a callback. The
+browser-based reqwest resolver on WASM cannot enforce this timeout. Public
+`SignerSettings::c2pa_signer()` and `SignerSettings::cawg_signer()` calls without a
+`Context` use the default.
+
+This is a per-request limit, not an overall deadline or cancellation mechanism for
+reading an asset.
+
+### Configuring time-stamp requests
+
+A blocking time-stamp request is retried after a transient failure (no answer, a timeout,
+or an HTTP 408, 429, 500, 502, 503 or 504 response), and each attempt has a time limit.
+Three `core` settings control this, independently for each `Context`:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `time_stamp_request_attempts` | `3` | Attempts before the last error is returned; `1` disables retries. Must be at least 1. |
+| `time_stamp_request_timeout_in_ms` | `10000` | Time limit of each attempt, applied by the built-in HTTP resolvers. Must be positive. |
+| `time_stamp_retry_delay_in_ms` | `500` | Pause before the second attempt, doubled before each later one. |
+
+For example, to try a slow time-stamp service once, for up to 30 seconds:
+
+```rust
+use c2pa::{Context, Result};
+
+fn main() -> Result<()> {
+    let context = Context::new()
+        .with_settings_value("core.time_stamp_request_attempts", 1u32)?
+        .with_settings_value("core.time_stamp_request_timeout_in_ms", 30_000u64)?;
+    Ok(())
+}
+```
+
+Equivalent JSON configuration:
+
+```json
+{
+  "core": {
+    "time_stamp_request_attempts": 1,
+    "time_stamp_request_timeout_in_ms": 30000
+  }
+}
+```
+
+Async time-stamp requests are sent once, with the same per-attempt time limit.
+Blocking requests on browser WASM are also sent once because that target cannot
+sleep between attempts. Native and WASI blocking requests honor the retry settings.
+
+Signing passes the caller's `Context` through to the timestamp provider, including custom
+HTTP resolvers and network policy. Redirects share one attempt's timeout budget rather
+than restarting it at each hop. Native reqwest and ureq enforce the timeout while receiving
+headers and the response body. Browser-based reqwest on WASM does not support this timeout;
+other/custom resolvers must enforce the `RequestTimeout` request extension themselves.
+
+### Breaking timestamp API migration
+
+`Signer::send_timestamp_request`, `AsyncSigner::send_timestamp_request`,
+`TimeStampProvider::send_time_stamp_request`, and `AsyncTimeStampProvider::send_time_stamp_request`
+now take `context: &Context` after `message: &[u8]`. Update custom implementations and
+forward this same context when delegating; their dispatch and header/body hooks are unchanged.
+Detached `sign_claim`/`sign_claim_async` now take `&Context` instead of `&Settings`.
+Construct the context with your settings and resolver once and pass it through rather
+than creating a default context inside a timestamp override.
+
 ## Using Context
 
 ### With Reader
@@ -266,7 +357,11 @@ Here's the `Settings` JSON with all default values:
     "backing_store_memory_threshold_in_mb": 512,
     "decode_identity_assertions": true,
     "allowed_network_hosts": null,
-    "max_decompressed_manifest_size_in_mb": 32
+    "max_decompressed_manifest_size_in_mb": 32,
+    "time_stamp_request_attempts": 3,
+    "time_stamp_request_timeout_in_ms": 10000,
+    "time_stamp_retry_delay_in_ms": 500,
+    "http_request_timeout_in_ms": 10000
   },
   "signer": null,
   "trust":{ 
@@ -280,7 +375,8 @@ Here's the `Settings` JSON with all default values:
           "trusted_ica_issuers": null
         }
     ]
-    "trust_config": null
+    "trust_config": null,
+    "use_default_ekus": true
   },
   "verify": {
     "verify_after_reading": true,
@@ -308,6 +404,34 @@ Here's the `Settings` JSON with all default values:
   }
 }
 ```
+
+### OCSP fetch response budget
+
+Sync and async OCSP fetching accept at most **1,000,000 response-body bytes**
+per responder, preserving the existing fetch-byte budget. The SDK ignores
+`Content-Length` when allocating and reading OCSP bodies, including missing,
+malformed, conflicting, or inaccurate lengths. A small body is not rejected
+merely because its advertised length exceeds the budget.
+
+The SDK reads at most **1,000,001 bytes** from each successful HTTP response body
+to detect overflow. It never returns a truncated prefix as a successful response.
+An oversized body is discarded and logged, and fetching can try the next AIA
+responder in order, honoring the progress/cancellation callback before each
+request. If no response can be fetched, existing OCSP-inaccessible reporting and
+fallback to other usable OCSP sources remain in effect; an oversized response
+does not establish certificate status.
+
+Response-vector capacity requests grow only with bytes actually read and never
+exceed **1,000,000 bytes**; the reader also uses an **8192-byte stack buffer**.
+These are per-response SDK bounds, not a bound on allocator overhead or transient
+memory during reallocation. They do not bound buffering performed inside a
+built-in or custom HTTP resolver before returning its body, network framing
+bytes, request count, elapsed time, or OCSP verification work. Resolvers remain
+responsible for their own buffering and may enforce stricter limits.
+
+This is a fixed fetch-side budget, not a new setting or a verification-side
+limit on stapled or certificate-status assertion responses. Verification-side
+resource budgeting is tracked separately in [#3026](https://github.com/contentauth/c2pa-rs/issues/3026).
 
 ## Configuration examples
 
@@ -401,6 +525,75 @@ Here's the `Settings` JSON with all default values:
 ```
 
 ### Production configuration
+
+By default, `trust.use_default_ekus` is `true`: the built-in EKUs, including
+`c2pa-kp-claimSigning`, remain enabled and `trust.trust_config` adds to them.
+To restrict claim signers to a configured set, set `trust.use_default_ekus` to
+`false` and supply the accepted OIDs in `trust.trust_config`. An empty or absent
+configuration with defaults disabled retains legacy emailProtection acceptance;
+it does not enable claimSigning or documentSigning. This includes empty or
+comment-only lists after parsing; an empty list is not a deny-all policy.
+
+Claim signing, timestamping, and OCSP response signing are separate purposes
+([C2PA certificate trust chain requirements](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_certificate_trust_chain)).
+The SDK applies the following role rules in addition to the shared certificate
+profile, certificate validity, cryptographic signature, and chain checks:
+
+| Role | Allowed/required EKUs |
+|---|---|
+| Claim signer | At least one effective configured claim EKU. Built-in claim purposes are emailProtection, documentSigning, Microsoft C2PA signing (`1.3.6.1.4.1.311.76.59.1.9`), and c2pa-kp-claimSigning (`1.3.6.1.4.1.62558.2.1`). Alternate configured purposes remain supported; claimSigning is not universally required. timeStamping and OCSPSigning are always rejected, even when explicitly configured. |
+| TSA | Must contain timeStamping (`1.3.6.1.5.5.7.3.8`) and no other purpose. A claim EKU cannot substitute for it. |
+| Delegated OCSP responder | Must contain OCSPSigning (`1.3.6.1.5.5.7.3.9`) and no other purpose, and satisfy responder authorization. A claim EKU cannot substitute for it. |
+| Issuer-signed OCSP response | Uses the existing issuing-CA authorization path, not the delegated end-entity EKU rule. The issuer must be the authorized issuer of the certificate whose status is being reported. |
+
+`anyExtendedKeyUsage` and mixed-purpose certificates containing timeStamping or
+OCSPSigning remain invalid under the shared profile. These rules apply regardless
+of claim-signing EKU configuration; disabling default EKUs does not disable TSA or
+delegated OCSP mandatory-purpose enforcement.
+
+For manifest anchors, `trust.anchors[].trust_config` adds EKUs to the top-level
+effective set **only for that anchor set**. Both OpenSSL and Rust-native validation
+select eligible anchor sets before building a trusted path: an addition on an
+unrelated anchor cannot authorize the same purpose through another anchor. An
+absent or empty per-anchor list adds nothing. With defaults disabled and no valid
+top-level or per-anchor EKUs, the legacy emailProtection fallback still applies.
+An anchor-specific addition cannot opt specialty certificates into claim signing.
+
+**Compatibility and migration:** earlier SDK versions allowed timeStamping-only
+or OCSPSigning-only certificates to pass the claim-signer EKU check. They now fail
+claim signing and claim validation with `signingCredential.invalid`, including
+when explicitly configured or present in private credential storage. Reissue
+claim-signing credentials with an accepted claim purpose; do not reuse TSA or
+OCSP responder keys. Existing claimSigning, emailProtection, documentSigning,
+Microsoft C2PA signing, and configured alternate-purpose credentials retain their
+EKU acceptance. Per-anchor-only additions now work with Rust-native validation,
+and OpenSSL no longer trusts a chain through an anchor whose effective EKU policy
+excludes the leaf.
+
+Accepting an EKU does not install a trust anchor, make a certificate trusted,
+change private-credential association, or bypass validity or revocation checking.
+CAWG identities use their separate identity policy: documentSigning and interim
+S/MIME policy/cutoff and associated-timestamp rules are unchanged. Claim-role
+exclusions are not imposed globally on CAWG identity certificates or on the
+shared certificate-profile API.
+
+These call sites use an explicit certificate role independently of trust-anchor
+association. The long-term CAWG identity-purpose and post-interim migration policy
+is tracked separately in [#3077](https://github.com/contentauth/c2pa-rs/issues/3077);
+this change does not tighten CAWG acceptance of configured or specialty purposes.
+
+At claim validation, a reported claim-signer EKU rejection produces
+`signingCredential.invalid` without a synthetic `claimSignature.mismatch`;
+genuine cryptographic signature failures still report the mismatch status.
+
+When `verify.verify_timestamp_trust` is enabled, a TSA certificate that fails its
+profile checks (including a missing or incorrect timeStamping EKU) causes the
+timestamp to be rejected with informational `timeStamp.untrusted` diagnostics.
+It does not produce claim-signer `signingCredential.invalid` failures. The claim
+signer is evaluated independently at the current time if no other valid timestamp
+is available; a rejected timestamp cannot rescue an expired signer or establish
+a trusted signing time for CAWG identity assertions. Claim-signature, certificate,
+revocation, and trust failures are still reported independently.
 
 ```json
 {

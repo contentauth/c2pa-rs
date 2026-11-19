@@ -2,7 +2,7 @@
 
 ## Fixtures
 
-All benches load their assets from `sdk/benches/fixtures`, which is not checked into the repo since some
+Asset read/sign benches load their assets from `sdk/benches/fixtures`, which is not checked into the repo since some
 of the generated fixtures are large.
 
 Fixtures are generated with [c2pagen](https://github.com/contentauth/c2pagen). To generate all of them:
@@ -32,4 +32,15 @@ run just that asset's benchmarks, e.g.:
 ```bash
 $ cargo bench --bench sign -- "sign jpeg/small"
 $ cargo bench --bench read -- "read jpeg/small"
+```
+
+## JSON reports
+
+The report benchmarks use the checked-in [CA.jpg](../tests/fixtures/CA.jpg) fixture and a Builder with
+1,000 metadata entries. They do not require generated fixtures. Reader construction and Builder setup
+are outside the timed loops; the benchmarks measure normal and detailed Reader reports and Builder
+JSON formatting.
+
+```bash
+$ cargo bench -p c2pa --bench read --features file_io,fetch_remote_manifests,add_thumbnails -- "json reports"
 ```

@@ -18,6 +18,9 @@
 mod certificate_info;
 pub use certificate_info::CertificateInfo;
 
+mod cawg;
+pub(crate) use cawg::{trusted_cawg_timestamp, trusted_cawg_timestamp_token};
+
 mod certificate_trust;
 
 mod cose_signer;
@@ -29,6 +32,7 @@ pub use certificate_trust_policy::{
 };
 
 mod certificate_profile;
+pub(crate) use certificate_profile::CertificateRole;
 pub use certificate_profile::{
     check_certificate_profile, check_end_entity_certificate_profile, CertificateProfileError,
 };

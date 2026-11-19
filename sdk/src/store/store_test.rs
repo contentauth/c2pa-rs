@@ -34,6 +34,7 @@ use memchr::memmem;
 use serde::Serialize;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
+use x509_parser::extensions::ExtendedKeyUsage;
 
 use super::store_core::MAX_INGREDIENT_DEPTH;
 #[cfg(feature = "file_io")]
@@ -57,13 +58,14 @@ use crate::{
     asset_io::ReadWriteSeek,
     claim::{AssertionStoreJsonFormat, Claim, ClaimAssertion, ClaimAssetData},
     context::Context,
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
     jumbf::{boxes::C2PA_REDACTION_UUID, labels::to_assertion_uri},
     jumbf_io::load_jumbf_from_stream,
-    settings::{Settings, SettingsValidate},
+    settings::{Settings, SettingsValidate, TrustAnchor, TrustListKind},
     status_tracker::{ErrorBehavior, LogItem, StatusTracker},
     store::{InvalidClaimError, Store, StoreValidationInfo},
     utils::{
@@ -281,6 +283,76 @@ fn test_bad_claim_v2_generation() {
     assert!(report.has_error(Error::ValidationRule(
         "only first action can be created or opened".to_string()
     )));
+}
+
+// Manifests signed before resource-reference icons were converted to hashed URIs (or by
+// another producer that wrote them) remain readable, but report `hashedURI.missing` against
+// the containing actions assertion and are therefore Invalid.
+#[test]
+fn test_legacy_resource_ref_icon_reads_as_invalid() {
+    let mut context = Context::new();
+    // Simulate an older SDK that did not reject these icons after signing.
+    context.settings_mut().verify.verify_after_sign = false;
+
+    let (format, mut input_stream, mut output_stream) = create_test_streams("earth_apollo17.jpg");
+    let mut store = Store::from_context(&context);
+
+    let mut claim = Claim::new("legacy", Some("legacy"), 2);
+    claim.add_claim_generator_info(ClaimGeneratorInfo::new("legacy_icon_test"));
+
+    let mut agent = ClaimGeneratorInfo::new("LegacyApp");
+    agent.set_icon(crate::resource_store::ResourceRef::new(
+        "image/png",
+        "icon.png",
+    ));
+    let mut actions = Actions::new()
+        .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+    actions.add_software_agent(agent);
+    let actions_uri = claim.add_assertion(&actions).unwrap().url();
+
+    store.commit_claim(claim).unwrap();
+    store
+        .save_to_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            test_signer(SigningAlg::Ps256).as_ref(),
+            &context,
+        )
+        .unwrap();
+
+    output_stream.rewind().unwrap();
+    let reader = crate::Reader::default()
+        .with_stream(format, &mut output_stream)
+        .unwrap();
+
+    assert_eq!(reader.validation_state(), crate::ValidationState::Invalid);
+
+    let failures = reader
+        .validation_results()
+        .and_then(|results| results.active_manifest())
+        .map(|status| status.failure().to_vec())
+        .unwrap_or_default();
+    let (actions_label, _) = Claim::assertion_label_from_link(&actions_uri);
+    assert!(
+        failures.iter().any(|status| {
+            status.code() == validation_status::HASHED_URI_MISSING
+                && status
+                    .url()
+                    .is_some_and(|url| url.ends_with(&format!("c2pa.assertions/{actions_label}")))
+        }),
+        "{failures:?}"
+    );
+
+    let actions: Actions = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion(Actions::LABEL)
+        .unwrap();
+    assert_eq!(
+        actions.software_agents().as_ref().unwrap()[0].name,
+        "LegacyApp"
+    );
 }
 
 #[test]
@@ -2478,6 +2550,189 @@ fn add_ingredient_assertion_to_claim(
     claim.add_assertion(&actions).unwrap();
 
     Ok(())
+}
+
+#[c2pa_test_async]
+async fn test_redacted_ingredient_signature_binding() {
+    use crate::{
+        hashed_uri::HashedUri,
+        jumbf::labels::to_signature_uri,
+        utils::test::{create_test_store, create_test_store_v1},
+        ValidationResults,
+    };
+
+    let context = Context::new();
+    let signer = test_signer(SigningAlg::Ps256);
+
+    for version in [1, 2] {
+        let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+        let mut store = if version == 1 {
+            create_test_store_v1().unwrap()
+        } else {
+            create_test_store().unwrap()
+        };
+        store
+            .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+        output.rewind().unwrap();
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let store = Store::from_stream(format, &mut output, &mut report, &context).unwrap();
+        let child = store.provenance_claim().unwrap();
+        assert_eq!(child.version(), version);
+        let hashes = store.get_manifest_box_hashes(child);
+
+        for ingredient_version in [1, 2, 3] {
+            for (redacted, manifest_matches, signature_hash, expected_status) in [
+                (
+                    true,
+                    true,
+                    Some(vec![0; hashes.signature_box_hash.len()]),
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH),
+                ),
+                (
+                    true,
+                    true,
+                    Some(hashes.signature_box_hash.clone()),
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_VALIDATED),
+                ),
+                (
+                    true,
+                    true,
+                    None,
+                    Some(validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING),
+                ),
+                (
+                    false,
+                    true,
+                    None,
+                    Some(validation_status::INGREDIENT_MANIFEST_VALIDATED),
+                ),
+                (
+                    false,
+                    false,
+                    None,
+                    Some(validation_status::INGREDIENT_MANIFEST_MISMATCH),
+                ),
+            ] {
+                if ingredient_version < 3 && signature_hash.is_some() {
+                    continue;
+                }
+
+                let expected_status = if ingredient_version < 3 && redacted {
+                    None
+                } else {
+                    expected_status
+                };
+                let mut parent = Claim::new("redaction binding test", Some("test"), 2);
+                parent.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+                let manifest_hash = if manifest_matches {
+                    hashes.manifest_box_hash.clone()
+                } else {
+                    vec![0; hashes.manifest_box_hash.len()]
+                };
+                let manifest = HashedUri::new(
+                    store.provenance_path().unwrap(),
+                    Some(child.alg().to_owned()),
+                    &manifest_hash,
+                );
+                let signature = signature_hash.map(|hash| {
+                    HashedUri::new(
+                        to_signature_uri(child.label()),
+                        Some(child.alg().to_owned()),
+                        &hash,
+                    )
+                });
+                let ingredient = if ingredient_version < 3 {
+                    let mut ingredient = if ingredient_version == 1 {
+                        Ingredient::new("legacy ingredient", format, "test-instance-id", None)
+                    } else {
+                        Ingredient::new_v2("legacy ingredient", format)
+                    };
+                    ingredient.c2pa_manifest = Some(manifest);
+                    ingredient
+                } else {
+                    Ingredient::new_v3(Relationship::ComponentOf)
+                        .set_active_manifests_and_signature_from_hashed_uri(
+                            Some(manifest),
+                            signature,
+                        )
+                        .set_validation_results(Some(ValidationResults::from_store(
+                            &store, &report,
+                        )))
+                };
+                parent.add_assertion(&ingredient).unwrap();
+                let mut svi = StoreValidationInfo::default();
+                if redacted {
+                    svi.redactions
+                        .push(to_assertion_uri(child.label(), labels::SCHEMA_ORG_INTERNAL));
+                }
+
+                for synchronous in [true, false] {
+                    let mut validation_log =
+                        StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                    let mut visited = HashSet::new();
+                    let result = if synchronous {
+                        Store::ingredient_checks(
+                            &store,
+                            &parent,
+                            &svi,
+                            &mut validation_log,
+                            0,
+                            &context,
+                            &mut visited,
+                        )
+                    } else {
+                        Store::ingredient_checks_async(
+                            &store,
+                            &parent,
+                            &svi,
+                            &mut validation_log,
+                            0,
+                            &context,
+                            &mut visited,
+                        )
+                        .await
+                    };
+                    if let Some(expected_status) = expected_status {
+                        assert!(
+                            validation_log.has_status(expected_status),
+                            "ingredient-v{ingredient_version}, Claim-v{version}, \
+                         redacted={redacted}, sync={synchronous}: \
+                         expected {expected_status}, got {result:?}"
+                        );
+                    } else {
+                        for status in [
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING,
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH,
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_VALIDATED,
+                            validation_status::INGREDIENT_MANIFEST_VALIDATED,
+                        ] {
+                            assert!(
+                                !validation_log.has_status(status),
+                                "legacy redacted ingredient must not report {status}"
+                            );
+                        }
+                    }
+
+                    let should_fail = matches!(
+                        expected_status,
+                        Some(
+                            validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH
+                                | validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING
+                                | validation_status::INGREDIENT_MANIFEST_MISMATCH
+                        )
+                    );
+                    assert_eq!(
+                        result.is_err(),
+                        should_fail,
+                        "ingredient-v{ingredient_version}, Claim-v{version}, \
+                     redacted={redacted}, sync={synchronous}, \
+                     expected {expected_status:?}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -5632,12 +5887,13 @@ mod remote_manifest_response_tests {
     use super::*;
     use crate::{
         http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
-        settings::DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
+        settings::{DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS, DEFAULT_MAX_MANIFEST_RESPONSE_SIZE},
     };
 
     const TEST_RESPONSE_SIZE: u64 = 16;
 
     struct Resolver {
+        expected_timeout_in_ms: u64,
         content_length: Option<&'static str>,
         body_length: u64,
         error_after: Option<u64>,
@@ -5685,8 +5941,14 @@ mod remote_manifest_response_tests {
     impl SyncHttpResolver for Resolver {
         fn http_resolve(
             &self,
-            _request: http::Request<Vec<u8>>,
+            request: http::Request<Vec<u8>>,
         ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+            assert_eq!(
+                request.extensions().get::<crate::http::RequestTimeout>(),
+                Some(&crate::http::RequestTimeout(
+                    std::time::Duration::from_millis(self.expected_timeout_in_ms,)
+                ))
+            );
             let mut response = http::Response::builder().status(200);
             if let Some(len) = self.content_length {
                 response = response.header(http::header::CONTENT_LENGTH, len);
@@ -5735,6 +5997,7 @@ mod remote_manifest_response_tests {
     ) -> (Result<Vec<u8>>, usize) {
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let resolver = Arc::new(Resolver {
+            expected_timeout_in_ms: context.settings().core.http_request_timeout_in_ms,
             content_length,
             body_length,
             error_after,
@@ -5760,11 +6023,76 @@ mod remote_manifest_response_tests {
     }
 
     #[c2pa_test_async]
+    async fn test_remote_manifest_request_timeout_reaches_custom_resolvers() {
+        for use_async in [false, true] {
+            for timeout_in_ms in [1, 250, 10_000] {
+                let context = Context::new()
+                    .with_settings_value("core.http_request_timeout_in_ms", timeout_in_ms)
+                    .unwrap();
+                let (result, bytes_read) =
+                    fetch_with_context(context, None, 3, None, use_async).await;
+                assert_eq!(result.unwrap(), b"xxx");
+                assert_eq!(bytes_read, 3);
+            }
+        }
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(feature = "http_ureq", feature = "http_reqwest_blocking")
+    ))]
+    #[test]
+    fn test_remote_manifest_sync_timeout_bounds_headers_and_body() {
+        use std::time::{Duration, Instant};
+
+        for delay_body in [false, true] {
+            let (url, server) = crate::http::tests::slow_server(delay_body);
+            let context = Context::new()
+                .with_settings_value("core.http_request_timeout_in_ms", 100u64)
+                .unwrap();
+            let started = Instant::now();
+            let result = Store::fetch_remote_manifest(&url, &context);
+            let elapsed = started.elapsed();
+            server.join().unwrap();
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(_))),
+                "{result:?}"
+            );
+            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
+            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+        }
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "http_reqwest"))]
+    #[tokio::test]
+    async fn test_remote_manifest_async_timeout_bounds_headers_and_body() {
+        use std::time::{Duration, Instant};
+
+        for delay_body in [false, true] {
+            let (url, server) = crate::http::tests::slow_server(delay_body);
+            let context = Context::new()
+                .with_settings_value("core.http_request_timeout_in_ms", 100u64)
+                .unwrap();
+            let started = Instant::now();
+            let result = Store::fetch_remote_manifest_async(&url, &context).await;
+            let elapsed = started.elapsed();
+            server.join().unwrap();
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(_))),
+                "{result:?}"
+            );
+            assert!(elapsed >= Duration::from_millis(70), "{elapsed:?}");
+            assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+        }
+    }
+
+    #[c2pa_test_async]
     async fn test_remote_manifest_overflow_probe_retries_interrupted() {
         for use_async in [false, true] {
             for body_length in [TEST_RESPONSE_SIZE, TEST_RESPONSE_SIZE + 1] {
                 let bytes_read = Arc::new(AtomicUsize::new(0));
                 let resolver = Arc::new(Resolver {
+                    expected_timeout_in_ms: DEFAULT_HTTP_REQUEST_TIMEOUT_IN_MS,
                     content_length: None,
                     body_length,
                     error_after: None,
@@ -6370,6 +6698,208 @@ fn test_shared_ingredient_inputto_graph_verified_once() {
         validated <= 4 * DEPTH,
         "shared ingredient subtrees must be verified only once"
     );
+}
+
+#[test]
+fn test_from_context_single_eku_certs() {
+    const C2PA_CLAIM_SIGNING: &str = "1.3.6.1.4.1.62558.2.1";
+    const DOCUMENT_SIGNING: &str = "1.3.6.1.5.5.7.3.36";
+    const EMAIL_PROTECTION: &str = "1.3.6.1.5.5.7.3.4";
+
+    fn eku(oid: &str) -> ExtendedKeyUsage<'static> {
+        let mut eku = ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: false,
+            time_stamping: false,
+            ocsp_signing: false,
+            other: Vec::new(),
+        };
+
+        match oid {
+            EMAIL_PROTECTION => eku.email_protection = true,
+            DOCUMENT_SIGNING => eku.other.push(asn1_rs::oid!(1.3.6 .1 .5 .5 .7 .3 .36)),
+            C2PA_CLAIM_SIGNING => eku.other.push(asn1_rs::oid!(1.3.6 .1 .4 .1 .62558 .2 .1)),
+            other => panic!("unhandled OID {other}"),
+        }
+
+        eku
+    }
+
+    let cases = [
+        ("C2PA claim signing", C2PA_CLAIM_SIGNING),
+        ("documentSigning", DOCUMENT_SIGNING),
+        ("emailProtection", EMAIL_PROTECTION),
+    ];
+
+    let defaults = CertificateTrustPolicy::default();
+    for (name, oid) in cases {
+        assert!(
+            defaults.has_allowed_eku(&eku(oid)).is_some(),
+            "{name} ({oid}) should be accepted by the built-in EKU list"
+        );
+    }
+
+    for use_defaults in [false, true] {
+        for configured in [
+            None,
+            Some(""),
+            Some(C2PA_CLAIM_SIGNING),
+            Some(DOCUMENT_SIGNING),
+            Some(EMAIL_PROTECTION),
+        ] {
+            let mut settings = Settings::default();
+            settings.trust.trust_config = configured.map(str::to_owned);
+            settings.trust.anchors = None;
+            settings.trust.use_default_ekus = use_defaults;
+
+            let context = Context::new().with_settings(settings).unwrap();
+            let store = Store::from_context(&context);
+
+            for (name, oid) in cases {
+                let expected = use_defaults
+                    || configured == Some(oid)
+                    || (oid == EMAIL_PROTECTION && configured.unwrap_or_default().is_empty());
+                assert_eq!(
+                    store.ctp.has_allowed_eku(&eku(oid)).is_some(),
+                    expected,
+                    "{name}: defaults={use_defaults}, configured={configured:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_from_context_without_default_ekus() {
+    fn eku(oid: asn1_rs::Oid<'static>) -> ExtendedKeyUsage<'static> {
+        ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: false,
+            time_stamping: false,
+            ocsp_signing: false,
+            other: vec![oid],
+        }
+    }
+
+    let document_signing = asn1_rs::oid!(1.3.6 .1 .5 .5 .7 .3 .36);
+    let c2pa_claim_signing = asn1_rs::oid!(1.3.6 .1 .4 .1 .62558 .2 .1);
+
+    // disabling the built-in EKUs only accepts those configured in `trust_config`
+    let mut settings = Settings::default();
+    settings.trust.trust_config = Some(document_signing.to_string());
+    settings.trust.anchors = None;
+    settings.trust.use_default_ekus = false;
+
+    let context = Context::new().with_settings(settings).unwrap();
+    let store = Store::from_context(&context);
+
+    assert!(store.ctp.has_allowed_eku(&eku(document_signing)).is_some());
+    assert!(store
+        .ctp
+        .has_allowed_eku(&eku(c2pa_claim_signing))
+        .is_none());
+}
+
+#[test]
+fn test_from_context_allowed_list_is_manifest_only() {
+    // C2PA 2.5 13.4.3: only the private credential store, a manifest entry's allowed list,
+    // trusts a claim signer directly.
+    let claim_signer_chain_pem = include_bytes!("../../tests/fixtures/certs/es256.pub");
+    let claim_signer_chain_der =
+        crate::crypto::cert_chain_pem_to_der(claim_signer_chain_pem).unwrap();
+    let allowed_list_with_claim_signer =
+        String::from_utf8(claim_signer_chain_pem.to_vec()).unwrap();
+
+    // The store's only trust entry has the given kind, no anchors, and the claim signer on allow list.
+    let allowed_list_trusts_claim_signer = |kind: TrustListKind| {
+        let mut settings = Settings::default();
+        settings.trust.anchors = Some(vec![TrustAnchor {
+            trust_anchors: String::new(),
+            trust_uri: None,
+            trust_kind: kind,
+            trust_config: None,
+            allowed_list: Some(allowed_list_with_claim_signer.clone()),
+            trusted_ica_issuers: None,
+        }]);
+        let store = Store::from_context(&Context::new().with_settings(settings).unwrap());
+
+        store
+            .ctp
+            .check_certificate_trust_for(
+                Some(TrustAnchorType::Manifest),
+                &claim_signer_chain_der[1..],
+                &claim_signer_chain_der[0],
+                None,
+            )
+            .is_ok()
+    };
+
+    for kind in [
+        TrustListKind::Manifest,
+        TrustListKind::TSA,
+        TrustListKind::CAWG,
+    ] {
+        let expected = match kind {
+            TrustListKind::Manifest => true,
+            TrustListKind::TSA | TrustListKind::CAWG => false,
+        };
+        assert_eq!(
+            allowed_list_trusts_claim_signer(kind.clone()),
+            expected,
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn test_from_context_allowed_list_authorizes_ocsp_responder_for_manifest_only() {
+    // An allowed-list hit is an explicitly trusted responder (RFC 6960 section 3.2 case 2),
+    // which `delegated_response_authorized` checks with an untyped trust check.
+    let responder_pem = include_bytes!("../../tests/fixtures/crypto/ocsp/ocsp_responder.pem");
+    let responder_der = crate::crypto::cert_chain_pem_to_der(responder_pem)
+        .unwrap()
+        .remove(0);
+    let allowed_list_with_responder = String::from_utf8(responder_pem.to_vec()).unwrap();
+
+    for kind in [
+        TrustListKind::Manifest,
+        TrustListKind::TSA,
+        TrustListKind::CAWG,
+    ] {
+        let expected = match kind {
+            TrustListKind::Manifest => true,
+            TrustListKind::TSA | TrustListKind::CAWG => false,
+        };
+
+        // The store's only trust entry has this kind, no anchors, and the responder on allow list.
+        let mut settings = Settings::default();
+        settings.trust.anchors = Some(vec![TrustAnchor {
+            trust_anchors: String::new(),
+            trust_uri: None,
+            trust_kind: kind.clone(),
+            trust_config: None,
+            allowed_list: Some(allowed_list_with_responder.clone()),
+            trusted_ica_issuers: None,
+        }]);
+        let store = Store::from_context(&Context::new().with_settings(settings).unwrap());
+
+        let result = store.ctp.check_certificate_trust(
+            std::slice::from_ref(&responder_der),
+            &responder_der,
+            None,
+        );
+        assert_eq!(
+            matches!(result, Ok((TrustAnchorType::EndEntity, _))),
+            expected,
+            "{kind:?}: {result:?}"
+        );
+    }
 }
 
 #[test]

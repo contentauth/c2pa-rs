@@ -7,6 +7,8 @@ version = 1
 # [trust]
 # # String to trust configuration.
 # trust_config = ""
+# # Whether to accept the built-in C2PA EKUs in addition to those in trust_config.
+# use_default_ekus = true
 # # Path to allowed certificate list (PEM format).
 # allowed_list = ""
 #
