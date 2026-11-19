@@ -411,6 +411,51 @@ fn written_manifests_read_back_with_either_reader() {
     finish(problems);
 }
 
+#[test]
+#[cfg(feature = "pdf")]
+fn pdf_patch_preserves_earlier_revisions() {
+    let adapter = AssetIoAdapter::new("pdf");
+    let (_, mut source) = crate::utils::test::create_test_stream("basic.pdf");
+    let first_store = store(b"first");
+    let mut first_pdf = Cursor::new(Vec::new());
+    adapter
+        .get_writer("pdf")
+        .unwrap()
+        .write_c2pa(&mut source, &mut first_pdf, &first_store)
+        .unwrap();
+
+    let full_store = asset_io::jumbf::extend(&first_store, &store(b"second")).unwrap();
+    let mut second_pdf = Cursor::new(Vec::new());
+    adapter
+        .get_writer("pdf")
+        .unwrap()
+        .write_c2pa(&mut first_pdf, &mut second_pdf, &full_store)
+        .unwrap();
+
+    let finalized = asset_io::jumbf::extend(&first_store, &store(b"final!")).unwrap();
+    adapter
+        .asset_patch_ref()
+        .unwrap()
+        .patch_c2pa(&mut second_pdf, &finalized)
+        .unwrap();
+    assert!(second_pdf.get_ref().starts_with(first_pdf.get_ref()));
+    assert_eq!(
+        adapter.get_reader().read_c2pa(&mut second_pdf).unwrap(),
+        finalized
+    );
+
+    let changed_history = asset_io::jumbf::extend(&store(b"other"), &store(b"final!")).unwrap();
+    let before = second_pdf.get_ref().clone();
+    assert!(matches!(
+        adapter
+            .asset_patch_ref()
+            .unwrap()
+            .patch_c2pa(&mut second_pdf, &changed_history),
+        Err(Error::NotImplemented(_))
+    ));
+    assert_eq!(second_pdf.into_inner(), before);
+}
+
 /// JUMBF that is not a C2PA store survives writing and removing C2PA stores, and is
 /// not mistaken for one.
 #[test]

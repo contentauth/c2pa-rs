@@ -206,6 +206,44 @@ fn c2pa_store_item<'s>(s: &'s Structure, src: &mut dyn ReadSeek) -> Result<Optio
     Ok(found)
 }
 
+/// How a store fills the placeholder in an asset.
+enum Fill<'s> {
+    /// The whole store, which asset-io splits across a PDF's revisions or an ISO
+    /// BMFF `original` and `update`.
+    Store(aio::C2paPatch<'s>),
+    /// The one element with content when several reserve a store.
+    Item(&'s aio::Item),
+}
+
+impl Fill<'_> {
+    fn apply(&self, s: &Structure, out: &mut dyn ReadWriteSeek, store: &[u8]) -> Result<()> {
+        let mut out = out;
+        match self {
+            Fill::Store(patch) => patch.apply(&mut out),
+            Fill::Item(item) => s.patch_exact(&mut out, item, store),
+        }
+        .map_err(err)
+    }
+}
+
+/// How `store` fills the asset's placeholder in place, or `None` if it does not
+/// fit (or would rewrite earlier manifests), so the asset must be written instead.
+fn placeholder_fill<'s>(
+    s: &'s Structure,
+    src: &mut dyn ReadSeek,
+    store: &[u8],
+) -> Result<Option<Fill<'s>>> {
+    let Some(item) = c2pa_store_item(s, &mut *src)? else {
+        return Ok(None);
+    };
+    if s.c2pa_item().is_ok() {
+        let mut src = src;
+        return Ok(s.prepare_c2pa_patch(&mut src, store).ok().map(Fill::Store));
+    }
+    let stored = item.transfer().encode(store).map_err(err)?;
+    Ok((stored.len() as u64 == item.len()).then_some(Fill::Item(item)))
+}
+
 impl C2paReader for AssetIoAdapter {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let mut input = input_stream;
@@ -260,17 +298,14 @@ impl C2paWriter for AssetIoAdapter {
         // final manifest of the same size. Filling the placeholder in place keeps
         // every byte the hash covers where it is, which a rewrite does not promise
         // (a PDF appends a revision instead of replacing the store).
-        if let Some(item) = c2pa_store_item(&s, &mut *input)? {
-            let stored = item.transfer().encode(store_bytes).map_err(err)?;
-            if stored.len() as u64 == item.len() {
-                input.rewind()?;
-                output.rewind()?;
-                std::io::copy(&mut *input, &mut *output)?;
-                // Patching seeks back, which a buffered stream may refuse while it
-                // holds unwritten data.
-                output.flush()?;
-                return s.patch_exact(&mut output, item, store_bytes).map_err(err);
-            }
+        if let Some(fill) = placeholder_fill(&s, &mut *input, store_bytes)? {
+            input.rewind()?;
+            output.rewind()?;
+            std::io::copy(&mut *input, &mut *output)?;
+            // Patching seeks back, which a buffered stream may refuse while it
+            // holds unwritten data.
+            output.flush()?;
+            return fill.apply(&s, &mut output, store_bytes);
         }
 
         let mut updates = Updates::new().set_c2pa(store_bytes.to_vec());
@@ -416,11 +451,18 @@ impl WriteXmp for AssetIoAdapter {
 
 impl AssetPatch for AssetIoAdapter {
     /// Replace the store with one of exactly the same stored length, in place.
+    /// `store_bytes` is the whole store; asset-io patches only the part earlier
+    /// manifests are not in (a PDF's latest revision, an ISO BMFF `update`).
     fn patch_c2pa(&self, stream: &mut dyn ReadWriteSeek, store_bytes: &[u8]) -> Result<()> {
         let mut stream = stream;
         let s = self.parse(&mut *stream)?;
         let item = c2pa_store_item(&s, &mut *stream)?.ok_or(Error::JumbfNotFound)?;
-        s.patch_exact(&mut stream, item, store_bytes).map_err(err)?;
+        if s.c2pa_item().is_ok() {
+            s.patch_c2pa_store(&mut stream, store_bytes)
+        } else {
+            s.patch_exact(&mut stream, item, store_bytes)
+        }
+        .map_err(err)?;
         stream.flush()?;
         Ok(())
     }
