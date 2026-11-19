@@ -15,15 +15,18 @@ use std::time::Duration;
 
 use async_generic::async_generic;
 use bcder::{decode::Constructed, encode::Values};
+use contentauth_pki::timestamp::acquisition::{
+    acquire_with_body, AcquisitionReply, AcquisitionRequest, MAX_RESPONSE_BYTES,
+};
+use contentauth_sans_io_core::{Step, Workflow};
 use http::header;
 
 use crate::{
     context::Context,
     crypto::{
-        asn1::rfc3161::{TimeStampReq, TimeStampResp},
+        asn1::rfc3161::TimeStampReq,
         cose::CertificateTrustPolicy,
         time_stamp::{
-            response::TimeStampResponse,
             verify::{verify_time_stamp, verify_time_stamp_async},
             TimeStampError,
         },
@@ -98,6 +101,7 @@ fn time_stamp_request_http_with_retries(
     #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
     let mut delay = Duration::from_millis(core.time_stamp_retry_delay_in_ms);
     let mut attempt = 1;
+
     loop {
         match time_stamp_request_http(url, headers.clone(), timestamp_request, context) {
             Err(err) if attempt < attempts && is_transient(&err) => {
@@ -106,10 +110,13 @@ fn time_stamp_request_http_with_retries(
                     if !delay.is_zero() {
                         std::thread::sleep(delay);
                     }
+
                     delay = delay.saturating_mul(2);
                 }
+
                 attempt += 1;
             }
+
             result => return result,
         }
     }
@@ -122,6 +129,7 @@ fn is_transient(err: &TimeStampError) -> bool {
         TimeStampError::HttpErrorResponse(status, _) => {
             matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
         }
+
         TimeStampError::HttpConnectionError(_) | TimeStampError::IoError(_) => true,
         TimeStampError::HttpResolverError(
             HttpResolverError::Io(_) | HttpResolverError::Other(_),
@@ -137,83 +145,68 @@ fn time_stamp_request_http(
     timestamp_request: &TimeStampReq,
     context: &Context,
 ) -> Result<Vec<u8>, TimeStampError> {
-    // This function exists to work around a bug in serialization of
-    // TimeStampResp so we just return the data directly.
     use std::io::Read;
 
-    const HTTP_CONTENT_TYPE_REQUEST: &str = "application/timestamp-query";
-    const HTTP_CONTENT_TYPE_RESPONSE: &str = "application/timestamp-reply";
+    let mut body = Vec::new();
 
-    let mut body = Vec::<u8>::new();
     timestamp_request
         .encode_ref()
         .write_encoded(bcder::Mode::Der, &mut body)?;
 
-    let mut request = http::Request::post(url);
+    let mut workflow = acquire_with_body(url, headers.unwrap_or_default(), &body)?;
 
-    if let Some(headers) = headers {
-        for (ref name, ref value) in headers {
-            request = request.header(name.as_str(), value.as_str());
-        }
-    }
+    loop {
+        match workflow.advance()? {
+            Step::Complete => return Ok(workflow.finish()?.into_der()),
+            Step::AwaitHost => {}
 
-    let request = request
-        .header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST)
-        .extension(RequestTimeout(Duration::from_millis(
-            context.settings().core.time_stamp_request_timeout_in_ms,
-        )));
-
-    let response = if _sync {
-        context
-            .resolver()
-            .http_resolve(request.body(body).map_err(HttpResolverError::Http)?)?
-    } else {
-        context
-            .resolver_async()
-            .http_resolve_async(request.body(body).map_err(HttpResolverError::Http)?)
-            .await?
-    };
-    let content_type = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|header| header.to_str().ok());
-
-    if response.status() == 200 && content_type == Some(HTTP_CONTENT_TYPE_RESPONSE) {
-        let len = response
-            .headers()
-            .get(header::CONTENT_LENGTH)
-            .and_then(|content_length| content_length.to_str().ok())
-            .and_then(|content_length| content_length.parse().ok())
-            .unwrap_or(20000);
-        let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
-
-        response
-            .into_body()
-            .take(1000000)
-            .read_to_end(&mut response_bytes)?;
-
-        let res = TimeStampResponse(
-            Constructed::decode(response_bytes.as_ref(), bcder::Mode::Der, |cons| {
-                TimeStampResp::take_from(cons)
-            })
-            .map_err(|e| TimeStampError::DecodeError(e.to_string()))?,
-        );
-
-        // Verify nonce was reflected, if present.
-        if res.is_success() {
-            if let Some(tst_info) = res.tst_info()? {
-                if tst_info.nonce != timestamp_request.nonce {
-                    return Err(TimeStampError::NonceMismatch);
-                }
+            _ => {
+                return Err(TimeStampError::InternalError(
+                    "unexpected timestamp workflow step".into(),
+                ))
             }
         }
 
-        Ok(response_bytes)
-    } else {
-        Err(TimeStampError::HttpErrorResponse(
-            response.status().as_u16(),
-            content_type.map(|content_type| content_type.to_owned()),
-        ))
+        let operation = workflow.outstanding_requests().first().ok_or_else(|| {
+            TimeStampError::InternalError("timestamp workflow has no HTTP request".into())
+        })?;
+
+        let id = operation.id;
+        let AcquisitionRequest::HttpPost(request) = &operation.kind;
+        let mut request = request.clone();
+
+        request
+            .extensions_mut()
+            .insert(RequestTimeout(Duration::from_millis(
+                context.settings().core.time_stamp_request_timeout_in_ms,
+            )));
+
+        let response = if _sync {
+            context.resolver().http_resolve(request)?
+        } else {
+            context.resolver_async().http_resolve_async(request).await?
+        };
+
+        let (parts, body) = response.into_parts();
+
+        let content_type = parts
+            .headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok());
+
+        let mut bytes = Vec::new();
+
+        // Preserve HTTP-error precedence without reading an error body. Never
+        // reserve from Content-Length; one extra byte detects an oversized reply.
+        if parts.status == 200 && content_type == Some("application/timestamp-reply") {
+            body.take(MAX_RESPONSE_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+        }
+
+        workflow.fulfill(
+            id,
+            AcquisitionReply::Http(Ok(http::Response::from_parts(parts, bytes))),
+        )?;
     }
 }
 
@@ -224,7 +217,10 @@ mod tests {
     use std::{
         collections::VecDeque,
         io::{self, Cursor, Read},
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
     };
 
     use async_trait::async_trait;
@@ -246,6 +242,8 @@ mod tests {
         body: Vec<u8>,
         fail_read: bool,
         fail_resolve: bool,
+        bytes_read: Arc<AtomicUsize>,
+        expected_body: Option<Vec<u8>>,
     }
 
     impl FixtureResolver {
@@ -257,6 +255,8 @@ mod tests {
                 body,
                 fail_read: false,
                 fail_resolve: false,
+                bytes_read: Arc::new(AtomicUsize::new(0)),
+                expected_body: None,
             }
         }
 
@@ -268,9 +268,23 @@ mod tests {
     }
 
     struct BrokenReader;
+
     impl Read for BrokenReader {
         fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::other("test read failure"))
+        }
+    }
+
+    struct CountedReader {
+        body: Cursor<Vec<u8>>,
+        bytes_read: Arc<AtomicUsize>,
+    }
+
+    impl Read for CountedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let count = self.body.read(buf)?;
+            self.bytes_read.fetch_add(count, Ordering::SeqCst);
+            Ok(count)
         }
     }
 
@@ -281,22 +295,31 @@ mod tests {
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
             assert_eq!(request.method(), http::Method::POST);
             assert_eq!(request.uri(), "https://tsa.example/");
+
             assert_eq!(
                 request.headers()[header::CONTENT_TYPE],
                 "application/timestamp-query"
             );
+
             assert_eq!(request.headers()["x-test"], "characterization");
+
             assert!(Constructed::decode(
                 request.body().as_slice(),
                 bcder::Mode::Der,
                 TimeStampReq::take_from
             )
             .is_ok());
+
+            if let Some(expected) = &self.expected_body {
+                assert_eq!(request.body(), expected);
+            }
+
             if self.fail_resolve {
                 return Err(HttpResolverError::SyncHttpResolverNotImplemented);
             }
 
             let mut response = Response::builder().status(self.status);
+
             if let Some(value) = self.content_type {
                 response = response.header(header::CONTENT_TYPE, value);
             }
@@ -308,8 +331,12 @@ mod tests {
             let body: Box<dyn Read> = if self.fail_read {
                 Box::new(BrokenReader)
             } else {
-                Box::new(Cursor::new(self.body.clone()))
+                Box::new(CountedReader {
+                    body: Cursor::new(self.body.clone()),
+                    bytes_read: self.bytes_read.clone(),
+                })
             };
+
             Ok(response.body(body).unwrap())
         }
     }
@@ -341,15 +368,20 @@ mod tests {
     #[c2pa_macros::c2pa_test_async]
     async fn status_content_type_decode_and_transport_failures_propagate() {
         let request = request();
+
         for (status, content_type) in [
             (503, Some("application/timestamp-reply")),
+            (201, Some("application/timestamp-reply")),
             (200, Some("application/octet-stream")),
+            (200, Some("application/timestamp-reply; charset=binary")),
             (200, None),
         ] {
             let mut resolver = FixtureResolver::new(Vec::new());
             resolver.status = status;
             resolver.content_type = content_type;
+            resolver.fail_read = true;
             let context = resolver.context();
+
             for result in [
                 time_stamp_request_http("https://tsa.example/", headers(), &request, &context),
                 time_stamp_request_http_async(
@@ -371,6 +403,7 @@ mod tests {
             resolver.fail_read = read;
             resolver.fail_resolve = resolve;
             let context = resolver.context();
+
             for result in [
                 time_stamp_request_http("https://tsa.example/", headers(), &request, &context),
                 time_stamp_request_http_async(
@@ -391,6 +424,7 @@ mod tests {
         }
 
         let context = FixtureResolver::new(Vec::new()).context();
+
         assert!(matches!(
             default_rfc3161_request(
                 "https://tsa.example/",
@@ -401,6 +435,7 @@ mod tests {
             ),
             Err(TimeStampError::InternalError(_))
         ));
+
         assert!(matches!(
             default_rfc3161_request_async(
                 "https://tsa.example/",
@@ -451,20 +486,24 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(request.extensions().get::<RequestTimeout>().copied());
+
             let (status, body) = match self.outcomes.lock().unwrap().pop_front() {
                 Some(Outcome::Unreachable) => {
                     return Err(HttpResolverError::Io(io::Error::from(
                         io::ErrorKind::ConnectionRefused,
                     )))
                 }
+
                 Some(Outcome::Disallowed) => {
                     return Err(HttpResolverError::UriDisallowed {
                         uri: request.uri().to_string(),
                     })
                 }
+
                 Some(Outcome::Status(status)) => (status, Vec::new()),
                 None => (200, response_der(2, None)),
             };
+
             let body: Box<dyn Read> = Box::new(Cursor::new(body));
             Ok(Response::builder()
                 .status(status)
@@ -474,7 +513,7 @@ mod tests {
         }
     }
 
-    /// Sends a request through `resolver` with the given attempts, a 2 s timeout and no pause.
+    /// Sends a request through `resolver` with the given attempts, a 2 s timeout, and no pause.
     fn request_with_retries(
         resolver: &SequenceResolver,
         attempts: u32,
@@ -487,17 +526,21 @@ mod tests {
             .with_settings_value("core.time_stamp_retry_delay_in_ms", 0u64)
             .unwrap()
             .with_resolver(resolver.clone());
+
         time_stamp_request_http_with_retries("https://tsa.example/", None, &request(), &context)
     }
 
     #[test]
     fn transient_failures_are_retried_with_a_timeout_on_each_attempt() {
         let resolver = SequenceResolver::new(vec![Outcome::Unreachable, Outcome::Status(503)]);
+
         assert_eq!(
             request_with_retries(&resolver, 3).unwrap(),
             response_der(2, None)
         );
+
         assert_eq!(resolver.calls(), 3);
+
         assert!(resolver
             .timeouts
             .lock()
@@ -511,10 +554,12 @@ mod tests {
         for attempts in [1, 2, 5] {
             let resolver =
                 SequenceResolver::new((0..attempts + 1).map(|_| Outcome::Status(429)).collect());
+
             assert!(matches!(
                 request_with_retries(&resolver, attempts),
                 Err(TimeStampError::HttpErrorResponse(429, _))
             ));
+
             assert_eq!(resolver.calls(), attempts as usize);
         }
     }
@@ -522,19 +567,23 @@ mod tests {
     #[test]
     fn permanent_failures_are_not_retried() {
         let resolver = SequenceResolver::new(vec![Outcome::Status(400)]);
+
         assert!(matches!(
             request_with_retries(&resolver, 3),
             Err(TimeStampError::HttpErrorResponse(400, _))
         ));
+
         assert_eq!(resolver.calls(), 1);
 
         let resolver = SequenceResolver::new(vec![Outcome::Disallowed]);
+
         assert!(matches!(
             request_with_retries(&resolver, 3),
             Err(TimeStampError::HttpResolverError(
                 HttpResolverError::UriDisallowed { .. }
             ))
         ));
+
         assert_eq!(resolver.calls(), 1);
     }
 
@@ -542,17 +591,176 @@ mod tests {
     async fn non_granted_response_is_preserved_by_transport() {
         let response = response_der(2, None);
         let context = FixtureResolver::new(response.clone()).context();
+
         assert_eq!(
             time_stamp_request_http("https://tsa.example/", headers(), &request(), &context)
                 .unwrap(),
             response
         );
+
         assert_eq!(
             time_stamp_request_http_async("https://tsa.example/", headers(), &request(), &context)
                 .await
                 .unwrap(),
             response
         );
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn bounded_reads_detect_overflow_and_ignore_hostile_content_length() {
+        let request = request();
+
+        for content_length in [
+            Some("0"),
+            Some("18446744073709551615"),
+            Some("invalid"),
+            None,
+        ] {
+            let mut resolver = FixtureResolver::new(vec![0; MAX_RESPONSE_BYTES + 100]);
+            resolver.content_length = content_length;
+            let bytes_read = resolver.bytes_read.clone();
+            let context = resolver.context();
+
+            assert!(matches!(
+                time_stamp_request_http("https://tsa.example/", headers(), &request, &context),
+                Err(TimeStampError::ResponseTooLarge)
+            ));
+
+            assert_eq!(bytes_read.swap(0, Ordering::SeqCst), MAX_RESPONSE_BYTES + 1);
+
+            assert!(matches!(
+                time_stamp_request_http_async(
+                    "https://tsa.example/",
+                    headers(),
+                    &request,
+                    &context
+                )
+                .await,
+                Err(TimeStampError::ResponseTooLarge)
+            ));
+
+            assert_eq!(bytes_read.load(Ordering::SeqCst), MAX_RESPONSE_BYTES + 1);
+        }
+
+        let response = response_der(2, None);
+        let mut resolver = FixtureResolver::new(response.clone());
+        resolver.content_length = Some("18446744073709551615");
+        let context = resolver.context();
+
+        assert_eq!(
+            time_stamp_request_http("https://tsa.example/", headers(), &request, &context).unwrap(),
+            response
+        );
+
+        assert_eq!(
+            time_stamp_request_http_async("https://tsa.example/", headers(), &request, &context)
+                .await
+                .unwrap(),
+            response
+        );
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn exact_response_limit_preserves_the_complete_der() {
+        #[derive(rasn::AsnType, rasn::Encode)]
+        struct Status {
+            status: rasn::types::Integer,
+            text: Vec<rasn::types::Utf8String>,
+        }
+
+        #[derive(rasn::AsnType, rasn::Encode)]
+        struct Response {
+            status: Status,
+        }
+
+        let encode = |length| {
+            rasn::der::encode(&Response {
+                status: Status {
+                    status: 2.into(),
+                    text: vec!["x".repeat(length)],
+                },
+            })
+            .unwrap()
+        };
+
+        let overhead = encode(MAX_RESPONSE_BYTES).len() - MAX_RESPONSE_BYTES;
+        let response = encode(MAX_RESPONSE_BYTES - overhead);
+        assert_eq!(response.len(), MAX_RESPONSE_BYTES);
+        let resolver = FixtureResolver::new(response.clone());
+        let bytes_read = resolver.bytes_read.clone();
+        let context = resolver.context();
+
+        assert_eq!(
+            time_stamp_request_http("https://tsa.example/", headers(), &request(), &context)
+                .unwrap(),
+            response
+        );
+
+        assert_eq!(bytes_read.swap(0, Ordering::SeqCst), MAX_RESPONSE_BYTES);
+
+        assert_eq!(
+            time_stamp_request_http_async("https://tsa.example/", headers(), &request(), &context)
+                .await
+                .unwrap(),
+            response
+        );
+
+        assert_eq!(bytes_read.load(Ordering::SeqCst), MAX_RESPONSE_BYTES);
+        assert!(!is_transient(&TimeStampError::ResponseTooLarge));
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn customized_request_and_typed_http_errors_have_sync_async_parity() {
+        let mut request = request();
+        request.nonce = None;
+        request.cert_req = Some(false);
+        request.req_policy = Some("1.2.3.4".parse().unwrap());
+        let mut body = Vec::new();
+
+        request
+            .encode_ref()
+            .write_encoded(bcder::Mode::Der, &mut body)
+            .unwrap();
+
+        let response = response_der(2, None);
+        let mut resolver = FixtureResolver::new(response.clone());
+        resolver.expected_body = Some(body);
+        let context = resolver.context();
+
+        assert_eq!(
+            time_stamp_request_http("https://tsa.example/", headers(), &request, &context).unwrap(),
+            response
+        );
+
+        assert_eq!(
+            time_stamp_request_http_async("https://tsa.example/", headers(), &request, &context)
+                .await
+                .unwrap(),
+            response
+        );
+
+        for result in [
+            time_stamp_request_http(
+                "https://tsa.example/",
+                Some(vec![("bad\nheader".into(), "x".into())]),
+                &request,
+                &context,
+            ),
+            time_stamp_request_http_async(
+                "https://tsa.example/",
+                Some(vec![("bad\nheader".into(), "x".into())]),
+                &request,
+                &context,
+            )
+            .await,
+        ] {
+            assert!(matches!(
+                result,
+                Err(TimeStampError::HttpResolverError(HttpResolverError::Http(
+                    _
+                )))
+            ));
+        }
     }
 
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
@@ -568,15 +776,18 @@ mod tests {
         let response = response_der(0, Some(&token));
         let mut request = request();
         request.nonce = None;
+
         for content_length in [None, Some("invalid"), Some("0"), Some("4096")] {
             let mut resolver = FixtureResolver::new(response.clone());
             resolver.content_length = content_length;
             let context = resolver.context();
             let mut body = Vec::new();
+
             request
                 .encode_ref()
                 .write_encoded(bcder::Mode::Der, &mut body)
                 .unwrap();
+
             assert_eq!(
                 default_rfc3161_request(
                     "https://tsa.example/",
@@ -588,6 +799,7 @@ mod tests {
                 .unwrap(),
                 response
             );
+
             assert_eq!(
                 default_rfc3161_request_async(
                     "https://tsa.example/",
@@ -601,12 +813,44 @@ mod tests {
                 response
             );
         }
+
+        let mut body = Vec::new();
+
+        request
+            .encode_ref()
+            .write_encoded(bcder::Mode::Der, &mut body)
+            .unwrap();
+
+        let context = FixtureResolver::new(response.clone()).context();
+
+        for result in [
+            default_rfc3161_request(
+                "https://tsa.example/",
+                headers(),
+                &body,
+                b"wrong message",
+                &context,
+            ),
+            default_rfc3161_request_async(
+                "https://tsa.example/",
+                headers(),
+                &body,
+                b"wrong message",
+                &context,
+            )
+            .await,
+        ] {
+            assert!(matches!(result, Err(TimeStampError::InvalidData)));
+        }
+
         request.nonce = Some(bcder::Integer::from(1));
         let context = FixtureResolver::new(response).context();
+
         assert!(matches!(
             time_stamp_request_http("https://tsa.example/", headers(), &request, &context),
             Err(TimeStampError::NonceMismatch)
         ));
+
         assert!(matches!(
             time_stamp_request_http_async("https://tsa.example/", headers(), &request, &context)
                 .await,
