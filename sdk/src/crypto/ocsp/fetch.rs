@@ -14,23 +14,14 @@
 use std::io::{self, Read};
 
 use async_generic::async_generic;
+use contentauth_pki::{ocsp, x509::ParsedCertificate};
 use http::header;
-use rasn::prelude::*;
-use rasn_pkix::Certificate;
-use x509_parser::{
-    der_parser::{oid, Oid},
-    extensions::ParsedExtension,
-    prelude::*,
-};
 
 use crate::{
     context::{Context, ProgressPhase},
     crypto::base64,
     http::HttpResolverError,
 };
-
-const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
-const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);
 
 // Preserve the existing fetch budget; verification-side budgets are tracked in #3026.
 const MAX_OCSP_RESPONSE_SIZE: usize = 1_000_000;
@@ -75,85 +66,13 @@ struct OcspRequestData {
     url: url::Url,
 }
 
-// Common function to extract AIA responders from a certificate
-fn extract_aia_responders(cert: &x509_parser::certificate::X509Certificate) -> Option<Vec<String>> {
-    let em = cert.extensions_map().ok()?;
-
-    let aia_extension = em.get(&AUTHORITY_INFO_ACCESS_OID)?;
-
-    let ParsedExtension::AuthorityInfoAccess(aia) = aia_extension.parsed_extension() else {
-        return None;
-    };
-
-    let mut output = Vec::new();
-
-    for ad in &aia.accessdescs {
-        if let x509_parser::extensions::GeneralName::URI(uri) = ad.access_location {
-            if ad.access_method == AD_OCSP_OID {
-                output.push(uri.to_string())
-            }
-        }
-    }
-    Some(output)
-}
-
-// Common function to build OCSP request data
+// Keep the legacy skip-on-error adapter and transport encoding in the SDK.
 fn build_ocsp_request(
     subject_der: &[u8],
     issuer_der: &[u8],
     responder_url: &str,
 ) -> Option<OcspRequestData> {
-    let subject: Certificate = rasn::der::decode(subject_der).ok()?;
-    let issuer: Certificate = rasn::der::decode(issuer_der).ok()?;
-
-    let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
-    let issuer_key_raw = &issuer
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .as_raw_slice();
-
-    let issuer_name_hash = OctetString::from(crate::crypto::hash::sha1(&issuer_name_raw));
-    let issuer_key_hash = OctetString::from(crate::crypto::hash::sha1(issuer_key_raw));
-    let serial_number = subject.tbs_certificate.serial_number;
-
-    // Build request structures
-    let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?;
-    let alg = rasn::types::ObjectIdentifier::from(sha1_oid);
-
-    let sha1_ai = rasn_pkix::AlgorithmIdentifier {
-        algorithm: alg,
-        parameters: Some(Any::new(rasn::der::encode(&()).ok()?)),
-        // Many OCSP responders expect this to be NULL not None.
-    };
-
-    let req_cert = rasn_ocsp::CertId {
-        hash_algorithm: sha1_ai,
-        issuer_name_hash,
-        issuer_key_hash,
-        serial_number,
-    };
-
-    let ocsp_req = rasn_ocsp::Request {
-        req_cert,
-        single_request_extensions: None,
-    };
-
-    let request_list = vec![ocsp_req];
-
-    let tbs_request = rasn_ocsp::TbsRequest {
-        version: rasn_ocsp::Version::from(0u8),
-        requestor_name: None,
-        request_list,
-        request_extensions: None,
-    };
-
-    let ocsp_request = rasn_ocsp::OcspRequest {
-        tbs_request,
-        optional_signature: None,
-    };
-
-    let request_der = rasn::der::encode(&ocsp_request).ok()?;
+    let request_der = ocsp::request_der(subject_der, issuer_der).ok()?;
     let request_str = base64::encode(&request_der);
     let url = url::Url::parse(responder_url).ok()?;
 
@@ -171,9 +90,11 @@ fn process_ocsp_responders(
     let subject_der = certs.get(subject_index)?;
     let issuer_der = certs.get(subject_index + 1)?;
 
-    let (_rem, cert) = X509Certificate::from_der(subject_der).ok()?;
+    let cert = ParsedCertificate::from_der(subject_der).ok()?;
 
-    let requests: Vec<_> = extract_aia_responders(&cert)
+    // Discovery failures retain the historical missing-responder fallback.
+    let requests: Vec<_> = ocsp::responder_uris(&cert)
+        .ok()
         .into_iter()
         .flat_map(|responders| {
             responders
@@ -258,6 +179,8 @@ mod tests {
     };
 
     use http::{Request, Response};
+    use rasn::types::Any;
+    use rasn_pkix::Certificate;
 
     use super::*;
     use crate::{
@@ -302,6 +225,31 @@ mod tests {
         for index in [0, 1] {
             let requests = process_ocsp_responders(&certs, index).unwrap();
             let der = base64::decode(&requests[0].request_str).unwrap();
+            let legacy = [
+                "MFUwUzBRME8wTTAJBgUrDgMCGgUABBQa2/JoQrMj4aR+VAaKzP+LjQ5Q0QQU+93y+LQMz86adDYZ8PMYY3Z3z3QCFDzSZO5vqh1pggrF+39mB7kE4nJJ",
+                "MFUwUzBRME8wTTAJBgUrDgMCGgUABBSLorQ2YQOuwX6j1DOQK9ar1FYeKQQUIheS55pWuyONZIEvwpjp7qYH3h0CFA6XdpoOK5irLSqBCzozE7Wi23MD",
+            ];
+
+            assert_eq!(der, base64::decode(legacy[index]).unwrap());
+
+            let variants = |der: &[u8]| {
+                let mut trailing = der.to_vec();
+                trailing.extend_from_slice(b"trailing");
+                assert_eq!(&der[..2], &[0x30, 0x82]);
+                let mut nonminimal_length = vec![0x30, 0x83, 0x00];
+                nonminimal_length.extend_from_slice(&der[2..]);
+                [trailing, nonminimal_length]
+            };
+
+            for subject in variants(&certs[index]) {
+                for issuer in variants(&certs[index + 1]) {
+                    let request =
+                        build_ocsp_request(&subject, &issuer, "http://ocsp.test").unwrap();
+
+                    assert_eq!(base64::decode(&request.request_str).unwrap(), der);
+                }
+            }
+
             let request: rasn_ocsp::OcspRequest = rasn::der::decode(&der).unwrap();
             assert!(request.optional_signature.is_none());
             let tbs = request.tbs_request;
@@ -347,6 +295,74 @@ mod tests {
         assert!(process_ocsp_responders(&[vec![0], certs[1].clone()], 0).is_none());
         // The root has no OCSP AIA; supplying an issuer does not invent one.
         assert!(process_ocsp_responders(&[certs[2].clone(), certs[2].clone()], 0).is_none());
+
+        let mut leaf: Certificate = rasn::der::decode(&certs[0]).unwrap();
+        let mut aia = leaf
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|e| e.extn_id.to_string() == "1.3.6.1.5.5.7.1.1")
+            .unwrap()
+            .clone();
+
+        for extensions in [
+            vec![aia.clone(), aia.clone()],
+            {
+                aia.extn_value = vec![0xff].into();
+                vec![aia.clone()]
+            },
+            {
+                aia.extn_value = vec![0x30, 0].into();
+                vec![aia]
+            },
+        ] {
+            leaf.tbs_certificate.extensions = Some(extensions.into());
+            let chain = vec![rasn::der::encode(&leaf).unwrap(), certs[1].clone()];
+            assert!(process_ocsp_responders(&chain, 0).is_none());
+            let (resolver, requests) = resolver(Reply::Bytes);
+            let context = Context::new().with_resolver(resolver);
+            assert!(fetch_ocsp_response(&chain, 0, &context).is_none());
+            assert!(requests.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn invalid_aia_urls_are_skipped_without_reordering_valid_responders() {
+        let mut certs = ca_chain();
+        let mut leaf: Certificate = rasn::der::decode(&certs[0]).unwrap();
+        let extension = leaf
+            .tbs_certificate
+            .extensions
+            .as_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|extension| extension.extn_id.to_string() == "1.3.6.1.5.5.7.1.1")
+            .unwrap();
+
+        let original: Vec<Any> = rasn::der::decode(&extension.extn_value).unwrap();
+        let mut invalid = original[0].as_bytes().to_vec();
+        let uri = b"http://leaf-ocsp.test";
+        let start = invalid.windows(uri.len()).position(|w| w == uri).unwrap();
+        invalid[start..start + uri.len()].fill(b'!');
+        let invalid = Any::new(invalid);
+        extension.extn_value =
+            rasn::der::encode(&vec![invalid.clone(), original[0].clone(), invalid])
+                .unwrap()
+                .into();
+
+        certs[0] = rasn::der::encode(&leaf).unwrap();
+
+        assert_eq!(responder_hosts(&certs, 0), ["leaf-ocsp.test"]);
+
+        let (resolver, requests) = resolver(Reply::Bytes);
+        let context = Context::new().with_resolver(resolver);
+        assert_eq!(
+            fetch_ocsp_response(&certs, 0, &context),
+            Some(vec![1, 2, 3])
+        );
+        assert_eq!(requests.lock().unwrap().len(), 1);
     }
 
     #[derive(Clone, Copy)]
