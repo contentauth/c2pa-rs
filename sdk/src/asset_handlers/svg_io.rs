@@ -125,9 +125,9 @@ impl C2paReader for SvgIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
-        let (xmp, _dtd, _insertion_pt, _metadata_qname) = read_xmp(input_stream).ok()?;
-        xmp
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        let (xmp, _dtd, _insertion_pt, _metadata_qname) = read_xmp(input_stream)?;
+        Ok(xmp)
     }
 }
 
@@ -1328,7 +1328,7 @@ pub mod tests {
 
         let svg_io = test_handler("svg");
 
-        let xmp = svg_io.read_xmp(&mut stream).unwrap();
+        let xmp = svg_io.read_xmp(&mut stream).unwrap().unwrap();
 
         assert!(xmp.starts_with("<?xpacket"));
         assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
@@ -1350,7 +1350,7 @@ pub mod tests {
             .unwrap();
 
         output_stream.rewind().unwrap();
-        let xmp = svg_io.read_xmp(&mut output_stream).unwrap();
+        let xmp = svg_io.read_xmp(&mut output_stream).unwrap().unwrap();
 
         assert!(xmp.starts_with("<?xpacket"));
         assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
@@ -1373,7 +1373,7 @@ pub mod tests {
             .unwrap();
 
         output_stream.rewind().unwrap();
-        let xmp = svg_io.read_xmp(&mut output_stream).unwrap();
+        let xmp = svg_io.read_xmp(&mut output_stream).unwrap().unwrap();
 
         assert!(xmp.starts_with("<?xpacket"));
         assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
@@ -1396,7 +1396,7 @@ pub mod tests {
             .unwrap();
 
         output_stream.rewind().unwrap();
-        let xmp = svg_io.read_xmp(&mut output_stream).unwrap();
+        let xmp = svg_io.read_xmp(&mut output_stream).unwrap().unwrap();
 
         assert!(xmp.starts_with("<?xpacket"));
         assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));

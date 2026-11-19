@@ -275,11 +275,11 @@ impl C2paReader for AssetIoAdapter {
         }
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
         let mut input = input_stream;
-        let s = self.parse(&mut *input).ok()?;
-        let xmp = s.xmp(&mut input).ok()??;
-        Some(String::from_utf8_lossy(&xmp).into_owned())
+        let s = self.parse(&mut *input)?;
+        let xmp = s.xmp(&mut input).map_err(err)?;
+        Ok(xmp.map(|xmp| String::from_utf8_lossy(&xmp).into_owned()))
     }
 }
 

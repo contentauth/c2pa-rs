@@ -36,10 +36,16 @@ pub struct XmpInfo {
 
 impl XmpInfo {
     /// search xmp data for provenance, documentID and instanceID
+    ///
+    /// XMP that can't be read is treated as absent, so a malformed asset still
+    /// signs and reads as it does without XMP.
     pub fn from_source(source: &mut dyn ReadSeek, format: &str) -> Self {
         let xmp = get_cailoader_handler(format).and_then(|cai_loader| {
-            // read xmp if available
-            cai_loader.read_xmp(source)
+            cai_loader
+                .read_xmp(source)
+                .inspect_err(|e| log::warn!("could not read XMP from {format} asset: {e}"))
+                .ok()
+                .flatten()
         });
 
         // todo: do this in one pass through XMP
@@ -482,6 +488,7 @@ mod tests {
             .get_reader()
             .read_xmp(&mut source_stream)
             .unwrap()
+            .unwrap()
             .len();
         source_stream.set_position(0);
 
@@ -495,6 +502,7 @@ mod tests {
         let read_xmp = assetio_handler
             .get_reader()
             .read_xmp(&mut output_stream)
+            .unwrap()
             .unwrap();
 
         output_stream.set_position(0);

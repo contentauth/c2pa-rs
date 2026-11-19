@@ -44,23 +44,26 @@ impl C2paReader for GifIO {
             .ok_or(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
-        let mut bytes = self
-            .find_xmp_block(input_stream)
-            .ok()?
-            .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())?;
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        let Some(mut bytes) = self
+            .find_xmp_block(input_stream)?
+            .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())
+        else {
+            return Ok(None);
+        };
+        let malformed = || Error::InvalidAsset("GIF XMP block has an invalid trailer".to_string());
 
         // The XMP magic trailer is exactly 257 bytes. A block shorter than that
         // cannot carry a valid trailer; reject it rather than underflowing the
         // usize subtraction below (panic in debug, wrap-to-MAX in release).
         if bytes.len() < XMP_MAGIC_TRAILER_LEN {
-            return None;
+            return Err(malformed());
         }
 
         // TODO: this should be validated on construction
         if let Some(byte) = bytes.get(bytes.len() - XMP_MAGIC_TRAILER_LEN) {
             if *byte != 1 {
-                return None;
+                return Err(malformed());
             }
         }
         for (i, byte) in bytes
@@ -70,12 +73,14 @@ impl C2paReader for GifIO {
             .enumerate()
         {
             if *byte != i as u8 {
-                return None;
+                return Err(malformed());
             }
         }
 
         bytes.truncate(bytes.len() - XMP_MAGIC_TRAILER_LEN);
-        String::from_utf8(bytes).ok()
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| Error::InvalidAsset("GIF XMP is not valid UTF-8".to_string()))
     }
 }
 
@@ -1582,8 +1587,10 @@ mod tests {
         data.push(0x3b);
 
         let mut stream = Cursor::new(data);
-        // Must return None, must not panic.
-        assert_eq!(gif_io.read_xmp(&mut stream), None);
+        // A block too short for the XMP trailer is malformed: it must not panic or yield XMP.
+        // The legacy handler reports it as an error; asset-io does not take it as XMP.
+        let r = gif_io.read_xmp(&mut stream);
+        assert!(!matches!(r, Ok(Some(_))), "{r:?}");
     }
 
     #[test]
@@ -1592,12 +1599,12 @@ mod tests {
 
         let gif_io = test_handler("gif");
 
-        assert_eq!(gif_io.read_xmp(&mut stream), None);
+        assert_eq!(gif_io.read_xmp(&mut stream)?, None);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
         gif_io.write_remote_manifest_url(&mut stream, &mut output_stream1, "Test")?;
 
-        let xmp = gif_io.read_xmp(&mut output_stream1).unwrap();
+        let xmp = gif_io.read_xmp(&mut output_stream1).unwrap().unwrap();
         let p = extract_provenance(&xmp).unwrap();
         assert_eq!(&p, "Test");
 

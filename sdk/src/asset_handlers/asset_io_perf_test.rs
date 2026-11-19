@@ -101,7 +101,7 @@ fn op_read_c2pa(h: &dyn AssetIO, c: &Case, f: bool, _: &[u8]) -> bool {
 
 fn op_read_xmp(h: &dyn AssetIO, c: &Case, f: bool, _: &[u8]) -> bool {
     let mut s = open(c, f);
-    black_box(h.get_reader().read_xmp(&mut *s).is_some());
+    black_box(h.get_reader().read_xmp(&mut *s).unwrap().is_some());
     true
 }
 
@@ -182,7 +182,7 @@ fn verify_workflow_output(
     );
     output.rewind()?;
     anyhow::ensure!(
-        h.get_reader().read_xmp(output).is_some(),
+        h.get_reader().read_xmp(output).unwrap().is_some(),
         "XMP was lost while updating the manifest"
     );
     Ok(())
@@ -261,6 +261,7 @@ fn prepare_workflow_seed(
 ) -> anyhow::Result<Option<Vec<u8>>> {
     if h.get_reader()
         .read_xmp(&mut Cursor::new(original))
+        .unwrap()
         .is_none()
     {
         return Ok(None);

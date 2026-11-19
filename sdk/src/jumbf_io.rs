@@ -444,7 +444,11 @@ pub mod tests {
             .write_remote_manifest_url(reader, &mut writer, REMOTE_URL)
             .unwrap();
         writer.set_position(0);
-        let xmp = asset_handler.get_reader().read_xmp(&mut writer).unwrap();
+        let xmp = asset_handler
+            .get_reader()
+            .read_xmp(&mut writer)
+            .unwrap()
+            .unwrap();
         let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
         assert_eq!(loaded, REMOTE_URL.to_string());
 

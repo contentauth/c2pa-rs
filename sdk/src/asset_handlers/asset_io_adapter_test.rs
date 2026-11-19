@@ -193,11 +193,19 @@ fn reads_agree() {
             old.get_reader().read_xmp(&mut Cursor::new(&bytes)),
             new.get_reader().read_xmp(&mut Cursor::new(&bytes)),
         );
-        if ox != nx {
+        if ox.as_ref().ok() != nx.as_ref().ok() {
+            fn len(
+                x: &crate::Result<Option<String>>,
+            ) -> std::result::Result<Option<usize>, String> {
+                match x {
+                    Ok(s) => Ok(s.as_ref().map(String::len)),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
             problems.push(format!(
                 "{name} read_xmp: old {:?}, new {:?}",
-                ox.map(|s| s.len()),
-                nx.map(|s| s.len())
+                len(&ox),
+                len(&nx)
             ));
         }
     }

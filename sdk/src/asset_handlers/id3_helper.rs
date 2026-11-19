@@ -536,7 +536,7 @@ pub(crate) mod test_helpers {
     ) {
         let reader = handler.get_reader();
         let mut stream = std::fs::File::open(fixture).unwrap();
-        assert_eq!(reader.read_xmp(&mut stream), None);
+        assert_eq!(reader.read_xmp(&mut stream).unwrap(), None);
         stream.rewind().unwrap();
 
         let mut output = Cursor::new(Vec::new());
@@ -544,7 +544,7 @@ pub(crate) mod test_helpers {
             .write_remote_manifest_url(&mut stream, &mut output, "Test")
             .unwrap();
         output.rewind().unwrap();
-        let xmp = reader.read_xmp(&mut output).unwrap();
+        let xmp = reader.read_xmp(&mut output).unwrap().unwrap();
         let p = extract_provenance(&xmp).unwrap();
         assert_eq!(&p, "Test");
     }
@@ -662,7 +662,11 @@ pub(crate) mod test_helpers {
         std::fs::write(tmp, output_stream.into_inner()).unwrap();
 
         let mut f = std::fs::File::open(tmp).unwrap();
-        let xmp = handler.get_reader().read_xmp(&mut f).expect("xmp present");
+        let xmp = handler
+            .get_reader()
+            .read_xmp(&mut f)
+            .unwrap()
+            .expect("xmp present");
         let p = extract_provenance(&xmp).unwrap();
         assert_eq!(&p, "https://example.com/ref");
     }

@@ -162,113 +162,55 @@ impl C2paReader for PngIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, mut input_stream: &mut dyn ReadSeek) -> Option<String> {
-        let ps = get_png_chunk_positions(input_stream).ok()?;
-        let mut xmp_str: Option<String> = None;
+    fn read_xmp(&self, mut input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        let truncated = || Error::InvalidAsset("PNG iTXt chunk is truncated".to_string());
 
-        ps.iter().find(|pcp| {
-            if pcp.name == ITXT_CHUNK {
-                // seek to start of chunk
-                if input_stream.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
-                    // move +8 to get past header
-                    return false;
-                }
-
-                // Track unread bytes in this iTxt chunk. Every consumed field
-                // is subtracted via `checked_sub` so a truncated/malicious
-                // chunk cannot underflow the length used for the final data
-                // read (previously crashed with "attempt to subtract with
-                // overflow" on a crafted ~70-byte PNG).
-                let mut remaining: u32 = pcp.length;
-
-                // parse the iTxt block
-                let (key, consumed) = match read_string(input_stream, remaining) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-                remaining = match remaining.checked_sub(consumed) {
-                    Some(r) => r,
-                    None => return false,
-                };
-
-                if key.is_empty() || key.len() > 79 {
-                    return false;
-                }
-
-                // is this an XMP key
-                if key != XMP_KEY {
-                    return false;
-                }
-
-                // compressed flag + compression method are one byte each;
-                // charge both against `remaining` before reading them.
-                remaining = match remaining.checked_sub(2) {
-                    Some(r) => r,
-                    None => return false,
-                };
-
-                let compressed = match input_stream.read_u8() {
-                    Ok(c) => c != 0,
-                    Err(_) => return false,
-                };
-
-                let _compression_method = match input_stream.read_u8() {
-                    Ok(c) => c != 0,
-                    Err(_) => return false,
-                };
-
-                let (_langtag, consumed) = match read_string(input_stream, remaining) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-                remaining = match remaining.checked_sub(consumed) {
-                    Some(r) => r,
-                    None => return false,
-                };
-
-                let (_transkey, consumed) = match read_string(input_stream, remaining) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-                remaining = match remaining.checked_sub(consumed) {
-                    Some(r) => r,
-                    None => return false,
-                };
-
-                // read iTxt data — bounded by the actual chunk boundary
-                let data = match input_stream.read_to_vec(remaining as u64) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-
-                // convert to string, decompress if needed
-                let val = if compressed {
-                    /*  should not be needed for current XMP
-                    use flate2::read::GzDecoder;
-
-                    let cursor = Cursor::new(data);
-
-                    let mut d = GzDecoder::new(cursor);
-                    let mut s = String::new();
-                    if d.read_to_string(&mut s).is_err() {
-                        return false;
-                    }
-                    s
-                    */
-                    return false;
-                } else {
-                    String::from_utf8_lossy(&data).to_string()
-                };
-
-                xmp_str = Some(val);
-
-                true
-            } else {
-                false
+        for pcp in get_png_chunk_positions(input_stream)? {
+            if pcp.name != ITXT_CHUNK {
+                continue;
             }
-        });
+            // seek to start of chunk, +8 to get past header
+            input_stream.seek(SeekFrom::Start(pcp.start + 8))?;
 
-        xmp_str
+            // Track unread bytes in this iTxt chunk. Every consumed field
+            // is subtracted via `checked_sub` so a truncated/malicious
+            // chunk cannot underflow the length used for the final data
+            // read (previously crashed with "attempt to subtract with
+            // overflow" on a crafted ~70-byte PNG).
+            let mut remaining: u32 = pcp.length;
+
+            // parse the iTxt block
+            let (key, consumed) = read_string(input_stream, remaining)?;
+            remaining = remaining.checked_sub(consumed).ok_or_else(truncated)?;
+
+            // is this an XMP key
+            if key != XMP_KEY {
+                continue;
+            }
+
+            // compressed flag + compression method are one byte each;
+            // charge both against `remaining` before reading them.
+            remaining = remaining.checked_sub(2).ok_or_else(truncated)?;
+            let compressed = input_stream.read_u8()? != 0;
+            let _compression_method = input_stream.read_u8()?;
+
+            let (_langtag, consumed) = read_string(input_stream, remaining)?;
+            remaining = remaining.checked_sub(consumed).ok_or_else(truncated)?;
+
+            let (_transkey, consumed) = read_string(input_stream, remaining)?;
+            remaining = remaining.checked_sub(consumed).ok_or_else(truncated)?;
+
+            // Compressed XMP is not read; look for an uncompressed packet.
+            if compressed {
+                continue;
+            }
+
+            // read iTxt data — bounded by the actual chunk boundary
+            let data = input_stream.read_to_vec(remaining as u64)?;
+            return Ok(Some(String::from_utf8_lossy(&data).to_string()));
+        }
+
+        Ok(None)
     }
 }
 
@@ -732,6 +674,7 @@ pub mod tests {
         let png_io = test_handler("png");
         let xmp = png_io
             .read_xmp(&mut std::fs::File::open(ap).unwrap())
+            .unwrap()
             .unwrap();
 
         // make sure we can parse it
@@ -766,7 +709,7 @@ pub mod tests {
             .unwrap();
 
         output_stream.rewind().unwrap();
-        let new_xmp = png_io.read_xmp(&mut output_stream).unwrap();
+        let new_xmp = png_io.read_xmp(&mut output_stream).unwrap().unwrap();
         // make sure we can parse it
         let provenance = crate::utils::xmp_inmemory_utils::extract_provenance(&new_xmp).unwrap();
 
@@ -1052,7 +995,7 @@ pub mod tests {
         // over-running into CRC/IEND, and finally subtracted the inflated
         // lengths from `pcp.length`, underflowing. Post-fix, `remaining`
         // is 0 after the key read and the `checked_sub(2)` guard for the
-        // compressed/method bytes trips, returning None cleanly.
+        // compressed/method bytes trips, reporting the truncated chunk.
         let itxt_len: u32 = 18;
         data.extend_from_slice(&itxt_len.to_be_bytes());
         data.extend_from_slice(b"iTXt");
@@ -1072,11 +1015,12 @@ pub mod tests {
         // Pre-fix: debug builds panicked with "attempt to subtract with
         // overflow"; release builds performed a wrapped-length read.
         // Post-fix: `checked_sub(2)` on the exhausted `remaining` counter
-        // returns None cleanly, matching the "malformed chunk" contract
-        // used elsewhere in read_xmp.
+        // reports the truncated chunk (legacy handler) instead of reading past it;
+        // asset-io does not take it as XMP.
+        let r = png_io.read_xmp(&mut stream);
         assert!(
-            png_io.read_xmp(&mut stream).is_none(),
-            "malformed iTxt must not yield an XMP string"
+            !matches!(r, Ok(Some(_))),
+            "malformed iTxt must not yield an XMP string: {r:?}"
         );
     }
 
@@ -1113,6 +1057,6 @@ pub mod tests {
 
         let png_io = test_handler("png");
         let mut stream = Cursor::new(data);
-        assert!(png_io.read_xmp(&mut stream).is_none());
+        assert!(png_io.read_xmp(&mut stream).unwrap().is_none());
     }
 }

@@ -74,10 +74,11 @@ fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
 }
 
 // Extract XMP from bytes.
-fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
-    let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)).ok()?;
+fn xmp_from_bytes(asset_bytes: &[u8]) -> Result<Option<String>> {
+    let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes))
+        .map_err(|e| Error::InvalidAsset(format!("JPEG: {e}")))?;
     let mut segs = jpeg.segments_by_marker(markers::APP1);
-    segs.find_map(extract_xmp).map(String::from)
+    Ok(segs.find_map(extract_xmp).map(String::from))
 }
 
 // all cai specific segments
@@ -248,13 +249,11 @@ impl C2paReader for JpegIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
-        match input_stream.read_to_end(&mut buf) {
-            Ok(_) => xmp_from_bytes(&buf),
-            Err(_) => None,
-        }
+        input_stream.read_to_end(&mut buf)?;
+        xmp_from_bytes(&buf)
     }
 }
 
@@ -1268,6 +1267,7 @@ pub mod tests {
         let read_xmp = assetio_handler
             .get_reader()
             .read_xmp(&mut file_reader)
+            .unwrap()
             .unwrap();
 
         assert!(read_xmp.contains(test_msg));
@@ -1296,6 +1296,7 @@ pub mod tests {
         let read_xmp = assetio_handler
             .get_reader()
             .read_xmp(&mut output_stream)
+            .unwrap()
             .unwrap();
 
         output_stream.set_position(0);

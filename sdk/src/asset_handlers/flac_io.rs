@@ -130,12 +130,13 @@ impl C2paReader for FlacIO {
         Err(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
         // XMP is only present when there is an ID3 tag.
-        input_stream.rewind().ok()?;
-        let header = read_header(input_stream).ok()?;
-        header.as_ref()?;
-        id3_helper::read_xmp_from_id3(input_stream).ok()?
+        input_stream.rewind()?;
+        if read_header(input_stream)?.is_none() {
+            return Ok(None);
+        }
+        id3_helper::read_xmp_from_id3(input_stream)
     }
 }
 

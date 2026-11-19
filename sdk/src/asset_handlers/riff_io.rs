@@ -325,27 +325,28 @@ impl C2paReader for RiffIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, mut input_stream: &mut dyn ReadSeek) -> Option<String> {
-        let file_len = stream_len(input_stream).ok()?;
-        let top_level_chunks = Chunk::read(&mut input_stream, 0).ok()?;
+    fn read_xmp(&self, mut input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        let file_len = stream_len(input_stream)?;
+        let top_level_chunks = Chunk::read(&mut input_stream, 0)?;
 
         if top_level_chunks.id() != RIFF_ID {
-            return None;
+            return Err(Error::InvalidAsset("not a RIFF file".to_string()));
         }
 
         for chunk in top_level_chunks.iter(&mut input_stream) {
-            let chunk = chunk.ok()?;
+            let chunk = chunk?;
             if chunk.id() == XMP_CHUNK_ID {
-                let chunk_end = chunk_data_end(&chunk)?;
-                if chunk_end > file_len {
-                    return None;
+                if chunk_data_end(&chunk).is_none_or(|end| end > file_len) {
+                    return Err(Error::InvalidAsset(
+                        "RIFF XMP chunk extends past the end of the file".to_string(),
+                    ));
                 }
-                let output = chunk.read_contents(&mut input_stream).ok()?;
-                return Some(String::from_utf8_lossy(&output).to_string());
+                let output = chunk.read_contents(&mut input_stream)?;
+                return Ok(Some(String::from_utf8_lossy(&output).to_string()));
             }
         }
 
-        None
+        Ok(None)
     }
 }
 
@@ -814,7 +815,7 @@ pub mod tests {
 
         let riff_io = test_handler("webp");
 
-        let xmp = riff_io.read_xmp(&mut reader).unwrap();
+        let xmp = riff_io.read_xmp(&mut reader).unwrap().unwrap();
         println!("XMP: {xmp}");
     }
 
@@ -838,7 +839,7 @@ pub mod tests {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
-                    if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {
+                    if let Ok(Some(xmp)) = riff_io.read_xmp(&mut output_stream) {
                         println!("XMP: {xmp}");
 
                         if let Some(xmp_val) = extract_provenance(&xmp) {
@@ -873,7 +874,7 @@ pub mod tests {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
-                    if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {
+                    if let Ok(Some(xmp)) = riff_io.read_xmp(&mut output_stream) {
                         println!("XMP: {xmp}");
 
                         if let Some(xmp_val) = extract_provenance(&xmp) {
@@ -908,7 +909,7 @@ pub mod tests {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
-                    if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {
+                    if let Ok(Some(xmp)) = riff_io.read_xmp(&mut output_stream) {
                         println!("XMP: {xmp}");
 
                         if let Some(xmp_val) = extract_provenance(&xmp) {

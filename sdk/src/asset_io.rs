@@ -53,8 +53,8 @@
 //!         todo!()
 //!     }
 //!
-//!     fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
-//!         None
+//!     fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+//!         Ok(None)
 //!     }
 //! }
 //!
@@ -179,9 +179,11 @@ pub trait C2paReader: Sync + Send {
     /// more than one is detected.
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>>;
 
-    /// Returns the asset's XMP metadata as a string, or `None` if the format
-    /// doesn't carry XMP or none is present.
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String>;
+    /// Returns the asset's XMP metadata as a string.
+    ///
+    /// Returns `Ok(None)` if the format doesn't carry XMP or none is present, and an
+    /// error if the asset can't be read or its container or XMP block is malformed.
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>>;
 }
 
 /// Writes, locates, and removes the C2PA manifest store in an asset stream.
@@ -672,7 +674,7 @@ impl<T: WriteXmp + C2paReader> RemoteManifestUrl for T {
         remote_manifest_url: &str,
     ) -> Result<()> {
         let current_xmp = self
-            .read_xmp(input_stream)
+            .read_xmp(input_stream)?
             .unwrap_or_else(|| MIN_XMP.to_string());
         let updated_xmp = add_provenance(&current_xmp, remote_manifest_url)?;
         self.write_xmp(input_stream, output_stream, &updated_xmp)
@@ -680,6 +682,8 @@ impl<T: WriteXmp + C2paReader> RemoteManifestUrl for T {
 
     fn read_manifest_url(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         self.read_xmp(input_stream)
+            .ok()
+            .flatten()
             .as_deref()
             .and_then(extract_provenance)
     }
@@ -691,7 +695,7 @@ impl<T: WriteXmp + C2paReader> RemoteManifestUrl for T {
         output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let current_xmp = self
-            .read_xmp(input_stream)
+            .read_xmp(input_stream)?
             .unwrap_or_else(|| MIN_XMP.to_string());
         let updated_xmp = remove_provenance(&current_xmp)?;
         self.write_xmp(input_stream, output_stream, &updated_xmp)
@@ -1332,9 +1336,54 @@ mod tests {
             Ok(self.tag.to_vec())
         }
 
-        fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
-            None
+        fn read_xmp(&self, _: &mut dyn ReadSeek) -> Result<Option<String>> {
+            Ok(None)
         }
+    }
+
+    /// A handler whose existing XMP can't be read.
+    struct UnreadableXmp;
+
+    impl C2paReader for UnreadableXmp {
+        fn read_c2pa(&self, _: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+            Err(Error::JumbfNotFound)
+        }
+
+        fn read_xmp(&self, _: &mut dyn ReadSeek) -> Result<Option<String>> {
+            Err(Error::InvalidAsset("malformed XMP block".to_string()))
+        }
+    }
+
+    impl WriteXmp for UnreadableXmp {
+        fn write_xmp(
+            &self,
+            _: &mut dyn ReadSeek,
+            _: &mut dyn ReadWriteSeek,
+            _: &str,
+        ) -> Result<()> {
+            panic!("unreadable XMP must not be overwritten");
+        }
+    }
+
+    #[test]
+    fn remote_manifest_url_does_not_overwrite_unreadable_xmp() {
+        let mut output = Cursor::new(Vec::new());
+        assert!(matches!(
+            UnreadableXmp.write_remote_manifest_url(
+                &mut Cursor::new(Vec::new()),
+                &mut output,
+                "https://example.com/manifest.c2pa"
+            ),
+            Err(Error::InvalidAsset(_))
+        ));
+        assert!(matches!(
+            UnreadableXmp.remove_remote_manifest_url(&mut Cursor::new(Vec::new()), &mut output),
+            Err(Error::InvalidAsset(_))
+        ));
+        assert_eq!(
+            UnreadableXmp.read_manifest_url(&mut Cursor::new(Vec::new())),
+            None
+        );
     }
 
     fn handler(types: &[&'static str], tag: &'static [u8]) -> TestHandler {

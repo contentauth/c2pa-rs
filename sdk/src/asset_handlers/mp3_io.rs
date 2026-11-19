@@ -106,8 +106,8 @@ impl C2paReader for Mp3IO {
         manifest.ok_or(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
-        id3_helper::read_xmp_from_id3(input_stream).ok()?
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        id3_helper::read_xmp_from_id3(input_stream)
     }
 }
 

@@ -415,8 +415,8 @@ impl C2paReader for PlainTextIO {
         Ok(w.payload)
     }
 
-    fn read_xmp(&self, _asset_reader: &mut dyn ReadSeek) -> Option<String> {
-        None
+    fn read_xmp(&self, _asset_reader: &mut dyn ReadSeek) -> Result<Option<String>> {
+        Ok(None)
     }
 }
 

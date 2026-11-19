@@ -116,16 +116,10 @@ impl C2paReader for PdfIO {
         self.read_manifest_bytes(pdf)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
-        if input_stream.rewind().is_err() {
-            return None;
-        }
-
-        let Ok(pdf) = Pdf::from_reader(input_stream) else {
-            return None;
-        };
-
-        self.read_xmp_from_pdf(pdf)
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> crate::Result<Option<String>> {
+        input_stream.rewind()?;
+        let pdf = Pdf::from_reader(input_stream).map_err(|_| PdfReadError)?;
+        Ok(self.read_xmp_from_pdf(pdf))
     }
 }
 
@@ -629,7 +623,7 @@ pub mod tests {
         let mut stream = Cursor::new(source.to_vec());
 
         let pdf_io = test_handler("pdf");
-        assert!(pdf_io.read_xmp(&mut stream).is_some());
+        assert!(pdf_io.read_xmp(&mut stream).unwrap().is_some());
     }
 
     #[test]
@@ -733,7 +727,7 @@ pub mod tests {
             .unwrap();
 
         output.set_position(0);
-        let read_xmp = pdf_io.read_xmp(&mut output).unwrap();
+        let read_xmp = pdf_io.read_xmp(&mut output).unwrap().unwrap();
         assert!(read_xmp.contains(test_url));
 
         output.set_position(0);
@@ -750,7 +744,7 @@ pub mod tests {
 
         let pdf_io = test_handler("pdf");
         let mut input = Cursor::new(source.to_vec());
-        let existing_xmp = pdf_io.read_xmp(&mut input).unwrap();
+        let existing_xmp = pdf_io.read_xmp(&mut input).unwrap().unwrap();
         // Sanity check on the fixture itself: the merge logic only adds a new
         // `rdf:Description` attribute and passes every other event through
         // unchanged, so an existing *child element* is the right thing to
@@ -766,7 +760,7 @@ pub mod tests {
             .unwrap();
 
         output.set_position(0);
-        let read_xmp = pdf_io.read_xmp(&mut output).unwrap();
+        let read_xmp = pdf_io.read_xmp(&mut output).unwrap().unwrap();
         assert!(read_xmp.contains(test_url));
         // The rest of the pre-existing XMP packet must survive the merge, not
         // just get clobbered by a fresh minimal packet.

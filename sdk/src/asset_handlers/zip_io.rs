@@ -155,8 +155,8 @@ impl C2paReader for ZipIO {
         Ok(bytes)
     }
 
-    fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
-        None
+    fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        Ok(None)
     }
 }
 

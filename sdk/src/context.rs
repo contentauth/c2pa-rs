@@ -1807,8 +1807,8 @@ mod tests {
                 Ok(b"custom-cai".to_vec())
             }
 
-            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
-                None
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Result<Option<String>> {
+                Ok(None)
             }
         }
 
@@ -1871,8 +1871,8 @@ mod tests {
                 Ok(b"A".to_vec())
             }
 
-            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
-                None
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Result<Option<String>> {
+                Ok(None)
             }
         }
         impl AssetIO for HandlerA {
@@ -1900,8 +1900,8 @@ mod tests {
                 Ok(b"B".to_vec())
             }
 
-            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
-                None
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Result<Option<String>> {
+                Ok(None)
             }
         }
         impl AssetIO for HandlerB {

@@ -1967,10 +1967,8 @@ impl C2paReader for BmffIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
-        let c2pa_boxes = read_bmff_c2pa_boxes(input_stream).ok()?;
-
-        c2pa_boxes.xmp
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        Ok(read_bmff_c2pa_boxes(input_stream)?.xmp)
     }
 }
 
@@ -3244,13 +3242,16 @@ pub mod tests {
             let mut output = Cursor::new(Vec::new());
             bmff.write_xmp(&mut source, &mut output, "test xmp")
                 .unwrap();
-            assert_eq!(bmff.read_xmp(&mut output).unwrap(), "test xmp");
+            assert_eq!(bmff.read_xmp(&mut output).unwrap().unwrap(), "test xmp");
             assert_mov_samples_equal(&mut source, &mut output);
 
             let mut replaced = Cursor::new(Vec::new());
             bmff.write_xmp(&mut output, &mut replaced, "replacement xmp")
                 .unwrap();
-            assert_eq!(bmff.read_xmp(&mut replaced).unwrap(), "replacement xmp");
+            assert_eq!(
+                bmff.read_xmp(&mut replaced).unwrap().unwrap(),
+                "replacement xmp"
+            );
             assert_mov_samples_equal(&mut source, &mut replaced);
         }
     }
@@ -3320,7 +3321,11 @@ pub mod tests {
         std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         let mut output_stream = std::fs::File::open(&output).unwrap();
-        let xmp = bmff.get_reader().read_xmp(&mut output_stream).unwrap();
+        let xmp = bmff
+            .get_reader()
+            .read_xmp(&mut output_stream)
+            .unwrap()
+            .unwrap();
 
         let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
 

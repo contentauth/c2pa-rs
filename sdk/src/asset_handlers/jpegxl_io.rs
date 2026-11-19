@@ -376,36 +376,39 @@ fn find_jumb_data(reader: &mut dyn ReadSeek) -> Result<Vec<u8>> {
 }
 
 /// Reads XMP data from the JPEG XL container (from `xml ` or `brob`-wrapped `xml ` boxes).
-fn find_xmp_data(reader: &mut dyn ReadSeek) -> Option<String> {
-    let file_len = stream_len(reader).ok()?;
+fn find_xmp_data(reader: &mut dyn ReadSeek) -> Result<Option<String>> {
+    let file_len = stream_len(reader)?;
 
-    if !is_jxl_container(reader).ok()? {
-        return None;
+    // A bare codestream has no boxes, so no XMP.
+    if !is_jxl_container(reader)? {
+        return Ok(None);
     }
 
-    let boxes = parse_all_boxes(reader).ok()?;
+    let boxes = parse_all_boxes(reader)?;
+    let not_utf8 = |_| Error::InvalidAsset("JPEG XL XMP is not valid UTF-8".to_string());
 
     for b in &boxes {
         if b.box_type == BOX_XML {
             let ds = b.data_size(file_len);
-            reader.seek(SeekFrom::Start(b.data_offset())).ok()?;
-            let mut data = safe_vec(ds, Some(0u8)).ok()?;
-            reader.read_exact(&mut data).ok()?;
-            return String::from_utf8(data).ok();
+            reader.seek(SeekFrom::Start(b.data_offset()))?;
+            let mut data = safe_vec(ds, Some(0u8))?;
+            reader.read_exact(&mut data)?;
+            return String::from_utf8(data).map(Some).map_err(not_utf8);
         } else if b.box_type == BOX_BROB {
-            reader.seek(SeekFrom::Start(b.data_offset())).ok()?;
+            reader.seek(SeekFrom::Start(b.data_offset()))?;
             let ds = b.data_size(file_len);
+            // A brob box that can't be decompressed is skipped, as its type is unknown.
             if ds >= 4 {
                 if let Ok((orig_type, decompressed)) = decompress_brob(reader, ds) {
                     if orig_type == BOX_XML {
-                        return String::from_utf8(decompressed).ok();
+                        return String::from_utf8(decompressed).map(Some).map_err(not_utf8);
                     }
                 }
             }
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// Determines the insertion point for a new `jumb` box.
@@ -516,7 +519,7 @@ impl C2paReader for JpegXlIO {
         find_jumb_data(input_stream)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
         find_xmp_data(input_stream)
     }
 }
@@ -1498,7 +1501,7 @@ pub mod tests {
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
-        let xmp = jpegxl_io.read_xmp(&mut cursor);
+        let xmp = jpegxl_io.read_xmp(&mut cursor).unwrap();
         assert_eq!(xmp.unwrap(), xmp_content);
     }
 
@@ -1508,7 +1511,7 @@ pub mod tests {
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
-        let xmp = jpegxl_io.read_xmp(&mut cursor);
+        let xmp = jpegxl_io.read_xmp(&mut cursor).unwrap();
         assert!(xmp.is_none());
     }
 
@@ -1519,7 +1522,7 @@ pub mod tests {
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
-        let xmp = jpegxl_io.read_xmp(&mut cursor);
+        let xmp = jpegxl_io.read_xmp(&mut cursor).unwrap();
         assert_eq!(xmp.unwrap(), xmp_content);
         Ok(())
     }
@@ -1752,7 +1755,7 @@ pub mod tests {
 
         // Read back XMP
         output.rewind().unwrap();
-        let xmp = jpegxl_io.read_xmp(&mut output).unwrap();
+        let xmp = jpegxl_io.read_xmp(&mut output).unwrap().unwrap();
         assert!(xmp.contains("https://example.com/manifest"));
     }
 
@@ -1769,7 +1772,7 @@ pub mod tests {
             .unwrap();
 
         output.rewind().unwrap();
-        let xmp = jpegxl_io.read_xmp(&mut output).unwrap();
+        let xmp = jpegxl_io.read_xmp(&mut output).unwrap().unwrap();
         assert!(xmp.contains("https://example.com/updated"));
     }
 
@@ -1806,7 +1809,7 @@ pub mod tests {
 
         // Verify the XMP content was correctly updated
         output.rewind().unwrap();
-        let xmp = jpegxl_io.read_xmp(&mut output).unwrap();
+        let xmp = jpegxl_io.read_xmp(&mut output).unwrap().unwrap();
         assert!(
             xmp.contains("https://example.com/brob-preserved"),
             "updated provenance URI should be readable from the compressed box"
@@ -2534,9 +2537,9 @@ pub mod tests {
         let mut reader = Cursor::new(container);
         let result = find_xmp_data(&mut reader);
 
-        assert_eq!(
-            result, None,
-            "an oversized declared box size must be rejected, not clamped and recovered"
+        assert!(
+            result.is_err(),
+            "an oversized declared box size must be rejected, not clamped and recovered: {result:?}"
         );
     }
 

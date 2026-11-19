@@ -89,14 +89,14 @@ Use `C2paReader` for stream-based reading:
 ```rust
 pub trait C2paReader: Sync + Send {
     fn read_cai(&self, asset_reader: &mut dyn ReadSeek) -> Result<Vec<u8>>;
-    fn read_xmp(&self, asset_reader: &mut dyn ReadSeek) -> Option<String>;
+    fn read_xmp(&self, asset_reader: &mut dyn ReadSeek) -> Result<Option<String>>;
 }
 ```
 
 | Method | Responsibility |
 |--------|---------------|
 | `read_cai` | Extract the raw C2PA JUMBF manifest store bytes from a stream. Return `Error::JumbfNotFound` if none exists. Return `Error::TooManyManifestStores` if more than one manifest is detected. |
-| `read_xmp` | Extract XMP metadata as a string. Return `None` if the format doesn't contain XMP or if no XMP is present. |
+| `read_xmp` | Extract XMP metadata as a string. Return `Ok(None)` if the format doesn't contain XMP or if no XMP is present, and an error if the asset can't be read or its container or XMP block is malformed. |
 
 #### C2paWriter
 

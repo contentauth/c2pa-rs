@@ -2375,30 +2375,36 @@ where
     Ok(data)
 }
 
-fn get_xmp_data<R>(mut asset_reader: &mut R) -> Option<Vec<u8>>
+fn get_xmp_data<R>(mut asset_reader: &mut R) -> Result<Option<Vec<u8>>>
 where
     R: Read + Seek + ?Sized,
 {
-    let mapped = map_tiff(asset_reader).ok()?;
+    let mapped = map_tiff(asset_reader)?;
     let tiff_tree = mapped.tiff_tree;
     let page_tokens = mapped.page_tokens;
     let e = mapped.endianness;
     let big_tiff = mapped.big_tiff;
 
-    let first_page = page_tokens.first()?;
+    let Some(first_page) = page_tokens.first() else {
+        return Ok(None);
+    };
     let first_ifd = &tiff_tree[*first_page].data;
 
-    let xmp_ifd_entry = first_ifd.get_tag(XMP_TAG)?;
+    let Some(xmp_ifd_entry) = first_ifd.get_tag(XMP_TAG) else {
+        return Ok(None);
+    };
     // make sure the tag type is correct
-    if IFDEntryType::from_u16(xmp_ifd_entry.entry_type)? != IFDEntryType::Byte {
-        return None;
+    if IFDEntryType::from_u16(xmp_ifd_entry.entry_type) != Some(IFDEntryType::Byte) {
+        return Err(Error::InvalidAsset(
+            "TIFF XMP tag does not hold bytes".to_string(),
+        ));
     }
 
     // move read point to start of entry
-    let decoded_offset = decode_offset(xmp_ifd_entry.value_offset, e, big_tiff).ok()?;
-    asset_reader.seek(SeekFrom::Start(decoded_offset)).ok()?;
+    let decoded_offset = decode_offset(xmp_ifd_entry.value_offset, e, big_tiff)?;
+    asset_reader.seek(SeekFrom::Start(decoded_offset))?;
 
-    asset_reader.read_to_vec(xmp_ifd_entry.value_count).ok()
+    Ok(Some(asset_reader.read_to_vec(xmp_ifd_entry.value_count)?))
 }
 
 pub struct TiffIO {}
@@ -2409,9 +2415,13 @@ impl C2paReader for TiffIO {
         Ok(cai_data)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
-        let xmp_data = get_xmp_data(input_stream)?;
-        String::from_utf8(xmp_data).ok()
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        get_xmp_data(input_stream)?
+            .map(|xmp| {
+                String::from_utf8(xmp)
+                    .map_err(|_| Error::InvalidAsset("TIFF XMP is not valid UTF-8".to_string()))
+            })
+            .transpose()
     }
 }
 
@@ -2797,7 +2807,7 @@ pub mod tests {
 
         // read xmp data back
         let mut output_file = std::fs::File::open(&output).unwrap();
-        let loaded = tiff_io.read_xmp(&mut output_file).unwrap();
+        let loaded = tiff_io.read_xmp(&mut output_file).unwrap().unwrap();
 
         assert!(loaded.contains(data2));
 
@@ -3035,7 +3045,7 @@ pub mod tests {
 
         // read data back
         let mut output_stream = std::fs::File::open(&output).unwrap();
-        let xmp = tiff_io.read_xmp(&mut output_stream).unwrap();
+        let xmp = tiff_io.read_xmp(&mut output_stream).unwrap().unwrap();
         let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
 
         assert_eq!(&loaded, data);
@@ -3064,7 +3074,7 @@ pub mod tests {
         std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         let mut with_url_stream = std::fs::File::open(&output).unwrap();
-        let xmp = tiff_io.read_xmp(&mut with_url_stream).unwrap();
+        let xmp = tiff_io.read_xmp(&mut with_url_stream).unwrap().unwrap();
         assert_eq!(
             crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).as_deref(),
             Some(url)
@@ -3076,7 +3086,7 @@ pub mod tests {
         eh.remove_remote_manifest_url(&mut input_stream, &mut stripped_stream)
             .unwrap();
         stripped_stream.rewind().unwrap();
-        let xmp = tiff_io.read_xmp(&mut stripped_stream).unwrap();
+        let xmp = tiff_io.read_xmp(&mut stripped_stream).unwrap().unwrap();
         assert_eq!(
             crate::utils::xmp_inmemory_utils::extract_provenance(&xmp),
             None

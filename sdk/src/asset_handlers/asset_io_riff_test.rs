@@ -110,7 +110,11 @@ fn riff_matches_existing_handler() {
                 b.as_ref().map(Vec::len)
             )),
         }
-        let old_xmp = io.get_reader().read_xmp(&mut Cursor::new(&bytes));
+        let old_xmp = io
+            .get_reader()
+            .read_xmp(&mut Cursor::new(&bytes))
+            .ok()
+            .flatten();
         let new_xmp =
             item(&s, &bytes, ItemKind::Xmp).map(|b| String::from_utf8_lossy(&b).to_string());
         if old_xmp != new_xmp {
@@ -193,7 +197,7 @@ fn riff_matches_existing_handler() {
                 }
                 // Either way, the old reader finds the XMP in what the new side wrote.
                 let read = io.get_reader().read_xmp(&mut Cursor::new(&b));
-                if read.as_deref() != Some(xmp) {
+                if !matches!(&read, Ok(Some(read)) if read == xmp) {
                     problems.push(format!("{name}: old reader cannot read new XMP: {read:?}"));
                 }
             }
