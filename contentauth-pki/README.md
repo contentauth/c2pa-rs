@@ -4,8 +4,8 @@
 workspace crate. The acquisition foundation implements host-driven RFC 3161
 timestamp acquisition. Subsequent layers add deterministic timestamp
 cryptographic verification, X.509 certificate/profile/chain mechanics,
-deterministic OCSP parsing and signature/CertID verification, and certificate-backed
-COSE Sign1 verification. Application roles,
+deterministic OCSP responder discovery, request encoding, and signature/CertID
+verification, and certificate-backed COSE Sign1 verification. Application roles,
 profile policy selection, trust, OCSP acquisition and acceptance, and COSE
 orchestration remain in the C2PA SDK.
 
@@ -78,6 +78,24 @@ SDK policy, configuring resolvers, consulting settings, or emitting C2PA status
 codes.
 
 ## OCSP boundary
+
+`ocsp::responder_uris` accepts an opaque `x509::ParsedCertificate` and returns
+ordered OCSP URI facts, including duplicates and syntactically invalid URLs.
+Missing AIA or no OCSP URI produces an empty vector; duplicate certificate
+extensions and malformed AIA produce typed `DiscoveryError` failures.
+`ocsp::request_der` encodes one unsigned, nonce-free SHA-1 CertID request with
+explicit NULL algorithm parameters. It shares the response-binding core's
+certificate decoding, issuer-name re-encoding, key-bit hashing, and serial
+semantics; it does not enforce issuer linkage or certificate policy.
+`RequestError` distinguishes malformed subject, malformed issuer, and encoding
+failures. Both new error enums are non-exhaustive.
+
+Neither discovery nor request construction establishes response validity,
+responder authorization, trusted revocation status, or acceptance. URL parsing,
+scheme handling, responder ordering/selection, base64 HTTP transport encoding,
+and fetching remain SDK-side. The adapter deliberately preserves its historical
+skip/fallback behavior for malformed inputs, rather than changing reporting or
+resource policy. There is no new HTTP dependency or OCSP workflow.
 
 `ocsp::ParsedOcspResponse::from_der` decodes claims without authenticating them.
 `verify_signature` returns a distinct `SignatureVerifiedOcspResponse`, selecting

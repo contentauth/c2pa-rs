@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Deterministic OCSP parsing, signature verification, and certificate binding.
+//! Deterministic OCSP discovery, request encoding, and response verification.
 //!
 //! Parsed statuses are claims, not acceptance decisions. A verified signature
 //! authenticates the responder and its claims, not its authority, profile,
@@ -28,6 +28,146 @@ use sha1::Digest;
 use thiserror::Error;
 
 use crate::x509::ParsedCertificate;
+
+/// A failure to discover OCSP responder URI facts in a parsed certificate.
+#[derive(Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum DiscoveryError {
+    /// Duplicate extensions make the extension map ambiguous.
+    #[error("Duplicate certificate extensions")]
+    DuplicateExtensions,
+
+    /// The authority information access extension could not be decoded.
+    #[error("Malformed authority information access extension")]
+    MalformedAuthorityInfoAccess,
+}
+
+/// Return OCSP URI facts in certificate order, preserving duplicates.
+///
+/// Missing AIA or AIA without OCSP URIs returns an empty vector. URI syntax,
+/// schemes, responder selection, and transport remain host decisions. Discovery
+/// establishes no certificate authenticity, responder authority, or trust.
+pub fn responder_uris(certificate: &ParsedCertificate<'_>) -> Result<Vec<String>, DiscoveryError> {
+    use x509_parser::{
+        der_parser::oid,
+        extensions::{GeneralName, ParsedExtension},
+    };
+
+    let extensions = certificate
+        .parsed()
+        .extensions_map()
+        .map_err(|_| DiscoveryError::DuplicateExtensions)?;
+
+    let Some(extension) = extensions.get(&oid!(1.3.6 .1 .5 .5 .7 .1 .1)) else {
+        return Ok(Vec::new());
+    };
+
+    let ParsedExtension::AuthorityInfoAccess(aia) = extension.parsed_extension() else {
+        return Err(DiscoveryError::MalformedAuthorityInfoAccess);
+    };
+
+    Ok(aia
+        .accessdescs
+        .iter()
+        .filter_map(|description| match description.access_location {
+            GeneralName::URI(uri)
+                if description.access_method == oid!(1.3.6 .1 .5 .5 .7 .48 .1) =>
+            {
+                Some(uri.to_owned())
+            }
+            _ => None,
+        })
+        .collect())
+}
+
+/// A failure to decode certificate inputs or encode an OCSP request.
+#[derive(Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum RequestError {
+    /// The subject certificate could not be decoded by the request codec.
+    #[error("Malformed OCSP subject certificate")]
+    MalformedSubject,
+
+    /// The issuer certificate could not be decoded by the request codec.
+    #[error("Malformed OCSP issuer certificate")]
+    MalformedIssuer,
+
+    /// The issuer name or request could not be DER encoded.
+    #[error("Could not encode OCSP request")]
+    Encoding,
+}
+
+/// Encode one unsigned, nonce-free OCSP request using a SHA-1 CertID.
+///
+/// The issuer name is DER re-encoded and the issuer key's raw bit-string bytes
+/// are hashed, preserving the SDK request codec's serial and trailing-DER
+/// handling. SHA-1 parameters are explicitly NULL for responder compatibility.
+/// This does not check issuer linkage, certificate authorization, or trust.
+/// Hosts select the certificate pair and own URI/HTTP encoding and all policy;
+/// constructing a request is not evidence of a valid response or status.
+pub fn request_der(subject_der: &[u8], issuer_der: &[u8]) -> Result<Vec<u8>, RequestError> {
+    let inputs = CertificateIdInputs::from_der(subject_der, issuer_der)?;
+    let algorithm = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])
+        .ok_or(RequestError::Encoding)?
+        .to_owned();
+
+    let req_cert = CertId {
+        issuer_name_hash: hash_by_oid(&algorithm, &inputs.issuer_name)
+            .ok_or(RequestError::Encoding)?
+            .into(),
+        issuer_key_hash: hash_by_oid(&algorithm, inputs.issuer_key.as_raw_slice())
+            .ok_or(RequestError::Encoding)?
+            .into(),
+        serial_number: inputs.serial,
+        hash_algorithm: rasn_pkix::AlgorithmIdentifier {
+            algorithm,
+            parameters: Some(rasn::types::Any::new(
+                rasn::der::encode(&()).map_err(|_| RequestError::Encoding)?,
+            )),
+        },
+    };
+
+    let request = rasn_ocsp::OcspRequest {
+        tbs_request: rasn_ocsp::TbsRequest {
+            version: rasn_ocsp::Version::from(0u8),
+            requestor_name: None,
+            request_list: vec![rasn_ocsp::Request {
+                req_cert,
+                single_request_extensions: None,
+            }],
+            request_extensions: None,
+        },
+        optional_signature: None,
+    };
+
+    rasn::der::encode(&request).map_err(|_| RequestError::Encoding)
+}
+
+struct CertificateIdInputs {
+    serial: rasn::types::Integer,
+    issuer_name: Vec<u8>,
+    issuer_key: rasn::types::BitString,
+}
+
+impl CertificateIdInputs {
+    fn from_der(subject_der: &[u8], issuer_der: &[u8]) -> Result<Self, RequestError> {
+        let subject: Certificate =
+            rasn::der::decode(subject_der).map_err(|_| RequestError::MalformedSubject)?;
+
+        let issuer: Certificate =
+            rasn::der::decode(issuer_der).map_err(|_| RequestError::MalformedIssuer)?;
+
+        Ok(Self {
+            serial: subject.tbs_certificate.serial_number,
+            issuer_name: rasn::der::encode(&issuer.tbs_certificate.subject)
+                .map_err(|_| RequestError::Encoding)?,
+            issuer_key: issuer
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key,
+        })
+    }
+}
 
 /// A failure to interpret the response or its signature algorithm.
 #[derive(Debug, Eq, Error, PartialEq)]
@@ -425,30 +565,22 @@ fn cert_id_matches_signer(cert_id: &CertId, signing_chain: &[Vec<u8>]) -> bool {
         return false;
     };
 
-    let Ok(subject) = rasn::der::decode::<Certificate>(subject_der) else {
-        return false;
-    };
-    let Ok(issuer) = rasn::der::decode::<Certificate>(issuer_der) else {
+    let Ok(inputs) = CertificateIdInputs::from_der(subject_der, issuer_der) else {
         return false;
     };
 
-    if cert_id.serial_number != subject.tbs_certificate.serial_number {
+    if cert_id.serial_number != inputs.serial {
         return false;
     }
 
-    let Ok(issuer_name_raw) = rasn::der::encode(&issuer.tbs_certificate.subject) else {
+    let Some(name_hash) = hash_by_oid(&cert_id.hash_algorithm.algorithm, &inputs.issuer_name)
+    else {
         return false;
     };
-    let issuer_key_raw = issuer
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .as_raw_slice();
-
-    let Some(name_hash) = hash_by_oid(&cert_id.hash_algorithm.algorithm, &issuer_name_raw) else {
-        return false;
-    };
-    let Some(key_hash) = hash_by_oid(&cert_id.hash_algorithm.algorithm, issuer_key_raw) else {
+    let Some(key_hash) = hash_by_oid(
+        &cert_id.hash_algorithm.algorithm,
+        inputs.issuer_key.as_raw_slice(),
+    ) else {
         return false;
     };
 
@@ -503,6 +635,160 @@ mod tests {
         .into_iter()
         .map(|pem| pem.into_contents())
         .collect())
+    }
+
+    #[test]
+    fn discovery_preserves_uri_facts_and_rejects_ambiguous_extensions() -> TestResult {
+        let chain = chain()?;
+        let mut certificate: Certificate = rasn::der::decode(&chain[0])?;
+        let extensions = certificate
+            .tbs_certificate
+            .extensions
+            .as_mut()
+            .ok_or("missing extensions")?;
+
+        let index = extensions
+            .iter()
+            .position(|e| e.extn_id.to_string() == "1.3.6.1.5.5.7.1.1")
+            .ok_or("missing AIA")?;
+
+        let mut aia = extensions.remove(index);
+        let without_aia = rasn::der::encode(&certificate)?;
+        assert!(responder_uris(&ParsedCertificate::from_der(&without_aia)?)?.is_empty());
+
+        // OCSP URI, CA-issuer URI, OCSP DNS name, invalid URL, and duplicate URI.
+        let description = |method: u8, tag: u8, value: &[u8]| {
+            let mut der = vec![
+                0x30,
+                (12 + value.len()) as u8,
+                0x06,
+                0x08,
+                0x2b,
+                0x06,
+                0x01,
+                0x05,
+                0x05,
+                0x07,
+                0x30,
+                method,
+                tag,
+                value.len() as u8,
+            ];
+
+            der.extend_from_slice(value);
+            rasn::types::Any::new(der)
+        };
+
+        let entries = vec![
+            description(1, 0x86, b"http://first.test"),
+            description(2, 0x86, b"http://issuer.test"),
+            description(1, 0x82, b"dns.test"),
+            description(1, 0x86, b"not a URL"),
+            description(1, 0x86, b"http://first.test"),
+        ];
+
+        let cases = [
+            (
+                rasn::der::encode(&entries)?,
+                Ok(vec![
+                    "http://first.test".to_owned(),
+                    "not a URL".to_owned(),
+                    "http://first.test".to_owned(),
+                ]),
+            ),
+            (vec![0x30, 0], Ok(vec![])),
+            (rasn::der::encode(&entries[1..3].to_vec())?, Ok(vec![])),
+            (
+                vec![0xff],
+                Err(DiscoveryError::MalformedAuthorityInfoAccess),
+            ),
+        ];
+
+        for (value, expected) in cases {
+            aia.extn_value = value.into();
+            certificate.tbs_certificate.extensions = Some(vec![aia.clone()].into());
+            let mut der = rasn::der::encode(&certificate)?;
+            der.extend_from_slice(b"trailing");
+            let parsed = ParsedCertificate::from_der(&der)?;
+            assert_eq!(responder_uris(&parsed), expected);
+        }
+
+        certificate.tbs_certificate.extensions = Some(vec![aia.clone(), aia].into());
+        let der = rasn::der::encode(&certificate)?;
+        assert_eq!(
+            responder_uris(&ParsedCertificate::from_der(&der)?),
+            Err(DiscoveryError::DuplicateExtensions)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn request_preserves_codec_serial_name_and_raw_key_bits() -> TestResult {
+        let chain = chain()?;
+        let mut subject: Certificate = rasn::der::decode(&chain[0])?;
+        let mut issuer: Certificate = rasn::der::decode(&chain[1])?;
+        subject.tbs_certificate.serial_number = (-129).into();
+        let key = &mut issuer
+            .tbs_certificate
+            .subject_public_key_info
+            .subject_public_key;
+
+        key.pop();
+
+        let expected_name_hash =
+            sha1::Sha1::digest(rasn::der::encode(&issuer.tbs_certificate.subject)?).to_vec();
+
+        let subject_der = rasn::der::encode(&subject)?;
+        let issuer_der = rasn::der::encode(&issuer)?;
+        let decoded_issuer: Certificate = rasn::der::decode(&issuer_der)?;
+        let expected_key_hash = sha1::Sha1::digest(
+            decoded_issuer
+                .tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .as_raw_slice(),
+        )
+        .to_vec();
+
+        let der = request_der(&subject_der, &issuer_der)?;
+        let request: rasn_ocsp::OcspRequest = rasn::der::decode(&der)?;
+        let id = &request.tbs_request.request_list[0].req_cert;
+        assert_eq!(id.serial_number, subject.tbs_certificate.serial_number);
+        assert_eq!(id.issuer_name_hash.as_ref(), expected_name_hash);
+        assert_eq!(id.issuer_key_hash.as_ref(), expected_key_hash);
+        assert_eq!(
+            id.hash_algorithm.parameters.as_ref().map(|p| p.as_bytes()),
+            Some(&[0x05, 0x00][..])
+        );
+
+        assert_eq!(request.tbs_request.request_list.len(), 1);
+
+        assert!(request.tbs_request.request_list[0]
+            .single_request_extensions
+            .is_none());
+
+        assert!(request.tbs_request.request_extensions.is_none());
+        assert!(request.tbs_request.requestor_name.is_none());
+        assert!(request.optional_signature.is_none());
+
+        let mut trailing_subject = subject_der.clone();
+        trailing_subject.extend_from_slice(b"trailing");
+        let mut trailing_issuer = issuer_der.clone();
+        trailing_issuer.extend_from_slice(b"trailing");
+        assert_eq!(request_der(&trailing_subject, &trailing_issuer)?, der);
+
+        assert_eq!(
+            request_der(&[], &issuer_der),
+            Err(RequestError::MalformedSubject)
+        );
+
+        assert_eq!(
+            request_der(&subject_der, &[]),
+            Err(RequestError::MalformedIssuer)
+        );
+
+        Ok(())
     }
 
     #[test]
