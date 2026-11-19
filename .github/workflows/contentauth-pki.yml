@@ -55,4 +55,5 @@ jobs:
         run: |
           cargo test -p c2pa --lib crypto::
       - name: Test SDK crypto with Rust-native cryptography
-        run: cargo test -p c2pa --no-default-features --features rust_native_crypto --lib crypto::
+        run: |
+          cargo test -p c2pa --no-default-features --features rust_native_crypto --lib crypto::
