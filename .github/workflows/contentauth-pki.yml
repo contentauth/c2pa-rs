@@ -25,11 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
-        with:
-          toolchain: stable
-          components: clippy
-          targets: wasm32-unknown-unknown,wasm32-wasip2
+      - name: Install components for the repository-pinned Rust toolchain
+        run: |
+          rustup component add clippy
+          rustup target add wasm32-unknown-unknown wasm32-wasip2
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Test the independent default and compatibility surfaces
         run: |
