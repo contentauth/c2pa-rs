@@ -620,12 +620,27 @@ impl Manifest {
                     manifest.assertions.push(manifest_assertion);
                 } // all other labels that end in .metadata are Metadata assertions
                 label if label.ends_with(".metadata") => {
-                    let metadata = Metadata::from_assertion(assertion)?;
-                    let manifest_assertion = ManifestAssertion::from_assertion(&metadata)?
-                        .set_kind(ManifestAssertionKind::Json)
-                        .set_instance(claim_assertion.instance())
-                        .set_created(created);
-                    manifest.assertions.push(manifest_assertion);
+                    // `Metadata` needs `@context` to map prefixes to IRIs. JSON-LD also
+                    // allows an IRI or an array there, and the assertion may be malformed:
+                    // report such an assertion as it is rather than failing to load the
+                    // manifest.
+                    let manifest_assertion = match Metadata::from_assertion(assertion) {
+                        Ok(metadata) => ManifestAssertion::from_assertion(&metadata)?,
+                        Err(_) => {
+                            ManifestAssertion::new(label.to_owned(), assertion.as_json_object()?)
+                        }
+                    };
+                    // Report the content type the assertion was stored with.
+                    let kind = match assertion.decode_data() {
+                        AssertionData::Json(_) => ManifestAssertionKind::Json,
+                        _ => ManifestAssertionKind::Cbor,
+                    };
+                    manifest.assertions.push(
+                        manifest_assertion
+                            .set_kind(kind)
+                            .set_instance(claim_assertion.instance())
+                            .set_created(created),
+                    );
                 }
                 label
                     if decode_identity_assertions
