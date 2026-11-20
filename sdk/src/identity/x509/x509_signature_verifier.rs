@@ -753,6 +753,15 @@ mod tests {
                 .any(|(c, _)| c == CAWG_X509_CREDENTIAL_UNTRUSTED),
             "{codes:?}"
         );
+        // CAWG Identity 1.3 §7.2: a root of trust was found for the named actor.
+        assert!(
+            codes.iter().any(|(c, _)| c == "cawg.identity.trusted"),
+            "{codes:?}"
+        );
+        assert!(
+            !codes.iter().any(|(c, _)| c == "cawg.identity.well-formed"),
+            "{codes:?}"
+        );
     }
 
     /// The same CA on the C2PA manifest trust list does not make a CAWG X.509
@@ -775,6 +784,15 @@ mod tests {
         );
         assert!(
             !codes.iter().any(|(c, _)| c == CAWG_X509_CREDENTIAL_TRUSTED),
+            "{codes:?}"
+        );
+        // Validated, with no root of trust for the named actor (§7.2).
+        assert!(
+            codes.iter().any(|(c, _)| c == "cawg.identity.well-formed"),
+            "{codes:?}"
+        );
+        assert!(
+            !codes.iter().any(|(c, _)| c == "cawg.identity.trusted"),
             "{codes:?}"
         );
     }
