@@ -13,8 +13,6 @@
 
 use std::io::Cursor;
 
-use id3::Tag;
-
 use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
@@ -93,7 +91,7 @@ impl C2paReader for Mp3IO {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         input_stream.rewind()?;
         let mut manifest: Option<Vec<u8>> = None;
-        if let Ok(tag) = Tag::read_from2(input_stream) {
+        if let Some(tag) = id3_helper::read_id3_tag(&mut *input_stream) {
             for eo in tag.encapsulated_objects() {
                 if id3_helper::is_c2pa_mime_type(&eo.mime_type) {
                     match manifest {
