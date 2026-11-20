@@ -317,6 +317,34 @@ mod tests {
     }
 
     #[test]
+    fn unsigned_request_der_matches_independent_openssl_encoding() {
+        let certs = ca_chain();
+
+        // openssl ocsp -issuer issuer.pem -cert subject.pem -no_nonce -reqout request.der
+        let expected = [
+            concat!(
+                "305530533051304f304d300906052b0e03021a05000414",
+                "1adbf26842b323e1a47e54068accff8b8d0e50d10414",
+                "fbddf2f8b40ccfce9a743619f0f318637677cf740214",
+                "3cd264ee6faa1d69820ac5fb7f6607b904e27249",
+            ),
+            concat!(
+                "305530533051304f304d300906052b0e03021a05000414",
+                "8ba2b4366103aec17ea3d433902bd6abd4561e290414",
+                "221792e79a56bb238d64812fc298e9eea607de1d0214",
+                "0e97769a0e2b98ab2d2a810b3a3313b5a2db7303",
+            ),
+        ];
+
+        for (index, expected) in expected.into_iter().enumerate() {
+            let requests = process_ocsp_responders(&certs, index).unwrap();
+            let actual = base64::decode(&requests[0].request_str).unwrap();
+
+            assert_eq!(hex::encode(actual), expected, "certificate {index}");
+        }
+    }
+
+    #[test]
     fn request_building_rejects_missing_invalid_certificates_and_urls() {
         let certs = ca_chain();
         for (subject, issuer, url) in [
