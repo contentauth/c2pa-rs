@@ -37,6 +37,11 @@ impl StatusTracker {
         }
     }
 
+    /// Whether validation must stop on the first failure.
+    pub(crate) fn stops_on_error(&self) -> bool {
+        matches!(self.error_behavior, ErrorBehavior::StopOnFirstError)
+    }
+
     /// Returns the current list of validation log items.
     pub fn logged_items(&self) -> &[LogItem] {
         &self.logged_items

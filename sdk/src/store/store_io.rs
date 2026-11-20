@@ -1314,8 +1314,10 @@ impl Store {
         // First we convert the JUMBF into a usable store.
         let mut store = Store::from_jumbf_with_context(c2pa_data, validation_log, context)
             .inspect_err(|e| {
-                log_item!("asset", "error loading file", "load_from_asset")
-                    .failure_no_throw(validation_log, e);
+                if !validation_log.has_any_error() {
+                    log_item!("asset", "error loading file", "load_from_asset")
+                        .failure_no_throw(validation_log, e);
+                }
             })?;
         store.embedded = embedded;
 
