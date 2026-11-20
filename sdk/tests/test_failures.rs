@@ -81,6 +81,60 @@ fn test_bad_data_hash() -> Result<()> {
     Ok(())
 }
 
+/// Signs CA.jpg with the given `c2pa.actions.v2` assertion and returns the active manifest's
+/// failure codes, from the sign-time validation or from reading the result back.
+fn created_action_failures(actions: serde_json::Value) -> Result<Vec<String>> {
+    let context = test_context().into_shared();
+    let format = "image/jpeg";
+    let mut source = Cursor::new(include_bytes!("fixtures/CA.jpg"));
+    let mut builder = Builder::from_shared_context(&context);
+    builder.add_assertion("c2pa.actions.v2", &actions)?;
+
+    let mut dest = Cursor::new(Vec::new());
+    let results = match builder.sign(context.signer()?, format, &mut source, &mut dest) {
+        Ok(_) => {
+            dest.set_position(0);
+            Reader::from_shared_context(&context)
+                .with_stream(format, &mut dest)?
+                .validation_results()
+                .cloned()
+                .unwrap()
+        }
+        Err(Error::InvalidManifest(validation_results)) => *validation_results,
+        Err(other) => return Err(other),
+    };
+    let codes = results.active_manifest().unwrap().failure().iter();
+    Ok(codes
+        .map(|s| s.code().to_owned())
+        .filter(|c| c != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+        .collect())
+}
+
+#[test]
+fn test_created_action_digital_source_type_from_template() -> Result<()> {
+    const SOURCE_TYPE: &str = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture";
+
+    // The action takes its digitalSourceType from a same-named template, or from `*`.
+    for template in ["c2pa.created", "*"] {
+        let failures = created_action_failures(serde_json::json!({
+            "actions": [{ "action": "c2pa.created" }],
+            "templates": [{ "action": template, "digitalSourceType": SOURCE_TYPE }],
+            "allActionsIncluded": true,
+        }))?;
+        assert!(failures.is_empty(), "template {template}: {failures:?}");
+    }
+
+    // A template for a different action does not supply one.
+    let failures = created_action_failures(serde_json::json!({
+        "actions": [{ "action": "c2pa.created" }],
+        "templates": [{ "action": "c2pa.edited", "digitalSourceType": SOURCE_TYPE }],
+        "allActionsIncluded": true,
+    }))?;
+    assert_eq!(failures, [validation_status::ASSERTION_ACTION_MALFORMED]);
+
+    Ok(())
+}
+
 #[test]
 fn test_created_action_missing_digital_source_type() -> Result<()> {
     let context = test_context().into_shared();
