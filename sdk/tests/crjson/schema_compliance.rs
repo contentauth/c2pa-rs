@@ -28,7 +28,7 @@
 
 use std::io::Cursor;
 
-use c2pa::{Reader, Result};
+use c2pa::{Context, Reader, Result};
 use jsonschema::validator_for;
 
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
@@ -570,10 +570,18 @@ fn test_signature_structure() -> Result<()> {
 // ── Validation results ────────────────────────────────────────────────────────
 
 /// Every manifest's `validationResults` must have `success`, `informational`, `failure` arrays,
-/// a `specVersion` of "2.3", and a required `validationTime` RFC 3339 string.
+/// the native validator's `specVersion`, and a required `validationTime` RFC 3339 string.
 #[test]
 fn test_validation_results_structure() -> Result<()> {
     let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let native = serde_json::to_value(
+        reader
+            .validation_results()
+            .expect("native validation results"),
+    )?;
+    let expected_version = native["specVersion"]
+        .as_str()
+        .expect("native validator specVersion");
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
@@ -598,14 +606,14 @@ fn test_validation_results_structure() -> Result<()> {
             }
         }
 
-        // specVersion must be present and equal "2.3".
+        // This identifies the validation specification, not the report format.
         let spec_version = vr
             .get("specVersion")
             .and_then(|v| v.as_str())
             .expect("validationResults.specVersion must be a string");
         assert_eq!(
-            spec_version, "2.3.0",
-            "validationResults.specVersion must be \"2.3.0\""
+            spec_version, expected_version,
+            "crJSON must report the same validation specification as the Reader"
         );
 
         // validationTime must be present and be an RFC 3339 string.
@@ -653,23 +661,74 @@ fn test_validation_results_no_extra_fields() -> Result<()> {
 #[test]
 fn test_validation_results_spec_version_wrong_value() -> Result<()> {
     let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let native = serde_json::to_value(
+        reader
+            .validation_results()
+            .expect("native validation results"),
+    )?;
+    let expected_version = native["specVersion"]
+        .as_str()
+        .expect("native validator specVersion");
     let mut json_value = reader.to_crjson_value()?;
 
-    // Mutate the first manifest's specVersion to something wrong and verify our
-    // validation logic would catch it (we're testing the shape of the data here,
-    // not re-running the exporter).
+    // A different valid SemVer can pass the schema but disagree with the Reader.
+    // Check that distinction without re-running the exporter.
     if let Some(manifest) = json_value["manifests"].as_array_mut().unwrap().first_mut() {
         if let Some(vr) = manifest.get_mut("validationResults") {
             let original = vr["specVersion"].as_str().unwrap().to_string();
             *vr.get_mut("specVersion").unwrap() = serde_json::json!("9.9.9");
             assert_ne!(
                 vr["specVersion"].as_str().unwrap(),
-                "2.3",
-                "mutated specVersion should not equal 2.3"
+                expected_version,
+                "mutated specVersion should disagree with the native validator"
             );
             // Restore and confirm it's back to the correct value.
             *vr.get_mut("specVersion").unwrap() = serde_json::json!(original);
-            assert_eq!(vr["specVersion"].as_str().unwrap(), "2.3.0");
+            assert_eq!(vr["specVersion"].as_str().unwrap(), expected_version);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_crjson_version_matches_native_validator_with_v1_settings() -> Result<()> {
+    for strict_v1 in [false, true] {
+        let mut settings = crate::common::test_settings();
+        settings.verify.strict_v1_validation = strict_v1;
+        let reader = Reader::from_context(Context::new().with_settings(settings)?)
+            .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+        let native = serde_json::to_value(
+            reader
+                .validation_results()
+                .expect("native validation results"),
+        )?;
+        let expected_version = native["specVersion"]
+            .as_str()
+            .expect("native validator specVersion");
+        let reports = [
+            ("to_crjson_value", reader.to_crjson_value()?),
+            (
+                "crjson_checked",
+                serde_json::from_str(&reader.crjson_checked()?)?,
+            ),
+            ("crjson", serde_json::from_str(&reader.crjson())?),
+        ];
+        for (api, report) in reports {
+            let manifests = report["manifests"].as_array().expect("crJSON manifests");
+            assert!(!manifests.is_empty(), "{api}: nonempty fixture report");
+            assert!(
+                manifests
+                    .iter()
+                    .any(|manifest| manifest["claim"].is_object()),
+                "{api}: fixture must exercise a v1 claim"
+            );
+            for manifest in manifests {
+                assert_eq!(
+                    manifest["validationResults"]["specVersion"].as_str(),
+                    Some(expected_version),
+                    "{api}, strict_v1_validation={strict_v1}"
+                );
+            }
         }
     }
     Ok(())
