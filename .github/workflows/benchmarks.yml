@@ -54,7 +54,7 @@ jobs:
 
       - name: Install cargo-binstall
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+        uses: cargo-bins/cargo-binstall@851112458b5f28a29e5bc14a690c3f283d9dcc6f # v1.26.2
 
       - name: Install cargo-codspeed
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
@@ -109,7 +109,7 @@ jobs:
           cache: false
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+        uses: cargo-bins/cargo-binstall@851112458b5f28a29e5bc14a690c3f283d9dcc6f # v1.26.2
 
       - name: Install cargo-codspeed
         run: cargo binstall --no-confirm cargo-codspeed
