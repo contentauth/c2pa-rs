@@ -12,18 +12,19 @@
 // each license.
 
 use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
-    },
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
+use c2pa_http::DefaultTimeoutResolver;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::http::{RequestScheduler, ScheduledResolver};
 use crate::{
     asset_io::HandlerRegistry,
     http::{
-        restricted::{MetadataGuardResolver, RedirectResolver, RestrictedResolver},
-        AsyncGenericResolver, AsyncHttpResolver, DefaultTimeoutResolver, SyncGenericResolver,
+        restricted::{with_network_policy, with_network_policy_async},
+        AsyncGenericResolver, AsyncHttpResolver, CancellationToken, SyncGenericResolver,
         SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
@@ -277,9 +278,11 @@ pub struct Context {
     signer: SignerState,
     async_signer: AsyncSignerState,
     progress_callback: Option<Box<ProgressCallbackFunc>>,
-    /// Embedded cancellation flag.  Any thread holding an `Arc<Context>` can call
+    /// Embedded cancellation token.  Any thread holding an `Arc<Context>` can call
     /// [`cancel()`](Context::cancel) without needing a separate token object.
-    cancel_flag: AtomicBool,
+    cancel_token: CancellationToken,
+    #[cfg(not(target_arch = "wasm32"))]
+    scheduler: Option<RequestScheduler>,
     /// Custom IO handlers provided by the caller, plus the built-in registry as a fallback.
     /// Custom handlers are searched first; last-registered wins when two handlers claim the
     /// same format.
@@ -300,7 +303,9 @@ impl Default for Context {
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
-            cancel_flag: AtomicBool::new(false),
+            cancel_token: CancellationToken::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            scheduler: None,
             io: HandlerRegistry::with_fallback(crate::jumbf_io::default_handler_registry()),
         }
     }
@@ -508,6 +513,14 @@ impl Context {
     /// [`http_request_timeout_in_ms`]: crate::settings::Core::http_request_timeout_in_ms
     /// [`RequestTimeout`]: crate::http::RequestTimeout
     pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(scheduled) = self.scheduled_resolver() {
+            return scheduled;
+        }
+        self.unscheduled_resolver()
+    }
+
+    fn unscheduled_resolver(&self) -> Arc<dyn SyncHttpResolver> {
         let resolver = match &self.sync_resolver_state {
             SyncResolverState::Custom(resolver) => resolver.clone(),
             SyncResolverState::Default(once_lock) => once_lock
@@ -524,33 +537,28 @@ impl Context {
         Duration::from_millis(self.settings.core.http_request_timeout_in_ms)
     }
 
+    /// Runs the sync resolver on the request scheduler, if one is set.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn scheduled_resolver(&self) -> Option<Arc<ScheduledResolver>> {
+        let scheduler = self.scheduler.clone()?;
+        Some(Arc::new(
+            ScheduledResolver::new(scheduler, self.unscheduled_resolver())
+                .with_cancellation(self.cancel_token.clone()),
+        ))
+    }
+
     /// Builds the default sync resolver stack from the [`allow_redirects`] and
-    /// [`allowed_network_hosts`] settings.
-    ///
-    /// The base HTTP client never auto-follows redirects; a [`RedirectResolver`] follows them at the
-    /// SDK layer so it can reject hops to internal addresses (SSRF hardening, CAI-12574). An explicit
-    /// allow-list, when configured, is applied *inside* the redirect follower via
-    /// [`RestrictedResolver`], so it is re-checked on every hop. When no allow-list is configured, a
-    /// [`MetadataGuardResolver`] is applied instead, rejecting the *initial* request when it directly
-    /// names a link-local/cloud-metadata address (SSRF hardening, CAI-13326); an explicit allow-list
-    /// is a stronger, intentional policy and takes precedence over this default guard. Concrete
-    /// wrapper types are used (no intermediate `Arc<dyn ..>`) so the stack stays `Send`/`Sync` where
-    /// required, including WASM.
+    /// [`allowed_network_hosts`] settings. See [`with_network_policy`] for the policy applied.
     ///
     /// [`allow_redirects`]: crate::settings::Core::allow_redirects
     /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
     fn build_default_sync_resolver(&self) -> Arc<dyn SyncHttpResolver> {
         let core = &self.settings.core;
-        let client = SyncGenericResolver::new();
-
-        if let Some(allowed_hosts) = core.allowed_network_hosts.clone() {
-            let mut restricted = RestrictedResolver::new(client);
-            restricted.set_allowed_hosts(Some(allowed_hosts));
-            Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
-        } else {
-            let guarded = MetadataGuardResolver::new(client);
-            Arc::new(RedirectResolver::new(guarded, core.allow_redirects))
-        }
+        with_network_policy(
+            SyncGenericResolver::new(),
+            core.allowed_network_hosts.clone(),
+            core.allow_redirects,
+        )
     }
 
     /// Returns a reference to the async resolver.
@@ -566,9 +574,15 @@ impl Context {
     pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
         let resolver = match &self.async_resolver_state {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
-            AsyncResolverState::Default(once_lock) => once_lock
-                .get_or_init(|| self.build_default_async_resolver())
-                .clone(),
+            AsyncResolverState::Default(once_lock) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(scheduled) = self.scheduled_resolver() {
+                    return scheduled;
+                }
+                once_lock
+                    .get_or_init(|| self.build_default_async_resolver())
+                    .clone()
+            }
         };
         Arc::new(DefaultTimeoutResolver::new(
             resolver,
@@ -576,21 +590,32 @@ impl Context {
         ))
     }
 
+    /// Routes this context's HTTP requests through `scheduler`'s worker threads.
+    ///
+    /// [`resolver`](Self::resolver), and [`resolver_async`](Self::resolver_async) unless a
+    /// custom async resolver is set, then run the context's sync resolver (the default policy
+    /// stack, or one set with [`with_resolver`](Self::with_resolver)) on a scheduler worker.
+    /// Async operations await responses without blocking their executor, and
+    /// [`cancel`](Self::cancel) ends outstanding requests at once.
+    ///
+    /// The default stack needs a sync HTTP client (the `http_ureq` or `http_reqwest_blocking`
+    /// feature). One scheduler can serve many contexts. Not available on WASM.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_request_scheduler(mut self, scheduler: RequestScheduler) -> Self {
+        self.scheduler = Some(scheduler);
+        self
+    }
+
     /// Builds the default async resolver stack. Mirrors [`build_default_sync_resolver`].
     ///
     /// [`build_default_sync_resolver`]: Context::build_default_sync_resolver
     fn build_default_async_resolver(&self) -> Arc<dyn AsyncHttpResolver> {
         let core = &self.settings.core;
-        let client = AsyncGenericResolver::new();
-
-        if let Some(allowed_hosts) = core.allowed_network_hosts.clone() {
-            let mut restricted = RestrictedResolver::new(client);
-            restricted.set_allowed_hosts(Some(allowed_hosts));
-            Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
-        } else {
-            let guarded = MetadataGuardResolver::new(client);
-            Arc::new(RedirectResolver::new(guarded, core.allow_redirects))
-        }
+        with_network_policy_async(
+            AsyncGenericResolver::new(),
+            core.allowed_network_hosts.clone(),
+            core.allow_redirects,
+        )
     }
 
     /// Register a custom IO handler on this Context.
@@ -913,7 +938,10 @@ impl Context {
     ///
     /// This is thread-safe and may be called from any thread that holds an
     /// `Arc<Context>`.  The operation will return [`Error::OperationCancelled`]
-    /// at the next safe checkpoint.
+    /// at the next safe checkpoint. With a [request scheduler], HTTP requests the
+    /// operation is waiting on also end at once with that error.
+    ///
+    /// [request scheduler]: Context::with_request_scheduler
     ///
     /// # Example
     ///
@@ -927,12 +955,12 @@ impl Context {
     /// // std::thread::spawn(move || ctx2.cancel());
     /// ```
     pub fn cancel(&self) {
-        self.cancel_flag.store(true, Ordering::Release);
+        self.cancel_token.cancel();
     }
 
     /// Returns `true` if [`cancel()`](Context::cancel) has been called.
     pub fn is_cancelled(&self) -> bool {
-        self.cancel_flag.load(Ordering::Acquire)
+        self.cancel_token.is_cancelled()
     }
 
     /// Report progress and check for cancellation at a single checkpoint.
@@ -952,7 +980,7 @@ impl Context {
                 return Err(Error::OperationCancelled);
             }
         }
-        if self.cancel_flag.load(Ordering::Acquire) {
+        if self.is_cancelled() {
             return Err(Error::OperationCancelled);
         }
         Ok(())
@@ -1042,7 +1070,9 @@ mod tests {
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
-            cancel_flag: AtomicBool::new(false),
+            cancel_token: CancellationToken::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            scheduler: None,
             io: HandlerRegistry::new(),
         };
 
@@ -1119,7 +1149,9 @@ mod tests {
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
-            cancel_flag: AtomicBool::new(false),
+            cancel_token: CancellationToken::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            scheduler: None,
             io: HandlerRegistry::new(),
         };
 
@@ -1929,5 +1961,230 @@ mod tests {
         let mut stream = std::io::Cursor::new(vec![]);
         // HandlerB was registered last, so it should win.
         assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
+    }
+
+    #[test]
+    fn test_cancelled_requests_convert_to_operation_cancelled() {
+        use crate::{crypto::time_stamp::TimeStampError, http::HttpResolverError};
+
+        assert!(matches!(
+            Error::from(HttpResolverError::Cancelled),
+            Error::OperationCancelled
+        ));
+        assert!(matches!(
+            Error::from(TimeStampError::HttpResolverError(
+                HttpResolverError::Cancelled
+            )),
+            Error::OperationCancelled
+        ));
+        assert!(matches!(
+            Error::from(HttpResolverError::ResponseTooLarge),
+            Error::HttpResolverError(HttpResolverError::ResponseTooLarge)
+        ));
+        assert!(matches!(
+            Error::from(TimeStampError::HttpResolverError(
+                HttpResolverError::ResponseTooLarge
+            )),
+            Error::TimeStampError(TimeStampError::HttpResolverError(
+                HttpResolverError::ResponseTooLarge
+            ))
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod request_scheduler {
+        use std::{
+            io::{Cursor, Read},
+            num::NonZeroUsize,
+            sync::{mpsc, Mutex},
+            time::Duration,
+        };
+
+        use async_trait::async_trait;
+        use http::{Request, Response};
+
+        use super::*;
+        use crate::http::{HttpResolverError, RequestScheduler};
+
+        const TIMEOUT: Duration = Duration::from_secs(10);
+
+        fn scheduler() -> RequestScheduler {
+            RequestScheduler::new(NonZeroUsize::new(1).unwrap()).unwrap()
+        }
+
+        fn get() -> Request<Vec<u8>> {
+            Request::get("http://example.com/")
+                .body(Vec::new())
+                .unwrap()
+        }
+
+        fn text(response: Response<Box<dyn Read>>) -> String {
+            let mut body = String::new();
+            response.into_body().read_to_string(&mut body).unwrap();
+            body
+        }
+
+        /// Answers with the name of the thread that resolved the request.
+        struct ThreadName;
+
+        impl SyncHttpResolver for ThreadName {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> std::result::Result<Response<Box<dyn Read>>, HttpResolverError> {
+                let name = std::thread::current().name().unwrap_or_default().to_owned();
+                Ok(Response::new(
+                    Box::new(Cursor::new(name.into_bytes())) as Box<dyn Read>
+                ))
+            }
+        }
+
+        fn on_scheduler(name: &str) -> bool {
+            name.starts_with("c2pa-http-")
+        }
+
+        #[test]
+        fn without_a_scheduler_requests_run_on_the_calling_thread() {
+            let context = Context::new().with_resolver(ThreadName);
+            assert!(!on_scheduler(&text(
+                context.resolver().http_resolve(get()).unwrap()
+            )));
+        }
+
+        #[test]
+        fn sync_resolver_runs_on_the_scheduler() {
+            let context = Context::new()
+                .with_resolver(ThreadName)
+                .with_request_scheduler(scheduler());
+            assert!(on_scheduler(&text(
+                context.resolver().http_resolve(get()).unwrap()
+            )));
+        }
+
+        #[tokio::test]
+        async fn async_resolver_runs_the_sync_resolver_on_the_scheduler() {
+            let context = Context::new()
+                .with_resolver(ThreadName)
+                .with_request_scheduler(scheduler());
+            let response = context
+                .resolver_async()
+                .http_resolve_async(get())
+                .await
+                .unwrap();
+            assert!(on_scheduler(&text(response)));
+        }
+
+        #[tokio::test]
+        async fn scheduled_requests_receive_the_default_timeout() {
+            use crate::http::RequestTimeout;
+
+            #[derive(Clone, Default)]
+            struct Recorder(Arc<Mutex<Vec<Option<RequestTimeout>>>>);
+
+            impl SyncHttpResolver for Recorder {
+                fn http_resolve(
+                    &self,
+                    request: Request<Vec<u8>>,
+                ) -> std::result::Result<Response<Box<dyn Read>>, HttpResolverError>
+                {
+                    let timeout = request.extensions().get::<RequestTimeout>().copied();
+                    self.0.lock().unwrap().push(timeout);
+                    Ok(Response::new(Box::new(std::io::empty()) as Box<dyn Read>))
+                }
+            }
+
+            let recorder = Recorder::default();
+            let context = Context::new()
+                .with_settings_value("core.http_request_timeout_in_ms", 250u64)
+                .unwrap()
+                .with_resolver(recorder.clone())
+                .with_request_scheduler(scheduler());
+            context.resolver().http_resolve(get()).unwrap();
+            context
+                .resolver_async()
+                .http_resolve_async(get())
+                .await
+                .unwrap();
+
+            let expected = Some(RequestTimeout(Duration::from_millis(250)));
+            assert_eq!(*recorder.0.lock().unwrap(), [expected, expected]);
+        }
+
+        #[tokio::test]
+        async fn custom_async_resolver_is_not_scheduled() {
+            struct Inline;
+
+            #[async_trait]
+            impl AsyncHttpResolver for Inline {
+                async fn http_resolve_async(
+                    &self,
+                    _request: Request<Vec<u8>>,
+                ) -> std::result::Result<Response<Box<dyn Read>>, HttpResolverError>
+                {
+                    Ok(Response::new(
+                        Box::new(Cursor::new(b"inline".to_vec())) as Box<dyn Read>
+                    ))
+                }
+            }
+
+            let context = Context::new()
+                .with_resolver_async(Inline)
+                .with_request_scheduler(scheduler());
+            let response = context
+                .resolver_async()
+                .http_resolve_async(get())
+                .await
+                .unwrap();
+            assert_eq!(text(response), "inline");
+        }
+
+        #[test]
+        fn cancel_ends_an_in_flight_request() {
+            struct Gate {
+                entered: mpsc::Sender<()>,
+                release: Mutex<mpsc::Receiver<()>>,
+            }
+
+            impl SyncHttpResolver for Gate {
+                fn http_resolve(
+                    &self,
+                    _request: Request<Vec<u8>>,
+                ) -> std::result::Result<Response<Box<dyn Read>>, HttpResolverError>
+                {
+                    self.entered.send(()).unwrap();
+                    let _ = self.release.lock().unwrap().recv_timeout(TIMEOUT);
+                    Ok(Response::new(Box::new(std::io::empty()) as Box<dyn Read>))
+                }
+            }
+
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let context = Arc::new(
+                Context::new()
+                    .with_resolver(Gate {
+                        entered: entered_tx,
+                        release: Mutex::new(release_rx),
+                    })
+                    .with_request_scheduler(scheduler()),
+            );
+
+            let waiter = {
+                let context = Arc::clone(&context);
+                std::thread::spawn(move || {
+                    context
+                        .resolver()
+                        .http_resolve(get())
+                        .map(|_| ())
+                        .map_err(Error::from)
+                })
+            };
+            entered_rx.recv_timeout(TIMEOUT).unwrap();
+            context.cancel();
+            assert!(matches!(
+                waiter.join().unwrap(),
+                Err(Error::OperationCancelled)
+            ));
+            release_tx.send(()).unwrap();
+        }
     }
 }

@@ -3,6 +3,7 @@ resolver = "3"
 
 members = [
     "c2pa_c_ffi",
+    "c2pa_http",
     "export_schema",
     "macros",
     "make_test_images",
@@ -15,6 +16,7 @@ version = "0.93.0-dev"
 
 [workspace.dependencies]
 c2pa = { path = "sdk", version = "0.93.0-dev", default-features = false }
+c2pa-http = { path = "c2pa_http", version = "0.93.0-dev", default-features = false }
 
 [profile.dev]
 # opt-level = 1        # enable to allow test code to run faster at a small compile time cost and missing debug info

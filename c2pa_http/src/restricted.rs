@@ -24,8 +24,8 @@
 //! - Reduce SSRF-style risks (e.g. requests to internal services).
 //! - Constrain requests to a small, trusted set of domains.
 //!
-//! [`SyncGenericResolver`]: crate::http::SyncGenericResolver
-//! [`AsyncGenericResolver`]: crate::http::AsyncGenericResolver
+//! [`SyncGenericResolver`]: crate::SyncGenericResolver
+//! [`AsyncGenericResolver`]: crate::AsyncGenericResolver
 //!
 //! # OCSP and other dynamic endpoints
 //! Some protocols used by the SDK (like OCSP or CRLs) discover endpoints from certificate
@@ -37,22 +37,20 @@
 //! This restriction layer is a runtime control. To turn networking off entirely at compile
 //! time, do not enable any of the HTTP features (`http_*`), see ["Features"].
 //!
-//! ["Features"]: crate#features
-//! [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+//! ["Features"]: https://docs.rs/c2pa/latest/c2pa/#features
+//! [`Core::allowed_network_hosts`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allowed_network_hosts
 
 use std::{
     io::Read,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::Arc,
 };
 
 use async_trait::async_trait;
 use http::{Request, Response, Uri};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{
-    http::{sanitize_for_log, AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
-    Result,
-};
+use crate::{sanitize_for_log, AsyncHttpResolver, HttpResolverError, SyncHttpResolver};
 
 /// HTTP resolver wrapper that enforces an allowed list of hosts.
 ///
@@ -308,6 +306,47 @@ pub(crate) struct RedirectResolver<T> {
     allow_redirects: bool,
 }
 
+/// Wraps `client` in the SDK's default network security policy.
+///
+/// The client must not follow redirects itself; they are followed here so every hop can be
+/// checked, and a hop to an internal address is rejected (SSRF hardening, CAI-12574). When
+/// `allowed_hosts` is `Some`, a [`RestrictedResolver`] re-checks that allow-list on every hop.
+/// Otherwise an initial request that directly names a link-local or cloud-metadata address is
+/// rejected (CAI-13326). When `allow_redirects` is `false`, no redirect is followed.
+///
+/// These are the values of the SDK settings [`allowed_network_hosts`] and [`allow_redirects`].
+///
+/// [`allowed_network_hosts`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allowed_network_hosts
+/// [`allow_redirects`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allow_redirects
+pub fn with_network_policy<T: SyncHttpResolver + 'static>(
+    client: T,
+    allowed_hosts: Option<Vec<HostPattern>>,
+    allow_redirects: bool,
+) -> Arc<dyn SyncHttpResolver> {
+    if let Some(allowed_hosts) = allowed_hosts {
+        let restricted = RestrictedResolver::with_allowed_hosts(client, allowed_hosts);
+        Arc::new(RedirectResolver::new(restricted, allow_redirects))
+    } else {
+        let guarded = MetadataGuardResolver::new(client);
+        Arc::new(RedirectResolver::new(guarded, allow_redirects))
+    }
+}
+
+/// The async counterpart of [`with_network_policy`].
+pub fn with_network_policy_async<T: AsyncHttpResolver + Sync + 'static>(
+    client: T,
+    allowed_hosts: Option<Vec<HostPattern>>,
+    allow_redirects: bool,
+) -> Arc<dyn AsyncHttpResolver> {
+    if let Some(allowed_hosts) = allowed_hosts {
+        let restricted = RestrictedResolver::with_allowed_hosts(client, allowed_hosts);
+        Arc::new(RedirectResolver::new(restricted, allow_redirects))
+    } else {
+        let guarded = MetadataGuardResolver::new(client);
+        Arc::new(RedirectResolver::new(guarded, allow_redirects))
+    }
+}
+
 impl<T> RedirectResolver<T> {
     /// Wraps `inner`. If `allow_redirects` is false, no redirect is followed.
     pub(crate) fn new(inner: T, allow_redirects: bool) -> Self {
@@ -356,10 +395,7 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RedirectResolver<T> {
         mut request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         let started = web_time::Instant::now();
-        let timeout = request
-            .extensions()
-            .get::<crate::http::RequestTimeout>()
-            .copied();
+        let timeout = request.extensions().get::<crate::RequestTimeout>().copied();
         for _ in 0..=MAX_REDIRECTS {
             apply_remaining_timeout(&mut request, started, timeout)?;
             let from_uri = request.uri().clone();
@@ -393,10 +429,7 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectResolver<T> {
         mut request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         let started = web_time::Instant::now();
-        let timeout = request
-            .extensions()
-            .get::<crate::http::RequestTimeout>()
-            .copied();
+        let timeout = request.extensions().get::<crate::RequestTimeout>().copied();
         for _ in 0..=MAX_REDIRECTS {
             apply_remaining_timeout(&mut request, started, timeout)?;
             let from_uri = request.uri().clone();
@@ -425,9 +458,9 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectResolver<T> {
 fn apply_remaining_timeout(
     request: &mut Request<Vec<u8>>,
     started: web_time::Instant,
-    timeout: Option<crate::http::RequestTimeout>,
+    timeout: Option<crate::RequestTimeout>,
 ) -> Result<(), HttpResolverError> {
-    if let Some(crate::http::RequestTimeout(timeout)) = timeout {
+    if let Some(crate::RequestTimeout(timeout)) = timeout {
         let remaining = timeout
             .checked_sub(started.elapsed())
             .filter(|d| !d.is_zero())
@@ -436,7 +469,7 @@ fn apply_remaining_timeout(
             })?;
         request
             .extensions_mut()
-            .insert(crate::http::RequestTimeout(remaining));
+            .insert(crate::RequestTimeout(remaining));
     }
 
     Ok(())
@@ -453,7 +486,7 @@ mod timeout_tests {
     };
 
     use super::*;
-    use crate::http::RequestTimeout;
+    use crate::RequestTimeout;
 
     #[derive(Clone, Default)]
     struct Redirecting(Arc<Mutex<Vec<Duration>>>);
@@ -595,8 +628,8 @@ fn build_redirected_request(
 /// explicit allow-list is a stronger, intentional statement of policy and takes precedence over
 /// this default.
 ///
-/// [`Context`]: crate::Context
-/// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+/// [`Context`]: https://docs.rs/c2pa/latest/c2pa/struct.Context.html
+/// [`Core::allowed_network_hosts`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allowed_network_hosts
 #[derive(Debug)]
 pub(crate) struct MetadataGuardResolver<T> {
     inner: T,
@@ -648,7 +681,7 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for MetadataGuardResolver<T>
 /// those remain reachable by default so `localhost`/intranet manifest hosts and enterprise PKI keep
 /// working. Use [`Core::allowed_network_hosts`] to restrict those as well.
 ///
-/// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+/// [`Core::allowed_network_hosts`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allowed_network_hosts
 pub(crate) fn host_is_metadata_or_link_local(uri: &Uri) -> bool {
     let Some(host) = uri.host() else {
         // A request with no host is malformed and cannot be dialed by the concrete clients, but
@@ -1017,7 +1050,7 @@ mod test {
 
     #[test]
     fn test_restricted_generic_resolver() {
-        use crate::http::{HttpResolverError, SyncGenericResolver, SyncHttpResolver};
+        use crate::{HttpResolverError, SyncGenericResolver, SyncHttpResolver};
 
         let inner = SyncGenericResolver::new();
         let mut resolver = RestrictedResolver::new(inner);
@@ -1050,7 +1083,7 @@ mod test {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_restricted_async_generic_resolver() {
-        use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+        use crate::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
 
         let inner = AsyncGenericResolver::new();
         let mut resolver = RestrictedResolver::new(inner);
