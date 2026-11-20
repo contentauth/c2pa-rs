@@ -1475,6 +1475,7 @@ pub(crate) mod message_imprint_regression {
         signer_eku: Option<&'a str>,
         omit_eku: bool,
         cms_digest: Option<(&'a [u8], MessageDigest)>,
+        certificate_validity: Option<(i64, i64)>,
     }
 
     fn test_certificate(
@@ -1547,12 +1548,12 @@ pub(crate) mod message_imprint_regression {
         } else {
             Some(options.signer_eku.unwrap_or(super::TIMESTAMP_OID_STR))
         };
-        let (key, cert) = test_certificate(
-            purpose,
-            options.profile_extensions,
-            1_500_000_000,
-            1_900_000_000,
-        );
+        let (not_before, not_after) = options
+            .certificate_validity
+            .unwrap_or((1_500_000_000, 1_900_000_000));
+
+        let (key, cert) =
+            test_certificate(purpose, options.profile_extensions, not_before, not_after);
 
         let imprint_hash = hash(imprint_md, data).unwrap();
         let message_imprint = tlv(
@@ -1661,6 +1662,58 @@ pub(crate) mod message_imprint_regression {
         );
 
         tlv(0x30, &cat(&[OID_SIGNED_DATA, &tlv(0xa0, &signed_data)]))
+    }
+
+    #[test]
+    fn certificates_with_utc_and_generalized_time_validity_are_accepted() {
+        for (not_after, generalized) in [(2_524_607_999, false), (2_524_608_000, true)] {
+            for signed_attrs in [false, true] {
+                let token = build_token_with(
+                    OID_SHA256,
+                    MessageDigest::sha256(),
+                    DATA,
+                    TokenOptions {
+                        certificate_validity: Some((0, not_after)),
+                        signed_attrs,
+                        ..Default::default()
+                    },
+                );
+
+                let cert_der = super::tsa_signer_cert_der_from_token(&token)
+                    .unwrap()
+                    .unwrap();
+                let cert: rasn_pkix::Certificate = rasn::der::decode(&cert_der).unwrap();
+                let validity = cert.tbs_certificate.validity;
+
+                assert!(matches!(&validity.not_before, rasn_pkix::Time::Utc(_)));
+                assert_eq!(
+                    matches!(&validity.not_after, rasn_pkix::Time::General(_)),
+                    generalized
+                );
+                assert_eq!(super::time_to_datetime(validity.not_before).timestamp(), 0);
+                assert_eq!(
+                    super::time_to_datetime(validity.not_after).timestamp(),
+                    not_after
+                );
+
+                let mut log = StatusTracker::default();
+                let tst = verify_time_stamp(
+                    &token,
+                    DATA,
+                    &CertificateTrustPolicy::default(),
+                    &mut log,
+                    false,
+                )
+                .unwrap();
+
+                assert_eq!(
+                    generalized_time_to_datetime(tst.gen_time).timestamp(),
+                    1_577_836_800
+                );
+                assert!(log.has_status(TIMESTAMP_VALIDATED));
+                assert!(log.has_status(TIMESTAMP_TRUSTED));
+            }
+        }
     }
 
     #[test]

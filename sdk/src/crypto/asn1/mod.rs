@@ -1374,6 +1374,71 @@ mod tests {
         }
     }
 
+    #[test]
+    fn rfc3161_rejects_invalid_calendar_and_clock_components() {
+        for value in [
+            "20161231235960",
+            "20230001000000",
+            "20231301000000",
+            "20239901000000",
+            "20230100000000",
+            "20230132000000",
+            "20230199000000",
+            "20230229000000",
+            "20230431000000",
+            "20250101240000",
+            "20250101990000",
+            "20250101006000",
+            "20250101009900",
+            "20250101000099",
+        ] {
+            for fraction in ["", ".1"] {
+                let value = format!("{value}{fraction}Z");
+                let encoded = reconstruct_der_bytes(0x18, value.as_bytes()).unwrap();
+
+                assert!(
+                    GeneralizedTime::from_der_bytes_rfc3161(&encoded).is_err(),
+                    "{value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rfc3161_preserves_component_boundaries_and_original_fractional_bytes() {
+        use chrono::TimeZone;
+
+        for (value, date, nanos) in [
+            ("19700101000000.000000001Z", (1970, 1, 1, 0, 0, 0), 1),
+            (
+                "20240229235959.999999999Z",
+                (2024, 2, 29, 23, 59, 59),
+                999_999_999,
+            ),
+            ("99991231000000.000000001Z", (9999, 12, 31, 0, 0, 0), 1),
+            (
+                "20240229235959.123400Z",
+                (2024, 2, 29, 23, 59, 59),
+                123_400_000,
+            ),
+        ] {
+            let encoded = reconstruct_der_bytes(0x18, value.as_bytes()).unwrap();
+            let parsed = GeneralizedTime::from_der_bytes_rfc3161(&encoded)
+                .unwrap_or_else(|error| panic!("{value}: {error}"));
+
+            assert_eq!(parsed.as_der_bytes(), encoded, "{value}");
+
+            let actual: chrono::DateTime<chrono::Utc> = parsed.into();
+            let expected = chrono::Utc
+                .with_ymd_and_hms(date.0, date.1, date.2, date.3, date.4, date.5)
+                .single()
+                .unwrap();
+
+            assert_eq!(actual.timestamp(), expected.timestamp(), "{value}");
+            assert_eq!(actual.timestamp_subsec_nanos(), nanos, "{value}");
+        }
+    }
+
     /// Buffer too short to hold even a DER tag and length byte.
     #[test]
     fn test_rfc3161_too_short() {
