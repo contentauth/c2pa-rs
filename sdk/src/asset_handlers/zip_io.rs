@@ -1,12 +1,13 @@
 use std::{
     collections::HashMap,
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
 use zip::{
-    result::ZipResult, write::SimpleFileOptions, CompressionMethod, HasZipMetadata, ZipArchive,
-    ZipWriter,
+    result::{ZipError, ZipResult},
+    write::SimpleFileOptions,
+    CompressionMethod, HasZipMetadata, ZipArchive, ZipWriter,
 };
 
 use crate::{
@@ -33,60 +34,39 @@ impl C2paWriter for ZipIO {
         output_stream: &mut dyn ReadWriteSeek,
         mut store_bytes: &[u8],
     ) -> Result<()> {
-        let mut writer = self.writer(input_stream, output_stream).map_err(|e| {
-            Error::InvalidAsset(format!(
-                "could not embed the C2PA manifest into the ZIP: {e}"
-            ))
-        })?;
+        let mut archive = self
+            .reader(input_stream)
+            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+        if archive.index_for_name(MANIFEST_PATH).is_some() {
+            return zip_replace_entries(
+                &mut archive,
+                output_stream,
+                &[(MANIFEST_PATH, store_bytes)],
+            )
+            .map_err(|err| Error::InvalidAsset(err.to_string()));
+        }
+
+        let mut writer = self
+            .writer(archive.into_inner(), output_stream)
+            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
 
         match writer.add_directory("META-INF", SimpleFileOptions::DEFAULT) {
-            Err(zip::result::ZipError::InvalidArchive(err))
-                if err.starts_with("Duplicate filename") => {}
-            Err(source) => {
-                return Err(Error::InvalidAsset(format!(
-                    "could not embed the C2PA manifest into the ZIP: {source}"
-                )))
-            }
+            Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
+            Err(err) => return Err(Error::InvalidAsset(err.to_string())),
             _ => {}
         }
 
-        match writer.start_file_from_path(
-            Path::new(MANIFEST_PATH),
-            SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
-        ) {
-            Err(zip::result::ZipError::InvalidArchive(err))
-                if err.starts_with("Duplicate filename") =>
-            {
-                writer.abort_file().map_err(|e| {
-                    Error::InvalidAsset(format!(
-                        "could not embed the C2PA manifest into the ZIP: {e}"
-                    ))
-                })?;
-                writer
-                    .start_file_from_path(
-                        Path::new(MANIFEST_PATH),
-                        SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
-                    )
-                    .map_err(|e| {
-                        Error::InvalidAsset(format!(
-                            "could not embed the C2PA manifest into the ZIP: {e}"
-                        ))
-                    })?;
-            }
-            Err(source) => {
-                return Err(Error::InvalidAsset(format!(
-                    "could not embed the C2PA manifest into the ZIP: {source}"
-                )))
-            }
-            _ => {}
-        }
+        writer
+            .start_file_from_path(
+                Path::new(MANIFEST_PATH),
+                SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
+            )
+            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
 
         io::copy(&mut store_bytes, &mut writer)?;
-        writer.finish().map_err(|e| {
-            Error::InvalidAsset(format!(
-                "could not embed the C2PA manifest into the ZIP: {e}"
-            ))
-        })?;
+        writer
+            .finish()
+            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
 
         Ok(())
     }
@@ -105,32 +85,17 @@ impl C2paWriter for ZipIO {
         input_stream: &mut dyn ReadSeek,
         output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
-        let mut writer = self.writer(input_stream, output_stream).map_err(|e| {
-            Error::InvalidAsset(format!(
-                "could not remove the C2PA manifest from the ZIP: {e}"
-            ))
-        })?;
-
-        match writer.start_file_from_path(Path::new(MANIFEST_PATH), SimpleFileOptions::default()) {
-            Err(zip::result::ZipError::InvalidArchive(err))
-                if err.starts_with("Duplicate filename") => {}
-            Err(source) => {
-                return Err(Error::InvalidAsset(format!(
-                    "could not remove the C2PA manifest from the ZIP: {source}"
-                )))
-            }
-            _ => {}
+        let mut archive = self
+            .reader(input_stream)
+            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+        if archive.index_for_name(MANIFEST_PATH).is_some() {
+            return zip_remove_entries(&mut archive, output_stream, &[MANIFEST_PATH])
+                .map_err(|err| Error::InvalidAsset(err.to_string()));
         }
-        writer.abort_file().map_err(|e| {
-            Error::InvalidAsset(format!(
-                "could not remove the C2PA manifest from the ZIP: {e}"
-            ))
-        })?;
-        writer.finish().map_err(|e| {
-            Error::InvalidAsset(format!(
-                "could not remove the C2PA manifest from the ZIP: {e}"
-            ))
-        })?;
+
+        let input_stream = archive.into_inner();
+        input_stream.rewind()?;
+        io::copy(input_stream, output_stream)?;
 
         Ok(())
     }
@@ -243,6 +208,74 @@ impl ZipIO {
 
         ZipWriter::new_append(output_stream)
     }
+}
+
+/// Writes a copy of `archive` to `output_stream` with the contents of the entries named in
+/// `replacements` replaced.
+pub(crate) fn zip_replace_entries<R, W>(
+    archive: &mut ZipArchive<R>,
+    output_stream: &mut W,
+    replacements: &[(&str, &[u8])],
+) -> ZipResult<()>
+where
+    R: Read + Seek,
+    W: Write + Seek + ?Sized,
+{
+    output_stream.rewind()?;
+
+    let comment = archive.comment().to_vec();
+    let mut writer = ZipWriter::new(output_stream);
+
+    for index in 0..archive.len() {
+        let file = archive.by_index_raw(index)?;
+        let replacement = str::from_utf8(file.name_raw()).ok().and_then(|name| {
+            replacements
+                .iter()
+                .find(|(replacement_name, _)| *replacement_name == name)
+        });
+        match replacement {
+            Some((name, contents)) => {
+                let options = file.options();
+                writer.start_file(*name, options)?;
+                writer.write_all(contents)?;
+            }
+            None => writer.raw_copy_file(file)?,
+        }
+    }
+
+    writer.set_raw_comment(comment.into_boxed_slice())?;
+    writer.finish()?;
+
+    Ok(())
+}
+
+/// Writes a copy of `archive` to `output_stream` without the entries named in `exclude`.
+pub(crate) fn zip_remove_entries<R, W>(
+    archive: &mut ZipArchive<R>,
+    output_stream: &mut W,
+    exclude: &[&str],
+) -> ZipResult<()>
+where
+    R: Read + Seek,
+    W: Write + Seek + ?Sized,
+{
+    output_stream.rewind()?;
+
+    let comment = archive.comment().to_vec();
+    let mut writer = ZipWriter::new(output_stream);
+
+    for index in 0..archive.len() {
+        let file = archive.by_index_raw(index)?;
+        let excluded = str::from_utf8(file.name_raw()).is_ok_and(|name| exclude.contains(&name));
+        if !excluded {
+            writer.raw_copy_file(file)?;
+        }
+    }
+
+    writer.set_raw_comment(comment.into_boxed_slice())?;
+    writer.finish()?;
+
+    Ok(())
 }
 
 /// Computes the byte ranges for the ZIP central directory, skipping the manifest's checksum (if present).
@@ -630,5 +663,97 @@ mod tests {
                 path.display()
             );
         }
+    }
+
+    /// A ZIP whose manifest isn't the last entry.
+    fn zip_with_manifest_in_middle() -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("first.txt", SimpleFileOptions::DEFAULT)
+            .unwrap();
+        writer.write_all(b"first").unwrap();
+
+        writer
+            .start_file(
+                MANIFEST_PATH,
+                SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(&[9, 9, 9]).unwrap();
+
+        writer
+            .start_file("last.txt", SimpleFileOptions::DEFAULT)
+            .unwrap();
+        writer.write_all(b"last").unwrap();
+        writer.set_comment("archive comment").unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn entry_names(stream: &mut Cursor<Vec<u8>>) -> Vec<String> {
+        let mut archive = ZipArchive::new(stream).unwrap();
+        (0..archive.len())
+            .map(|index| {
+                archive
+                    .by_index_raw(index)
+                    .unwrap()
+                    .name()
+                    .unwrap()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_write_replaces_manifest_in_place() {
+        let zip_io = ZipIO {};
+        let mut src = Cursor::new(zip_with_manifest_in_middle());
+
+        let mut output = Cursor::new(Vec::new());
+        zip_io
+            .write_c2pa(&mut src, &mut output, &[1, 2, 3])
+            .unwrap();
+
+        assert_eq!(
+            entry_names(&mut output),
+            ["first.txt", MANIFEST_PATH, "last.txt"]
+        );
+        assert_eq!(zip_io.read_c2pa(&mut output).unwrap(), [1, 2, 3]);
+
+        let mut archive = ZipArchive::new(&mut output).unwrap();
+        assert_eq!(archive.comment(), b"archive comment");
+
+        let mut last = String::new();
+        archive
+            .by_name("last.txt")
+            .unwrap()
+            .read_to_string(&mut last)
+            .unwrap();
+        assert_eq!(last, "last");
+    }
+
+    #[test]
+    fn test_remove_keeps_entries_after_manifest() {
+        let zip_io = ZipIO {};
+        let mut src = Cursor::new(zip_with_manifest_in_middle());
+
+        let mut output = Cursor::new(Vec::new());
+        zip_io.remove_c2pa(&mut src, &mut output).unwrap();
+
+        assert_eq!(entry_names(&mut output), ["first.txt", "last.txt"]);
+        assert_eq!(
+            ZipArchive::new(&mut output).unwrap().comment(),
+            b"archive comment"
+        );
+    }
+
+    #[test]
+    fn test_remove_without_manifest_copies_input() {
+        let zip_io = ZipIO {};
+        let mut src = Cursor::new(SAMPLES[0].to_vec());
+
+        let mut output = Cursor::new(Vec::new());
+        zip_io.remove_c2pa(&mut src, &mut output).unwrap();
+
+        assert_eq!(output.into_inner(), SAMPLES[0]);
     }
 }
