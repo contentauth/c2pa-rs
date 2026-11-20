@@ -234,7 +234,9 @@ impl Assertion {
     pub(crate) fn new(label: &str, version: Option<usize>, data: AssertionData) -> Self {
         Self {
             label: label.to_owned(),
-            version,
+            // `label()` rebuilds the label from its root and `version`, so a version given
+            // only in the label (`com.example.foo.v2`) must be kept here or it is dropped.
+            version: version.or_else(|| get_mutable_label(label).1),
             content_type: "application/cbor".to_owned(),
             data,
         }
