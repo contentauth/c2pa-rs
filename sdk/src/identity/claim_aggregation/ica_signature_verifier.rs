@@ -881,17 +881,21 @@ impl<'a> IcaSignatureVerifier<'a> {
         // the VC.
         let mut signer_payload = signer_payload.clone();
 
+        //
+        // Keep every entry of `signer_payload`: a credential that covers fewer
+        // referenced assertions than the identity assertion lists doesn't match.
         let new_ras = signer_payload
             .referenced_assertions
             .iter()
-            .zip(subject.c2pa_asset.referenced_assertions.iter())
-            .map(|(sp_ra, vc_ra)| {
-                if sp_ra.alg().is_none() {
-                    HashedUri::new(sp_ra.url(), vc_ra.alg(), &sp_ra.hash())
-                } else {
-                    sp_ra.clone()
-                }
-            })
+            .enumerate()
+            .map(
+                |(i, sp_ra)| match subject.c2pa_asset.referenced_assertions.get(i) {
+                    Some(vc_ra) if sp_ra.alg().is_none() => {
+                        HashedUri::new(sp_ra.url(), vc_ra.alg(), &sp_ra.hash())
+                    }
+                    _ => sp_ra.clone(),
+                },
+            )
             .collect();
 
         signer_payload.referenced_assertions = new_ras;
@@ -911,5 +915,73 @@ impl<'a> IcaSignatureVerifier<'a> {
         }
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use iref::UriBuf;
+    use nonempty_collections::nev;
+
+    use super::*;
+    use crate::identity::{
+        claim_aggregation::IdentityClaimsAggregationVc,
+        tests::fixtures::claim_aggregation::ica_credential_example::ica_example_identities,
+    };
+
+    fn hashed_uri(label: &str, byte: u8) -> HashedUri {
+        HashedUri::new(
+            format!("self#jumbf=c2pa.assertions/{label}"),
+            None,
+            &[byte; 32],
+        )
+    }
+
+    fn credential(c2pa_asset: SignerPayload) -> IcaCredential {
+        let subject = IdentityClaimsAggregationVc {
+            c2pa_asset,
+            verified_identities: ica_example_identities(),
+            time_stamp: None,
+        };
+        IcaCredential::new(
+            None,
+            UriBuf::new(b"did:example:issuer".to_vec()).unwrap(),
+            nev![subject],
+        )
+    }
+
+    /// A credential whose `c2paAsset` covers only some of the identity
+    /// assertion's referenced assertions doesn't match its `signer_payload`.
+    #[test]
+    fn c2pa_asset_covering_fewer_assertions_is_a_mismatch() {
+        let signer_payload = SignerPayload {
+            referenced_assertions: vec![
+                hashed_uri("c2pa.hash.data", 1),
+                hashed_uri("c2pa.actions.v2", 2),
+            ],
+            sig_type: "cawg.identity_claims_aggregation".to_owned(),
+            roles: vec![],
+        };
+        let context = Context::new();
+        let verifier = IcaSignatureVerifier::new(&context);
+
+        let mut st = StatusTracker::default();
+        let same = credential(signer_payload.clone());
+        assert!(verifier
+            .cross_check_signer_payload(&same, &signer_payload, &mut st)
+            .unwrap());
+
+        let mut fewer = signer_payload.clone();
+        fewer.referenced_assertions.truncate(1);
+        let mut st = StatusTracker::default();
+        assert!(!verifier
+            .cross_check_signer_payload(&credential(fewer), &signer_payload, &mut st)
+            .unwrap());
+        assert!(st
+            .logged_items()
+            .iter()
+            .any(|i| i.validation_status.as_deref() == Some("cawg.ica.signer_payload.mismatch")));
     }
 }
