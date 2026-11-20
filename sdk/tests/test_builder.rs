@@ -1111,3 +1111,51 @@ fn test_builder_compressed_manifests() -> Result<()> {
 
     Ok(())
 }
+
+/// The SDK's signer excludes `/free` and `/skip` boxes from the BMFF hash by
+/// default (`builder.bmff_hash_exclude_free_and_skip_boxes`). Those padding
+/// boxes are not "additional" exclusions, so reading the signed asset must not
+/// report `assertion.bmffHash.additionalExclusionsPresent`.
+#[test]
+fn test_bmff_free_and_skip_exclusions_are_not_additional() -> Result<()> {
+    let context = test_context().into_shared();
+    let format = "video/mp4";
+    let mut source = Cursor::new(include_bytes!("fixtures/video1_no_manifest.mp4"));
+    let mut dest = Cursor::new(Vec::new());
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+
+    let bmff_hash = reader
+        .active_manifest()
+        .unwrap()
+        .assertions()
+        .iter()
+        .find(|a| a.label().starts_with("c2pa.hash.bmff"))
+        .expect("signed MP4 should carry a BMFF hash assertion")
+        .value()?
+        .to_string();
+    assert!(
+        bmff_hash.contains("\"/free\"") && bmff_hash.contains("\"/skip\""),
+        "default signing should exclude /free and /skip: {bmff_hash}"
+    );
+
+    let results = reader
+        .validation_results()
+        .unwrap()
+        .active_manifest()
+        .unwrap();
+    assert!(
+        !results
+            .informational()
+            .iter()
+            .any(|s| s.code() == validation_status::ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS),
+        "free/skip padding must not be reported as additional exclusions: {:?}",
+        results.informational()
+    );
+    Ok(())
+}
