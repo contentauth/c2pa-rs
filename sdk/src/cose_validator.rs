@@ -18,6 +18,7 @@ use c2pa_raw_crypto::SigningAlg;
 use coset::CoseSign1;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
+#[allow(deprecated)]
 use crate::{
     context::Context,
     crypto::{
@@ -238,7 +239,7 @@ pub(crate) fn get_signing_cert_serial_num(sign1: &CoseSign1) -> Result<BigUint> 
     Ok(extract_serial_from_cert(&signcert))
 }
 
-#[allow(unused_variables)]
+#[allow(unused_variables, deprecated)]
 #[async_generic]
 pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
@@ -341,6 +342,7 @@ pub mod tests {
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
+        #[allow(deprecated)]
         let signing_time = signing_time_from_sign1(
             &cose_sign1,
             &claim_bytes,

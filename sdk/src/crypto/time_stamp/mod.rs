@@ -30,4 +30,5 @@ pub(crate) use response::tests::response_der;
 pub(crate) use response::{ContentInfo, TimeStampResponse};
 
 pub(crate) mod verify;
+#[allow(deprecated)]
 pub use verify::{tsa_signer_cert_der_from_token, verify_time_stamp, verify_time_stamp_async};

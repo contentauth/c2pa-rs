@@ -26,6 +26,12 @@ pub struct CertificateInfo {
     pub alg: Option<SigningAlg>,
 
     /// Date the signature was created
+    ///
+    /// See the [chrono migration guide](crate#chrono-migration).
+    #[deprecated(
+        since = "0.92.3",
+        note = "This date field uses the unmaintained chrono crate. Migrate to time::OffsetDateTime in 0.93.0; the replacement is not available on stable yet. Will be changed or removed in 0.93.0 (scheduled for mid-January 2027)."
+    )]
     pub date: Option<DateTime<Utc>>,
 
     /// Certificate serial number

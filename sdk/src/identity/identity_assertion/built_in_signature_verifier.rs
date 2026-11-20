@@ -288,6 +288,7 @@ mod tests {
     }
 
     #[c2pa_test_async]
+    #[allow(deprecated)]
     async fn adobe_connected_identities() {
         let format = "image/jpeg";
         let test_image =

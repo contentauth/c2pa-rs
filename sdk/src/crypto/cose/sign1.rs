@@ -155,6 +155,12 @@ fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
 /// Return the time of signing for this signature.
 ///
 /// Should not be used for certificate validation.
+///
+/// See the [chrono migration guide](crate#chrono-migration).
+#[deprecated(
+    since = "0.92.3",
+    note = "The chrono-based signing time API uses an unmaintained dependency. Migrate to the time::OffsetDateTime API in 0.93.0; it is not available on stable yet. Will be changed or removed in 0.93.0 (scheduled for mid-January 2027)."
+)]
 #[async_generic]
 pub fn signing_time_from_sign1(
     sign1: &coset::CoseSign1,
@@ -313,6 +319,7 @@ mod tests {
     }
 
     #[c2pa_macros::c2pa_test_async]
+    #[allow(deprecated)]
     async fn missing_timestamp_has_no_signing_time_in_either_api() {
         let sign1 = CoseSign1::default();
         assert!(signing_time_from_sign1(&sign1, b"", false).is_none());

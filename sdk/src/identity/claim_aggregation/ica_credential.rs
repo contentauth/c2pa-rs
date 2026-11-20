@@ -159,6 +159,12 @@ pub struct VerifiedIdentity {
     /// valid date-time as specified by RFC 3339. It represents the date and
     /// time when the relationship between the _named actor_ and the _identity
     /// provider_ was verified by the _identity assertion generator._
+    ///
+    /// See the [chrono migration guide](crate#chrono-migration).
+    #[deprecated(
+        since = "0.92.3",
+        note = "This date field uses the unmaintained chrono crate. Migrate to time::OffsetDateTime in 0.93.0; the replacement is not available on stable yet. Will be changed or removed in 0.93.0 (scheduled for mid-January 2027)."
+    )]
     #[serde(rename = "verifiedAt")]
     pub verified_at: DateTime<FixedOffset>,
 
@@ -233,6 +239,7 @@ pub struct IcaCredentialSummary {
 }
 
 impl IcaCredentialSummary {
+    #[allow(deprecated)]
     fn from_credential(ica: &IcaCredential) -> Self {
         let subject = ica.credential_subjects.first();
 

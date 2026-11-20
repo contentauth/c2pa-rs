@@ -20,6 +20,7 @@ use coset::{
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
+#[allow(deprecated)]
 use crate::{
     crypto::{
         asn1::rfc3161::{TimeStampResp, TstInfo},
@@ -134,6 +135,7 @@ pub(crate) fn validate_cose_tst_info(
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[async_generic]
+#[allow(deprecated)]
 pub(crate) fn parse_and_validate_sigtst(
     sigtst_cbor: &[u8],
     data: &[u8],
@@ -480,6 +482,7 @@ mod tests {
 
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[c2pa_macros::c2pa_test_async]
+    #[allow(deprecated)]
     async fn locally_signed_timestamps_round_trip_both_versions_and_apis() {
         use openssl::hash::MessageDigest;
 

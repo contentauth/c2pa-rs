@@ -22,6 +22,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use x509_parser::{certificate::X509Certificate, prelude::FromDer};
 
+#[allow(deprecated)]
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::Ingredient,
@@ -490,6 +491,7 @@ impl<'a> CrJsonExporter<'a> {
                 .and_then(|der| parse_certificate_from_der(der).ok().flatten())
         });
 
+        #[allow(deprecated)]
         let ts_time = signing_time_from_sign1(&sign1, data.as_ref(), false).map(|t| t.to_rfc3339());
 
         let tsa_cert_info = timestamp_token_bytes_from_sign1(&sign1).and_then(|token_bytes| {

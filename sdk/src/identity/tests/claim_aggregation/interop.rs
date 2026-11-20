@@ -59,6 +59,7 @@ async fn read_manifest_no_trust<R: std::io::Read + std::io::Seek + Send>(
 }
 
 #[c2pa_test_async]
+#[allow(deprecated)]
 async fn adobe_connected_identities() {
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/adobe_connected_identities.jpg");

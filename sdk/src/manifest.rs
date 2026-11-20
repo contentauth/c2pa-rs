@@ -702,7 +702,8 @@ impl Manifest {
             claim.signature_info_async().await
         };
 
-        manifest.signature_info = match si {
+        #[allow(deprecated)]
+        let signature_info = match si {
             Some(signature_info) => Some(SignatureInfo {
                 alg: signature_info.alg,
                 issuer: signature_info.issuer_org,
@@ -715,6 +716,8 @@ impl Manifest {
             }),
             None => None,
         };
+
+        manifest.signature_info = signature_info;
 
         Ok(manifest)
     }

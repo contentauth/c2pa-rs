@@ -104,6 +104,7 @@ fn change_certificate(
     sd.certificates = Some(vec![CertificateChoices::Certificate(Box::new(cert))].into());
 }
 
+#[allow(deprecated)]
 fn verify(token: &[u8]) -> (Result<TstInfo, TimeStampError>, StatusTracker) {
     let mut log = StatusTracker::default();
     let result = verify_time_stamp(
@@ -188,6 +189,7 @@ fn rsa_profiles_and_ski_signers_reach_normal_tsa_trust_validation() {
             }
 
             let mut log = StatusTracker::default();
+            #[allow(deprecated)]
             let result = verify_time_stamp(&encode(&sd), DATA, &policy, &mut log, true);
             assert!(result.is_ok(), "{result:?}: {log:?}");
             assert!(log.has_status(TIMESTAMP_VALIDATED));

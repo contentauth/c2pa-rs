@@ -221,6 +221,7 @@ pub struct X509SignatureReport {
 }
 
 impl X509SignatureReport {
+    #[allow(deprecated)]
     fn from_x509_signature_info(info: &X509SignatureInfo) -> Self {
         X509SignatureReport {
             signer_payload: info.signer_payload.clone(),
