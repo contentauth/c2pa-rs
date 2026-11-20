@@ -13,6 +13,7 @@
 
 use std::{
     fmt,
+    panic::{self, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, PoisonError, Weak,
@@ -45,6 +46,8 @@ impl CancellationToken {
     }
 
     /// Cancels the token, aborting every request registered with it.
+    ///
+    /// Every request is cancelled even if one's callback panics; the first such panic then resumes.
     pub fn cancel(&self) {
         self.inner.cancelled.store(true, Ordering::Release);
         let listeners = std::mem::take(
@@ -54,8 +57,14 @@ impl CancellationToken {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner),
         );
+        let mut first_panic = None;
         for listener in listeners.iter().filter_map(Weak::upgrade) {
-            listener.cancel();
+            if let Err(payload) = panic::catch_unwind(AssertUnwindSafe(|| listener.cancel())) {
+                first_panic.get_or_insert(payload);
+            }
+        }
+        if let Some(payload) = first_panic {
+            panic::resume_unwind(payload);
         }
     }
 
@@ -166,5 +175,30 @@ mod tests {
             .unwrap_or_else(PoisonError::into_inner)
             .len();
         assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn a_panicking_listener_does_not_stop_the_others() {
+        struct Panics;
+
+        impl Cancel for Panics {
+            #[allow(clippy::panic)]
+            fn cancel(&self) {
+                panic!("listener failure");
+            }
+        }
+
+        let token = CancellationToken::new();
+        let before = Arc::new(Counter::default());
+        let panics = Arc::new(Panics);
+        let after = Arc::new(Counter::default());
+        token.register(Arc::downgrade(&before) as Weak<dyn Cancel>);
+        token.register(Arc::downgrade(&panics) as Weak<dyn Cancel>);
+        token.register(Arc::downgrade(&after) as Weak<dyn Cancel>);
+
+        let cancelled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| token.cancel()));
+        assert!(cancelled.is_err(), "the listener's panic is re-raised");
+        assert_eq!(count(&before), 1);
+        assert_eq!(count(&after), 1);
     }
 }

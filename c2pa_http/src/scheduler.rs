@@ -578,6 +578,39 @@ mod tests {
     }
 
     #[test]
+    fn token_cancels_every_request_when_one_callback_panics() {
+        let scheduler = scheduler(1);
+        let token = CancellationToken::new();
+        let (gate, entered, release) = gate();
+        let (_, busy) = submit_and_wait(&scheduler, gate, None);
+        entered.recv_timeout(TIMEOUT).unwrap();
+
+        scheduler.submit(Echo::new(b""), get(), Some(&token), |_| {
+            panic!("callback failure")
+        });
+        let (_, rx) = submit_and_wait(&scheduler, Echo::new(b""), Some(&token));
+        let cancelled = panic::catch_unwind(AssertUnwindSafe(|| token.cancel()));
+
+        assert!(cancelled.is_err());
+        assert!(matches!(
+            rx.recv_timeout(TIMEOUT).unwrap(),
+            Err(HttpResolverError::Cancelled)
+        ));
+        release.send(()).unwrap();
+        busy.recv_timeout(TIMEOUT).unwrap().unwrap();
+    }
+
+    #[test]
+    fn maximum_body_limit_does_not_overflow() {
+        let scheduler = scheduler(1).with_max_response_body_size(u64::MAX);
+        let (_, rx) = submit_and_wait(&scheduler, Echo::new(b"body"), None);
+        assert_eq!(
+            rx.recv_timeout(TIMEOUT).unwrap().unwrap().into_body(),
+            b"body"
+        );
+    }
+
+    #[test]
     fn cancelling_a_queued_request_skips_it() {
         let scheduler = scheduler(1);
         let (gate, entered, release) = gate();

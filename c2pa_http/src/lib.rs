@@ -343,7 +343,7 @@ pub(crate) fn read_body(
     // Content-Length are also bounded.
     let (parts, body) = response.into_parts();
     let mut buf = Vec::new();
-    body.take(limit + 1).read_to_end(&mut buf)?;
+    body.take(limit.saturating_add(1)).read_to_end(&mut buf)?;
     if buf.len() as u64 > limit {
         return Err(HttpResolverError::ResponseTooLarge);
     }
@@ -593,6 +593,15 @@ pub mod tests {
     use async_generic::async_generic;
 
     use super::*;
+
+    #[test]
+    fn read_body_accepts_the_maximum_limit() {
+        let response = Response::new(Box::new(Cursor::new(b"body".to_vec())) as Box<dyn Read>);
+        assert_eq!(
+            read_body(response, Some(u64::MAX)).unwrap().into_body(),
+            b"body"
+        );
+    }
 
     #[cfg(all(
         not(target_arch = "wasm32"),
