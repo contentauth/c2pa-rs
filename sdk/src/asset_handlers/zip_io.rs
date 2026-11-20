@@ -221,6 +221,8 @@ impl AssetIO for ZipIO {
             // OpenXPS
             "oxps",
             "application/oxps",
+            // DAWproject (no registered media type)
+            "dawproject",
         ]
     }
 }
@@ -393,6 +395,13 @@ mod tests {
         include_bytes!("../../tests/fixtures/sample1.docx"),
         include_bytes!("../../tests/fixtures/sample1.odt"),
     ];
+
+    #[test]
+    fn test_dawproject_is_zip_format() {
+        let context = crate::Context::new();
+        assert!(context.io().is_zip_format("dawproject"));
+        assert!(context.io().writer("dawproject").is_some());
+    }
 
     #[test]
     fn test_write_bytes() {
