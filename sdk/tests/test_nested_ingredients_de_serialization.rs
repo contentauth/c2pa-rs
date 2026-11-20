@@ -530,38 +530,31 @@ fn test_diamond_topology_read() -> Result<()> {
     Ok(())
 }
 
-/// Test mixed v2/v3 ingredient versions in a provenance chain.
+/// Test mixed v1/v2 claim versions in a provenance chain.
 ///
-/// claim_version=1 creates ingredient assertions with the `c2pa_manifest` field (v2 format).
-/// Default claim_version (2) creates ingredient assertions with `active_manifest` (v3 format).
+/// The `CA.jpg` fixture holds a legacy v1 claim; the SDK can no
+/// longer sign v1 claims, but still reads them. Default claims (v2) have `active_manifest`
+/// ingredient assertions (v3 format).
 /// This verifies `build_ingredient_store` resolves both via the fallback chain.
 #[test]
-fn test_mixed_v2_v3_ingredient_versions() -> Result<()> {
+fn test_mixed_v1_v2_ingredient_versions() -> Result<()> {
     let context = test_context();
     let signer = context.signer()?;
 
     let format = "image/jpeg";
     let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg").as_slice());
 
-    // A: base manifest (v1 claim so it can be an ingredient of both v1 and v2 claims)
+    // A: base manifest
     let mut builder_a = Builder::from_shared_context(&context);
-    builder_a.definition.claim_version = Some(1);
     builder_a.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     let mut output_a = test_sign_manifest(&mut builder_a, format, &mut source, signer)?;
 
-    // B: claim_version=1 → v2 ingredient assertions (c2pa_manifest field)
-    let mut builder_b = Builder::from_shared_context(&context);
-    builder_b.definition.claim_version = Some(1);
-    builder_b.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
-    output_a.rewind()?;
-    builder_b.add_ingredient_from_stream(
-        serde_json::json!({"title": "A via B"}).to_string(),
-        format,
-        &mut output_a,
-    )?;
-    let mut output_b = test_sign_manifest(&mut builder_b, format, &mut source, signer)?;
+    // B: legacy v1 claim
+    let mut output_b = Cursor::new(include_bytes!("fixtures/CA.jpg").to_vec());
+    let reader_b = Reader::from_shared_context(&context).with_stream(format, &mut output_b)?;
+    assert_eq!(reader_b.active_manifest().unwrap().claim_version(), Some(1));
 
-    // C: default claim_version (2) → v3 ingredient assertions (active_manifest field)
+    // C: v2 claim → v3 ingredient assertions (active_manifest field)
     let mut builder_c = Builder::from_shared_context(&context);
     builder_c.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_a.rewind()?;
@@ -572,7 +565,7 @@ fn test_mixed_v2_v3_ingredient_versions() -> Result<()> {
     )?;
     let mut output_c = test_sign_manifest(&mut builder_c, format, &mut source, signer)?;
 
-    // D: combines B (v2 ingredients) and C (v3 ingredients)
+    // D: combines B (v1 claim) and C (v2 claim)
     let mut builder_d = Builder::from_shared_context(&context);
     builder_d.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_b.rewind()?;

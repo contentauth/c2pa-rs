@@ -42,8 +42,8 @@ use crate::{
         c2pa_action,
         labels::{self, parse_label},
         Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
-        DigitalSourceType, EmbeddedData, ExclusionsMap, Metadata, SoftwareAgent, Thumbnail,
-        TimeStamp, User, UserCbor,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, Metadata, SoftwareAgent, TimeStamp, User,
+        UserCbor,
     },
     claim::{Claim, ClaimAssertionType},
     context::{Context, ProgressPhase},
@@ -120,12 +120,10 @@ impl ArchiveKind {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct ManifestDefinition {
-    /// The version of the claim.  Defaults to 2.
+    /// The version of the claim.  Defaults to 2, the only version that can be signed.
     ///
-    /// C2PA v1 claim signing (`Some(1)`) is deprecated as of 0.92.0 and will be
-    /// removed in 0.93.0, scheduled for mid-January 2027. Omit this field or set
-    /// it to `Some(2)` to sign C2PA v2 claims instead. Reading and validating
-    /// existing C2PA v1 claims is unaffected.
+    /// C2PA v1 claim signing was removed in 0.93.0: signing with `Some(1)` fails.
+    /// Reading and validating existing C2PA v1 claims is unaffected.
     /// See the [migration guide](https://github.com/contentauth/c2pa-rs/blob/main/docs/c2pa-v1-signing-migration.md).
     pub claim_version: Option<u8>,
 
@@ -656,8 +654,8 @@ impl Builder {
 
     /// Returns the claim version for this builder.
     ///
-    /// If not set, defaults to 2.
-    /// Signing C2PA v1 claims is deprecated; see [`ManifestDefinition::claim_version`].
+    /// If not set, defaults to 2. Only version 2 can be signed; see
+    /// [`ManifestDefinition::claim_version`].
     pub fn claim_version(&self) -> u8 {
         self.definition.claim_version.unwrap_or(2)
     }
@@ -1536,29 +1534,46 @@ impl Builder {
     /// ```
     pub fn with_archive(self, stream: impl Read + Seek + Send) -> Result<Self> {
         let mut stream = stream;
-        Self::old_from_archive(&mut stream).or_else(|_| {
-            // if the old method fails, try the new method
-            // Archives contain unsigned working stores (signed with BoxHash placeholder)
+        // A legacy ZIP archive that loads must still pass the claim version check.
+        if let Ok(builder) = Self::old_from_archive(&mut stream) {
+            builder.check_claim_version()?;
+            return Ok(builder);
+        }
+        // if the old method fails, try the new method
+        // Archives contain unsigned working stores (signed with BoxHash placeholder)
 
-            let mut validation_log = crate::status_tracker::StatusTracker::default();
-            stream.rewind()?; // Ensure stream is at the start
+        let mut validation_log = crate::status_tracker::StatusTracker::default();
+        stream.rewind()?; // Ensure stream is at the start
 
-            // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
-            let store = Store::from_stream(
-                "application/c2pa",
-                &mut stream,
-                &mut validation_log,
-                &self.context,
-            )?;
+        // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
+        let store = Store::from_stream(
+            "application/c2pa",
+            &mut stream,
+            &mut validation_log,
+            &self.context,
+        )?;
 
-            let mut reader = Reader::from_shared_context(&self.context);
-            reader.with_store(store, &mut validation_log)?;
-            reader.into_builder()
-        })
+        let mut reader = Reader::from_shared_context(&self.context);
+        reader.with_store(store, &mut validation_log)?;
+        reader.into_builder()
+    }
+
+    /// Only C2PA v2 claims can be signed.
+    fn check_claim_version(&self) -> Result<()> {
+        if self.claim_version() != 2 {
+            return Err(Error::BadParam(format!(
+                "unsupported claim_version {}: signing C2PA v1 claims was removed in 0.93.0, \
+                 omit claim_version or set it to 2",
+                self.claim_version()
+            )));
+        }
+        Ok(())
     }
 
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
+        self.check_claim_version()?;
+
         // utility function to add created or gathered assertions
         fn add_assertion(
             claim: &mut Claim,
@@ -1592,37 +1607,17 @@ impl Builder {
 
         claim_generator_info[0].insert("org.contentauth.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
-        // Build the claim_generator string since this is required
-        let claim_generator: String = if self.claim_version() == 1 {
-            log::warn!(
-                "C2PA v1 claim signing is deprecated as of 0.92.0 and will be removed in \
-                 0.93.0 (scheduled for mid-January 2027). Omit claim_version or set it to 2 \
-                 to sign C2PA v2 claims instead."
-            );
-            claim_generator_info
-                .iter()
-                .map(|s| {
-                    let name = s.name.replace(' ', "_");
-                    if let Some(version) = s.version.as_deref() {
-                        format!("{}/{}", name.to_lowercase(), version)
-                    } else {
-                        name
-                    }
-                })
-                .collect::<Vec<String>>()
-                .join(" ")
-        } else {
-            "".to_string() // claim_generator is not used in version 2
-        };
+        // `claim_generator` is not used in version 2 claims.
+        let claim_generator = "";
 
         let mut claim = match definition.label.as_ref() {
             Some(label) => Claim::new_with_user_guid(
-                &claim_generator,
+                claim_generator,
                 &label.to_string(),
                 self.claim_version().into(),
             )?,
             None => Claim::new(
-                &claim_generator,
+                claim_generator,
                 definition.vendor.as_deref(),
                 self.claim_version().into(),
             ),
@@ -1668,19 +1663,11 @@ impl Builder {
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
-                let thumbnail = if claim.version() >= 2 {
-                    EmbeddedData::new(
-                        labels::CLAIM_THUMBNAIL,
-                        format_to_mime(&thumb_ref.format),
-                        data,
-                    )
-                } else {
-                    Thumbnail::new(
-                        &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
-                        data,
-                    )
-                    .into()
-                };
+                let thumbnail = EmbeddedData::new(
+                    labels::CLAIM_THUMBNAIL,
+                    format_to_mime(&thumb_ref.format),
+                    data,
+                );
                 // todo: add setting for created added thumbnails
                 add_assertion(&mut claim, &thumbnail, false)?;
             }
@@ -1807,11 +1794,9 @@ impl Builder {
                         uris.push(hash_url.clone());
                     } else {
                         log::error!("Action ingredientId not found: {id}");
-                        if claim.version() >= 2 {
-                            return Err(Error::AssertionSpecificError(format!(
-                                "Action ingredientId not found: {id}"
-                            )));
-                        }
+                        return Err(Error::AssertionSpecificError(format!(
+                            "Action ingredientId not found: {id}"
+                        )));
                     }
                 }
 
@@ -1830,7 +1815,7 @@ impl Builder {
     }
 
     /// Converts every resource-reference icon in `actions` into a hashed URI, adding the icon
-    /// assertions (or v1 data boxes) to `claim`.
+    /// assertions to `claim`.
     ///
     /// Covers top-level `softwareAgents`, per-action `softwareAgent`, and template `icon` and
     /// `softwareAgent` icons. Icons that are already hashed URIs are left unchanged.
@@ -2316,19 +2301,11 @@ impl Builder {
                 stream.rewind()?;
                 let thumb_format = output_format.to_string();
 
-                let thumbnail = if claim.version() >= 2 {
-                    EmbeddedData::new(
-                        labels::CLAIM_THUMBNAIL,
-                        format_to_mime(&thumb_format),
-                        image.clone(),
-                    )
-                } else {
-                    Thumbnail::new(
-                        &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_format),
-                        image.clone(),
-                    )
-                    .into()
-                };
+                let thumbnail = EmbeddedData::new(
+                    labels::CLAIM_THUMBNAIL,
+                    format_to_mime(&thumb_format),
+                    image.clone(),
+                );
                 claim.add_created_assertion(&thumbnail)?;
             }
         }
@@ -2352,16 +2329,7 @@ impl Builder {
         );
         // Don't auto-add a parentOf ingredient if the user's manifest already declares a
         // c2pa.created or c2pa.opened action — those are mutually exclusive with auto-parent.
-        // v1 claims have no created/gathered split, so their declared actions live in the single
-        // actions list rather than `created_action_assertions()`; inspect all action assertions
-        // for v1 so the guard isn't bypassed (which would auto-add a second actions assertion and
-        // fail validation with "only one action assertion allowed for v1 claims").
-        let action_assertions = if claim.version() < 2 {
-            claim.action_assertions()
-        } else {
-            claim.created_action_assertions()
-        };
-        let has_created_or_opened = action_assertions.into_iter().any(|a| {
+        let has_created_or_opened = claim.created_action_assertions().into_iter().any(|a| {
             if !a.label().starts_with(crate::assertions::Actions::LABEL) {
                 return false;
             }
@@ -5115,58 +5083,37 @@ mod tests {
         assert_eq!(gathered_actions.actions()[0].action(), c2pa_action::CROPPED);
     }
 
-    // Regression (CAI-13962 / c2pa-rs#2720): a v1 claim whose manifest already declares its own
-    // c2pa.opened/created action must not get a second actions assertion auto-added under an Edit
-    // intent. v1 claims have no created/gathered split, so the auto-parent guard has to inspect
-    // all action assertions (not only `created_action_assertions()`); otherwise a second actions
-    // assertion is added and validation fails with "only one action assertion allowed for v1
-    // claims".
     #[test]
-    fn test_v1_declared_action_blocks_auto_parent_and_second_actions_assertion() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        let format = "image/jpeg";
-        let mut source = Cursor::new(TEST_IMAGE);
-        let mut dest = Cursor::new(Vec::new());
-
-        let manifest = json!({
-            "claim_version": 1,
-            "title": "V1 Declared Action",
-            "assertions": [
-                {
-                    "label": "c2pa.actions",
-                    "data": { "actions": [ { "action": "c2pa.opened" } ] }
-                }
-            ]
-        })
-        .to_string();
-
-        let mut builder = Builder::from_context(test_context())
-            .with_definition(manifest)
-            .unwrap();
-        // Default c2patool behaviour: Edit intent with no explicitly supplied parent.
-        builder.set_intent(BuilderIntent::Edit);
-
+    fn test_unsupported_claim_version_is_rejected() {
         let signer = test_signer(SigningAlg::Ps256);
-        builder
-            .sign(signer.as_ref(), format, &mut source, &mut dest)
-            .unwrap();
 
-        dest.rewind().unwrap();
-        let reader = Reader::from_context(test_context())
-            .with_stream(format, &mut dest)
-            .unwrap();
-        assert_ne!(reader.validation_state(), ValidationState::Invalid);
+        for claim_version in [1, 3] {
+            let mut builder = Builder::from_context(test_context())
+                .with_definition(json!({ "claim_version": claim_version }).to_string())
+                .unwrap();
+            let mut source = Cursor::new(TEST_IMAGE);
+            let mut dest = Cursor::new(Vec::new());
 
-        // Exactly one c2pa.actions assertion must exist for the v1 claim.
-        let active = reader.active_manifest().unwrap();
-        let action_assertions = active
-            .assertions()
-            .iter()
-            .filter(|a| a.label().starts_with("c2pa.actions"))
-            .count();
-        assert_eq!(action_assertions, 1);
+            let err = builder
+                .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+                .unwrap_err();
+            assert!(
+                matches!(&err, Error::BadParam(msg) if msg.contains("claim_version")),
+                "unexpected error: {err:?}"
+            );
+            assert!(dest.get_ref().is_empty());
+            assert!(builder.to_archive(&mut Cursor::new(Vec::new())).is_err());
+        }
+
+        for claim_version in [None, Some(2)] {
+            let mut builder = Builder::from_context(test_context());
+            builder.definition.claim_version = claim_version;
+            let mut source = Cursor::new(TEST_IMAGE);
+            let mut dest = Cursor::new(Vec::new());
+            builder
+                .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+                .unwrap();
+        }
     }
 
     #[test]
@@ -7478,7 +7425,6 @@ mod tests {
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
 
         let definition = ManifestDefinition {
-            claim_version: Some(1),
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
             format: "image/jpeg".to_string(),
             title: Some("Test_Manifest".to_string()),
@@ -7495,6 +7441,8 @@ mod tests {
         let mut builder = Builder::from_context(context)
             .with_definition(definition)
             .unwrap();
+        // A v2 claim must start with a created or opened action.
+        builder.set_intent(BuilderIntent::Edit);
 
         let parent_json = json!({
             "title": "Parent Test",
@@ -9805,18 +9753,10 @@ mod tests {
 
         // Step 1: Build a v1 manifest with an ingredient that has a thumbnail.
         // In a v1 claim, the ingredient thumbnail is stored in a databox, and
-        // we need that to verify that redaction in this case.
+        // we need that to verify that redaction in this case. The Builder can
+        // no longer sign v1 claims, so go through the claim and store directly.
         let mut parent_source = Cursor::new(TEST_IMAGE);
         let mut clean_source = Cursor::new(TEST_IMAGE_CLEAN);
-
-        let mut v1_builder = Builder {
-            definition: ManifestDefinition {
-                claim_version: Some(1),
-                title: Some("V1 Parent".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
 
         // Add an ingredient with an explicit thumbnail so it ends up in a databox
         let mut ingredient = Ingredient::from_json(&parent_json()).unwrap();
@@ -9826,18 +9766,27 @@ mod tests {
         ingredient
             .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
             .unwrap();
-        v1_builder.add_ingredient(ingredient);
 
         let signer = test_signer(SigningAlg::Ps256);
+        let shared_context = Arc::new(test_context());
+        let mut v1_claim =
+            Claim::new("v1 parent", Some("contentauth"), 1).with_context(shared_context.clone());
+        ingredient
+            .add_to_claim(&mut v1_claim, None, None, &shared_context)
+            .unwrap();
+        let mut v1_store = Store::from_context(&shared_context);
+        v1_store.commit_claim(v1_claim).unwrap();
+
         let mut v1_output = Cursor::new(Vec::new());
-        v1_builder
-            .sign(
-                signer.as_ref(),
+        v1_store
+            .save_to_stream(
                 "image/jpeg",
                 &mut clean_source,
                 &mut v1_output,
+                signer.as_ref(),
+                &shared_context,
             )
-            .expect("v1 builder sign");
+            .expect("v1 store sign");
 
         // Verify the v1 asset has a databox thumbnail in the ingredient
         v1_output.set_position(0);
@@ -11104,9 +11053,8 @@ mod tests {
 
     /// `set_thumbnail` stores the format verbatim, bypassing `format_to_mime`.
     #[test]
-    fn test_set_thumbnail_uppercase_mime_v1_claim() {
+    fn test_set_thumbnail_uppercase_mime() {
         let definition = ManifestDefinition {
-            claim_version: Some(1),
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
             format: "image/jpeg".to_string(),
             title: Some("Test_Manifest".to_string()),
@@ -11124,23 +11072,13 @@ mod tests {
             .expect("thumbnail should be set");
 
         let claim = builder.to_claim().expect("claim should build");
-        let labels: Vec<String> = claim
+        let thumbnail_assertion = claim
             .claim_assertion_store()
             .iter()
-            .map(|a| a.label_raw())
-            .collect();
+            .find(|a| a.label_raw().contains(labels::CLAIM_THUMBNAIL))
+            .expect("expected a claim thumbnail assertion");
 
-        assert!(
-            labels
-                .iter()
-                .any(|l| l.contains(labels::JPEG_CLAIM_THUMBNAIL)),
-            "expected a {} assertion, got: {labels:?}",
-            labels::JPEG_CLAIM_THUMBNAIL
-        );
-        assert!(
-            !labels.iter().any(|l| l.contains("IMAGE/JPEG")),
-            "uppercase format leaked into an assertion label: {labels:?}"
-        );
+        assert_eq!(thumbnail_assertion.assertion().content_type(), "image/jpeg");
     }
 
     #[test]
@@ -11163,6 +11101,38 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_with_archive_rejects_v1_claim() {
+        let context = test_context();
+        let (jumbf, _) =
+            Store::load_jumbf_from_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &context)
+                .unwrap();
+
+        let result = Builder::from_context(context).with_archive(Cursor::new(jumbf));
+        assert!(matches!(result, Err(Error::BadParam(_))), "{result:?}");
+    }
+
+    #[test]
+    fn test_with_archive_rejects_v1_zip_archive() {
+        use std::io::Write as _;
+
+        use zip::{write::SimpleFileOptions, ZipWriter};
+
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("manifest.json", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .write_all(
+                br#"{"claim_version":1,"title":"Legacy","format":"application/octet-stream","instance_id":"xmp:iid:1","ingredients":[],"assertions":[],"no_embed":false,"timestamp_manifest_labels":[]}"#,
+            )
+            .unwrap();
+        let zip = writer.finish().unwrap();
+
+        let result = Builder::default().with_archive(zip);
+        assert!(matches!(result, Err(Error::BadParam(_))), "{result:?}");
     }
 
     #[test]

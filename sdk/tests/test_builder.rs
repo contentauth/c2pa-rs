@@ -28,36 +28,9 @@ use common::compare_stream_to_known_good;
 use common::{test_context, test_settings, test_signer};
 
 #[test]
-fn test_v1_signing_deprecation_warning() -> Result<()> {
-    use std::cell::RefCell;
-
-    thread_local! {
-        static WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    }
-
-    struct WarningLogger;
-
-    impl log::Log for WarningLogger {
-        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-            metadata.level() == log::Level::Warn && metadata.target() == "c2pa::builder"
-        }
-
-        fn log(&self, record: &log::Record<'_>) {
-            if self.enabled(record.metadata()) {
-                let message = record.args().to_string();
-                if message.starts_with("C2PA v1 claim signing is deprecated") {
-                    WARNINGS.with_borrow_mut(|warnings| warnings.push(message));
-                }
-            }
-        }
-
-        fn flush(&self) {}
-    }
-
-    log::set_logger(&WarningLogger).expect("test logger should be installed once");
-    log::set_max_level(log::LevelFilter::Warn);
-
+fn test_v1_claim_signing_removed() -> Result<()> {
     let context = test_context().into_shared();
+
     for claim_version in [Some(1), None, Some(2)] {
         let mut builder = Builder::from_shared_context(&context);
         builder.definition.claim_version = claim_version;
@@ -65,29 +38,34 @@ fn test_v1_signing_deprecation_warning() -> Result<()> {
 
         let mut source = Cursor::new(include_bytes!("fixtures/CA.jpg"));
         let mut dest = Cursor::new(Vec::new());
-        builder.sign(context.signer()?, "image/jpeg", &mut source, &mut dest)?;
+        let result = builder.sign(context.signer()?, "image/jpeg", &mut source, &mut dest);
 
-        let warnings = WARNINGS.take();
         if claim_version == Some(1) {
-            assert!(!warnings.is_empty());
-            for warning in warnings {
-                assert!(warning.contains("deprecated as of 0.92.0"));
-                assert!(warning.contains("removed in 0.93.0"));
-                assert!(warning.contains("mid-January 2027"));
-                assert!(warning.contains("Omit claim_version or set it to 2"));
-            }
-        } else {
-            assert!(warnings.is_empty());
+            assert!(matches!(result, Err(Error::BadParam(_))));
+            assert!(dest.get_ref().is_empty());
+            continue;
         }
+        result?;
 
         dest.set_position(0);
         let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
-        assert_eq!(
-            reader.active_manifest().unwrap().claim_version(),
-            Some(claim_version.unwrap_or(2))
-        );
+        assert_eq!(reader.active_manifest().unwrap().claim_version(), Some(2));
     }
+
+    Ok(())
+}
+
+// A v1 manifest cannot be converted to a Builder, since it could only be re-signed as v1.
+#[test]
+fn test_v1_manifest_into_builder_is_rejected() -> Result<()> {
+    let context = test_context().into_shared();
+    let mut source = Cursor::new(include_bytes!("fixtures/CA.jpg"));
+
+    let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut source)?;
+    assert_eq!(reader.active_manifest().unwrap().claim_version(), Some(1));
+
+    assert!(matches!(reader.into_builder(), Err(Error::BadParam(_))));
 
     Ok(())
 }
@@ -140,7 +118,6 @@ fn test_builder_riff() -> Result<()> {
 
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
-    builder.definition.claim_version = Some(1); // use v1 for this test
     builder.no_embed = true;
     builder.sign(context.signer()?, format, &mut source, &mut io::empty())?;
 
