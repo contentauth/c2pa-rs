@@ -20,7 +20,8 @@ use super::DataHash;
 use crate::{
     assertion::{Assertion, AssertionBase},
     assertions::asset_binding::{
-        asset_io_error, AssetBinding, BindingKind, HashSpan, MaybeBinding, PlannedAsset,
+        asset_io_error, normalize_ranges, AssetBinding, BindingKind, HashSpan, MaybeBinding,
+        PlannedAsset,
     },
     claim::Claim,
     context::Context,
@@ -31,6 +32,10 @@ use crate::{
 
 /// The name a new data hash gives the manifest exclusion.
 const NAME: &str = "jumbf manifest";
+
+/// Padding reserved for the final exclusions' CBOR to grow into, as the legacy
+/// save does.
+const SLACK: usize = 10;
 
 impl DataHash {
     /// How a data hash is found in a claim and chosen by default.
@@ -47,7 +52,7 @@ impl DataHash {
             hash.add_exclusion(exclusion);
         }
         hash.set_hash(vec![0; hash_size_by_alg(alg)?]);
-        hash.add_padding(vec![0; 10]);
+        hash.add_padding(vec![0; SLACK]);
         Ok(hash)
     }
 
@@ -61,9 +66,12 @@ fn from_claim(claim: &Claim) -> MaybeBinding {
     let Some(assertion) = assertions.first() else {
         return Ok(None);
     };
-    let hash = DataHash::from_assertion(assertion.assertion())?;
+    let mut hash = DataHash::from_assertion(assertion.assertion())?;
     if hash.is_remote_hash() {
         return Err(Error::NotImplemented("remote data hash".into()));
+    }
+    if hash.pad.is_empty() && hash.pad2.is_none() {
+        hash.add_padding(vec![0; SLACK]);
     }
     Ok(Some(Box::new(hash)))
 }
@@ -92,12 +100,15 @@ impl AssetBinding for DataHash {
         asset: &mut PlannedAsset<'_, '_>,
         default_alg: &str,
     ) -> Result<Vec<HashSpan>> {
+        // Touching ranges (a store split across JPEG APP11 segments) are merged
+        // into one exclusion, so their number does not depend on the store's size.
         let exclusions = match asset.store() {
             Some(store) => {
-                let ranges = asset
+                let mut ranges = asset
                     .structure()
                     .c2pa_data_hash_exclusions(store)
                     .map_err(asset_io_error)?;
+                normalize_ranges(&mut ranges)?;
                 if ranges.is_empty() {
                     return Err(Error::EmbeddingError);
                 }
@@ -120,6 +131,12 @@ impl AssetBinding for DataHash {
 
     fn set_hashes(&mut self, digests: Vec<Vec<u8>>) {
         self.set_hash(digests.into_iter().next().unwrap_or_default());
+    }
+
+    fn fit_to_size(&mut self, len: usize) -> Result<()> {
+        self.pad.clear();
+        self.pad2 = None;
+        self.pad_to_size(len)
     }
 }
 

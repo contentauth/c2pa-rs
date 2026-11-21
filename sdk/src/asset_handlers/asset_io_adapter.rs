@@ -354,7 +354,17 @@ impl C2paWriter for AssetIoAdapter {
             let x = if self.excludes_payload_only() {
                 part.range()
             } else {
-                layout.segment(part.segment()).map_err(err)?.range()
+                let segment = layout.segment(part.segment()).map_err(err)?;
+                if self.container() == Some(aio::containers::riff::ID) {
+                    // A RIFF chunk's alignment pad byte lies outside its declared
+                    // length and stays hashed, as asset-io and legacy RIFF exclude it.
+                    segment
+                        .range()
+                        .sub(0, segment.range().len() - segment.trailer().len())
+                        .map_err(err)?
+                } else {
+                    segment.range()
+                }
             };
             start = start.min(x.offset());
             end = end.max(x.end());

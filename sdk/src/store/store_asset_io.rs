@@ -1,17 +1,17 @@
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 
 use ::asset_io::{
     container_api::{
         BoxFuture, ContainerHandler, FormatSpec, Io, MetadataUpdate, PlanBuilder, StructureBuilder,
         WritePlan,
     },
-    ItemKind, NullSink, SegmentId, Structure, Updates,
+    ItemKind, NullSink, SegmentId, Sink, Structure, Updates,
 };
 
 use crate::{
     assertions::asset_binding::{
         asset_io_error, binding_from_claim, default_binding, AssetBinding, BuiltAssertion,
-        PlannedAsset, SpanHasher,
+        PlannedAsset, ProgressSink, SpanHasher,
     },
     asset_handlers::asset_io_adapter::{store_err, MANIFEST_PLACEHOLDER},
     asset_io::{ReadSeek, ReadWriteSeek},
@@ -23,11 +23,6 @@ use crate::{
     utils::xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
     Signer,
 };
-
-/// Most times the manifest is rebuilt for its size to settle. Absolute offsets in
-/// a hard binding can change the width of CBOR integers, and so the manifest's
-/// size, which moves the offsets again.
-const MAX_SETTLE_PASSES: usize = 8;
 
 /// Unregistered fallback for assets that can only be copied to a sidecar output.
 #[derive(Debug)]
@@ -70,41 +65,6 @@ impl ContainerHandler for OpaqueHandler {
                 builder.copy_segment(SegmentId::from_index(index)?)?;
             }
             builder.finish()
-        })
-    }
-}
-
-/// What the provenance claim asks of a save.
-struct SaveRequest {
-    alg: String,
-    embed: bool,
-    remote_url: Option<String>,
-    /// An update manifest, which has no hard binding of its own.
-    update: bool,
-    /// The claim's own hard binding, if it has one.
-    binding: Option<Box<dyn AssetBinding>>,
-}
-
-impl SaveRequest {
-    fn from_store(store: &Store) -> Result<Self> {
-        let claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let (embed, remote_url) = match claim.remote_manifest() {
-            RemoteManifest::NoRemote => (true, None),
-            RemoteManifest::SideCar => (false, None),
-            RemoteManifest::Remote(url) => (false, Some(url)),
-            RemoteManifest::EmbedWithRemote(url) => (true, Some(url)),
-        };
-        let update = claim.update_manifest();
-        let binding = binding_from_claim(claim)?;
-        if update && binding.is_some() {
-            return Err(Error::UpdateManifestInvalid);
-        }
-        Ok(Self {
-            alg: claim.alg().to_owned(),
-            embed,
-            remote_url,
-            update,
-            binding,
         })
     }
 }
@@ -164,17 +124,36 @@ fn provenance_xmp(
     Ok(Some(packet.into_bytes()))
 }
 
-/// The updates for a save: any existing store removed, `xmp` set if given, and
-/// `store` set if given.
-fn save_updates(xmp: Option<&[u8]>, store: Option<Vec<u8>>) -> Updates {
-    let mut updates = Updates::new().remove_c2pa();
-    if let Some(xmp) = xmp {
-        updates = updates.set_xmp(xmp.to_vec());
-    }
-    if let Some(store) = store {
-        updates = updates.set_c2pa(store);
-    }
-    updates
+/// Stream `plan` from `input` into `output` and `sink`, reporting progress in
+/// `phase`, and give `sink` back.
+fn run_plan<S: Sink>(
+    plan: &WritePlan<'_>,
+    input: &mut dyn ReadSeek,
+    output: &mut dyn Write,
+    sink: S,
+    phase: ProgressPhase,
+    context: &Context,
+) -> Result<S> {
+    let mut sink = ProgressSink::new(sink, context, phase, plan.structure().total_size());
+    input.rewind()?;
+    plan.execute(input, output, &mut sink)
+        .map_err(asset_io_error)?;
+    Ok(sink.into_inner())
+}
+
+/// Write `plan` into `output`, reporting progress in `phase`.
+fn write_plan<S: Sink>(
+    plan: &WritePlan<'_>,
+    input: &mut dyn ReadSeek,
+    output: &mut dyn ReadWriteSeek,
+    sink: S,
+    phase: ProgressPhase,
+    context: &Context,
+) -> Result<S> {
+    output.rewind()?;
+    let sink = run_plan(plan, input, output, sink, phase, context)?;
+    output.flush()?;
+    Ok(sink)
 }
 
 /// Fill the placeholder store of `written`, already in `output`, with `store`.
@@ -209,9 +188,9 @@ impl Store {
         format: &str,
         input: &mut dyn ReadSeek,
         output: &mut dyn ReadWriteSeek,
-        signer: &dyn Signer,
         context: &Context,
     ) -> Result<Vec<u8>> {
+        let signer = context.signer()?;
         let io = context.io();
         let handler = io.container_handler(format);
         if handler.is_none() && io.handler(format).is_some() {
@@ -223,210 +202,152 @@ impl Store {
         let dynamic_assertions = signer.dynamic_assertions();
         self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
 
-        let request = SaveRequest::from_store(self)?;
-        let handler = handler.unwrap_or_else(|| Arc::new(OpaqueHandler));
-        let structure = open_structure(handler, input)?;
-        let xmp = provenance_xmp(&structure, input, request.remote_url.as_deref())?;
-        let save = DirectSave {
-            format,
-            structure: &structure,
-            xmp: xmp.as_deref(),
-            embed: request.embed,
-            signer,
-            dynamic_assertions: &dynamic_assertions,
-            context,
+        let claim = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let (embed, remote_url) = match claim.remote_manifest() {
+            RemoteManifest::NoRemote => (true, None),
+            RemoteManifest::SideCar => (false, None),
+            RemoteManifest::Remote(url) => (false, Some(url)),
+            RemoteManifest::EmbedWithRemote(url) => (true, Some(url)),
         };
-        if request.update {
-            return self.save_update_manifest(&save, input, output);
+        let alg = claim.alg().to_owned();
+        let update = claim.update_manifest();
+        let claim_binding = binding_from_claim(claim)?;
+        if update && claim_binding.is_some() {
+            return Err(Error::UpdateManifestInvalid);
         }
 
-        let existing = request.binding.is_some();
-        let binding = match request.binding {
+        // An asset with no container handler is copied unchanged.
+        let handler = handler.unwrap_or_else(|| Arc::new(OpaqueHandler));
+        let structure = open_structure(handler, input)?;
+        let xmp = provenance_xmp(&structure, input, remote_url.as_deref())?;
+        // Any existing store is removed, and replaced by `store` if given.
+        let updates_with = |store: Option<Vec<u8>>| {
+            let mut updates = Updates::new().remove_c2pa();
+            if let Some(xmp) = &xmp {
+                updates = updates.set_xmp(xmp.clone());
+            }
+            if let Some(store) = store {
+                updates = updates.set_c2pa(store);
+            }
+            updates
+        };
+
+        // An update manifest has no hard binding, so it is signed first and written
+        // once. A container that keeps the original store apart (ISO BMFF) leaves
+        // it in place and adds only the update.
+        if update {
+            let signed = self.sign_for_save(signer, &dynamic_assertions, context, None)?;
+            let mut updates = updates_with(embed.then(|| signed.clone()));
+            if embed {
+                updates = updates.as_update();
+            }
+            let plan = plan_write(&structure, input, &updates)?;
+            write_plan(
+                &plan,
+                input,
+                output,
+                NullSink,
+                ProgressPhase::Writing,
+                context,
+            )?;
+            if embed {
+                context.check_progress(ProgressPhase::Embedding, 1, 1)?;
+            }
+            self.embedded = embed;
+            self.verify_after_save(output, format, context)?;
+            return Ok(signed);
+        }
+
+        let existing = claim_binding.is_some();
+        let mut binding = match claim_binding {
             Some(binding) => binding,
             None => {
                 let claim = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                default_binding(&structure, context, claim, &request.alg)?
+                default_binding(&structure, context, claim, &alg)?
             }
         };
         binding.check_structure(&structure)?;
 
-        // A compressed store's size is only known once it is signed, so only a
-        // binding that does not depend on the store's size can bind it. Anything
-        // else is saved uncompressed, as `save_to_stream` saves it.
+        // A compressed store's size is only known once it is signed, so an
+        // embedded one can only be bound by a binding that does not depend on the
+        // store's size; anything else is saved uncompressed. Such a store is hashed
+        // in a pass that writes nothing and written once signed. A detached store
+        // is not in the asset, so it can always be compressed.
         let claim = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        if claim.compressed() && binding.depends_on_store_size() {
+        if claim.compressed() && embed && binding.depends_on_store_size() {
             claim.set_compressed_manifest(false);
         }
-        if claim.compressed() {
-            return self.save_unsized_store(&save, input, output, binding, existing, &request.alg);
-        }
-        self.save_settled_store(&save, input, output, binding, existing, &request.alg)
-    }
+        let write_after_signing = embed && claim.compressed();
+        let reserve_size = signer.reserve_size();
 
-    /// Save with a store whose size is settled before writing: write and hash in
-    /// one pass with a placeholder store, sign, then patch the store in place.
-    fn save_settled_store(
-        &mut self,
-        save: &DirectSave<'_>,
-        input: &mut dyn ReadSeek,
-        output: &mut dyn ReadWriteSeek,
-        mut binding: Box<dyn AssetBinding>,
-        existing: bool,
-        alg: &str,
-    ) -> Result<Vec<u8>> {
-        let reserve_size = save.signer.reserve_size();
-        let embed = save.embed;
-        let placeholder = |store: &[u8]| embed.then(|| store.to_vec());
-
-        // The binding's ranges with the smallest store, to put it in the claim.
-        let mut updates = save_updates(save.xmp, placeholder(MANIFEST_PLACEHOLDER));
-        {
-            let plan = plan_write(save.structure, input, &updates)?;
-            binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, alg)?;
-        }
-        self.put_binding(binding.as_ref(), existing)?;
-
-        // Settle the manifest's size before writing, without copying the asset.
-        let mut store = self.to_jumbf_internal(reserve_size)?;
-        if embed {
-            let mut settled = false;
-            for _ in 0..MAX_SETTLE_PASSES {
-                updates = save_updates(save.xmp, placeholder(&store));
-                {
-                    let plan = plan_write(save.structure, input, &updates)?;
-                    binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, alg)?;
-                }
-                self.put_binding(binding.as_ref(), true)?;
-                let next = self.to_jumbf_internal(reserve_size)?;
-                settled = next.len() == store.len();
-                store = next;
-                if settled {
-                    break;
-                }
+        // Fix the binding's and an embedded store's sizes from the binding's ranges
+        // with the smallest store. Like the legacy save, the binding carries
+        // padding for its final ranges' CBOR to grow into.
+        let mut store = embed.then(|| MANIFEST_PLACEHOLDER.to_vec());
+        let mut sizes = None;
+        if embed && !write_after_signing {
+            let updates = updates_with(store.take());
+            {
+                let plan = plan_write(&structure, input, &updates)?;
+                binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, &alg)?;
             }
-            if !settled {
+            self.put_binding(binding.as_ref(), existing)?;
+            let binding_len = binding.assertion()?.data().len();
+            let sized = self.to_jumbf_internal(reserve_size)?;
+            sizes = Some((binding_len, sized.len()));
+            store = Some(sized);
+        }
+
+        // Hash the output, writing it unless it waits for the signed store.
+        let updates = updates_with(store);
+        let plan = plan_write(&structure, input, &updates)?;
+        let spans = binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, &alg)?;
+        match sizes {
+            Some((binding_len, _)) => binding.fit_to_size(binding_len)?,
+            None => self.put_binding(binding.as_ref(), existing)?,
+        }
+        let hasher = SpanHasher::new(spans)?;
+        let hasher = if write_after_signing {
+            let sink = &mut std::io::sink();
+            run_plan(&plan, input, sink, hasher, ProgressPhase::Hashing, context)?
+        } else {
+            write_plan(
+                &plan,
+                input,
+                output,
+                hasher,
+                ProgressPhase::Hashing,
+                context,
+            )?
+        };
+        binding.set_hashes(hasher.finish());
+        self.put_binding(binding.as_ref(), true)?;
+
+        let store_len = sizes.map(|(_, store_len)| store_len);
+        if let Some(store_len) = store_len {
+            if self.to_jumbf_internal(reserve_size)?.len() != store_len {
                 return Err(Error::JumbfCreationError);
             }
-            updates = save_updates(save.xmp, placeholder(&store));
         }
-        let store_len = store.len();
-
-        // Write and hash in one pass.
-        let plan = plan_write(save.structure, input, &updates)?;
-        let spans = binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, alg)?;
-        let mut hasher = SpanHasher::new(spans, save.context)?;
-        save.context.check_progress(ProgressPhase::Writing, 1, 2)?;
-        input.rewind()?;
-        output.rewind()?;
-        plan.execute(input, output, &mut hasher)
-            .map_err(asset_io_error)?;
-        output.flush()?;
-        save.context.check_progress(ProgressPhase::Writing, 2, 2)?;
-        binding.set_hashes(hasher.finish());
-        self.put_binding(binding.as_ref(), true)?;
-
-        if embed && self.to_jumbf_internal(reserve_size)?.len() != store_len {
-            return Err(Error::JumbfCreationError);
-        }
-        let signed = self.sign_for_save(
-            save.signer,
-            save.dynamic_assertions,
-            save.context,
-            embed.then_some(store_len),
-        )?;
-        if embed {
+        let signed = self.sign_for_save(signer, &dynamic_assertions, context, store_len)?;
+        if write_after_signing {
+            let updates = updates_with(Some(signed.clone()));
+            let plan = plan_write(&structure, input, &updates)?;
+            write_plan(
+                &plan,
+                input,
+                output,
+                NullSink,
+                ProgressPhase::Writing,
+                context,
+            )?;
+        } else if embed {
             patch_store(plan.structure(), output, &signed)?;
-            save.context
-                .check_progress(ProgressPhase::Embedding, 1, 1)?;
         }
-        self.finish_save(save.format, save.embed, output, save.context, signed)
-    }
-
-    /// Save with a store whose size is only known once signed (a compressed
-    /// store), bound by a binding that does not depend on it: hash the output in a
-    /// pass that writes nothing, sign, then write the output with the signed store.
-    fn save_unsized_store(
-        &mut self,
-        save: &DirectSave<'_>,
-        input: &mut dyn ReadSeek,
-        output: &mut dyn ReadWriteSeek,
-        mut binding: Box<dyn AssetBinding>,
-        existing: bool,
-        alg: &str,
-    ) -> Result<Vec<u8>> {
-        let store = save.embed.then(|| MANIFEST_PLACEHOLDER.to_vec());
-        let updates = save_updates(save.xmp, store);
-        let plan = plan_write(save.structure, input, &updates)?;
-        let spans = binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, alg)?;
-        self.put_binding(binding.as_ref(), existing)?;
-        let mut hasher = SpanHasher::new(spans, save.context)?;
-        input.rewind()?;
-        plan.execute(input, &mut std::io::sink(), &mut hasher)
-            .map_err(asset_io_error)?;
-        binding.set_hashes(hasher.finish());
-        self.put_binding(binding.as_ref(), true)?;
-
-        let signed =
-            self.sign_for_save(save.signer, save.dynamic_assertions, save.context, None)?;
-        self.write_final(save, input, output, &signed)?;
-        self.finish_save(save.format, save.embed, output, save.context, signed)
-    }
-
-    /// Save an update manifest. It has no hard binding, so it is signed first and
-    /// written once. A container that keeps the original store apart (ISO BMFF)
-    /// leaves it in place and adds only the update.
-    fn save_update_manifest(
-        &mut self,
-        save: &DirectSave<'_>,
-        input: &mut dyn ReadSeek,
-        output: &mut dyn ReadWriteSeek,
-    ) -> Result<Vec<u8>> {
-        let signed =
-            self.sign_for_save(save.signer, save.dynamic_assertions, save.context, None)?;
-        self.write_final(save, input, output, &signed)?;
-        self.finish_save(save.format, save.embed, output, save.context, signed)
-    }
-
-    /// Write the output once, with `signed` embedded unless the store is detached.
-    fn write_final(
-        &self,
-        save: &DirectSave<'_>,
-        input: &mut dyn ReadSeek,
-        output: &mut dyn ReadWriteSeek,
-        signed: &[u8],
-    ) -> Result<()> {
-        let mut updates = save_updates(save.xmp, save.embed.then(|| signed.to_vec()));
-        let update = self
-            .provenance_claim()
-            .is_some_and(|claim| claim.update_manifest());
-        if save.embed && update {
-            updates = updates.as_update();
+        if embed {
+            context.check_progress(ProgressPhase::Embedding, 1, 1)?;
         }
-        let plan = plan_write(save.structure, input, &updates)?;
-        save.context.check_progress(ProgressPhase::Writing, 1, 2)?;
-        input.rewind()?;
-        output.rewind()?;
-        plan.execute(input, output, &mut NullSink)
-            .map_err(asset_io_error)?;
-        output.flush()?;
-        save.context.check_progress(ProgressPhase::Writing, 2, 2)?;
-        if save.embed {
-            save.context
-                .check_progress(ProgressPhase::Embedding, 1, 1)?;
-        }
-        Ok(())
-    }
-
-    /// Record where the store went and verify it if the settings ask for it.
-    fn finish_save(
-        &mut self,
-        format: &str,
-        embedded: bool,
-        output: &mut dyn ReadWriteSeek,
-        context: &Context,
-        signed: Vec<u8>,
-    ) -> Result<Vec<u8>> {
-        self.embedded = embedded;
+        self.embedded = embed;
         self.verify_after_save(output, format, context)?;
         Ok(signed)
     }
@@ -501,18 +422,6 @@ impl Store {
         }
         Ok(())
     }
-}
-
-/// What every step of a direct save needs.
-struct DirectSave<'a> {
-    format: &'a str,
-    structure: &'a Structure,
-    /// The XMP to write, if it changes.
-    xmp: Option<&'a [u8]>,
-    embed: bool,
-    signer: &'a dyn Signer,
-    dynamic_assertions: &'a [Box<dyn DynamicAssertion>],
-    context: &'a Context,
 }
 
 #[cfg(test)]
@@ -634,7 +543,8 @@ mod tests {
         output.rewind().unwrap();
         let reader = Reader::from_context(test_context())
             .with_manifest_data_and_stream(manifest, format, output)
-            .unwrap_or_else(|error| panic!("{format}: {error}"));
+            .map_err(|error| format!("{format}: {error}"))
+            .unwrap();
         assert_ne!(
             reader.validation_state(),
             ValidationState::Invalid,
@@ -701,14 +611,9 @@ mod tests {
             }
             let mut output = TrackedOutput::default();
             let manifest = store
-                .save_to_stream_asset_io(
-                    format,
-                    &mut Cursor::new(source),
-                    &mut output,
-                    context.signer().unwrap(),
-                    &context,
-                )
-                .unwrap_or_else(|error| panic!("{format}: {error}"));
+                .save_to_stream_asset_io(format, &mut Cursor::new(source), &mut output, &context)
+                .map_err(|error| format!("{format}: {error}"))
+                .unwrap();
             let handler = ::asset_io::HandlerRegistry::builtin()
                 .handler(format)
                 .unwrap()
@@ -755,13 +660,7 @@ mod tests {
                 .unwrap();
             let mut signed = Cursor::new(Vec::new());
             first
-                .save_to_stream_asset_io(
-                    format,
-                    &mut seed,
-                    &mut signed,
-                    context.signer().unwrap(),
-                    &context,
-                )
+                .save_to_stream_asset_io(format, &mut seed, &mut signed, &context)
                 .unwrap();
             for mode in ["embed", "sidecar", "remote", "embed_remote"] {
                 let mut next = unsigned_store(&context);
@@ -779,14 +678,9 @@ mod tests {
                 let embed = matches!(mode, "embed" | "embed_remote");
                 let mut output = TrackedOutput::default();
                 let manifest = next
-                    .save_to_stream_asset_io(
-                        format,
-                        &mut signed,
-                        &mut output,
-                        context.signer().unwrap(),
-                        &context,
-                    )
-                    .unwrap_or_else(|error| panic!("{format}/{mode}: {error}"));
+                    .save_to_stream_asset_io(format, &mut signed, &mut output, &context)
+                    .map_err(|error| format!("{format}/{mode}: {error}"))
+                    .unwrap();
                 output.stream.rewind().unwrap();
                 let structure = handler.clone().parse(&mut output.stream).unwrap();
                 assert_forward_write(&output, &structure, embed);
@@ -846,7 +740,6 @@ mod tests {
                     "video/mp4",
                     &mut Cursor::new(bmff_fixture()),
                     &mut output,
-                    context.signer().unwrap(),
                     &context,
                 )
                 .unwrap();
@@ -882,7 +775,6 @@ mod tests {
                 "application/octet-stream",
                 &mut Cursor::new(source),
                 &mut output,
-                context.signer().unwrap(),
                 &context,
             )
             .unwrap();
@@ -953,7 +845,6 @@ mod tests {
                 format,
                 &mut Cursor::new(source),
                 &mut output,
-                context.signer().unwrap(),
                 &context,
             );
             assert!(result.is_err(), "{kind}: expected an error");
@@ -1012,7 +903,6 @@ mod tests {
                             "application/octet-stream",
                             &mut Cursor::new(source),
                             &mut output,
-                            context.signer().unwrap(),
                             &context,
                         )
                         .unwrap();
@@ -1052,7 +942,6 @@ mod tests {
                 "image/png",
                 &mut Cursor::new(b"not a PNG"),
                 &mut output,
-                context.signer().unwrap(),
                 &context,
             )
             .is_err());
@@ -1069,24 +958,21 @@ mod tests {
     ) -> (Store, Vec<u8>, StatusTracker) {
         let mut output = Cursor::new(Vec::new());
         store
-            .save_to_stream_asset_io(
-                format,
-                &mut Cursor::new(source),
-                &mut output,
-                context.signer().unwrap(),
-                context,
-            )
-            .unwrap_or_else(|error| panic!("{format}: {error}"));
+            .save_to_stream_asset_io(format, &mut Cursor::new(source), &mut output, context)
+            .map_err(|error| format!("{format}: {error}"))
+            .unwrap();
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         output.rewind().unwrap();
         let read = Store::from_stream(format, &mut output, &mut report, &test_context())
-            .unwrap_or_else(|error| panic!("{format}: {error}"));
+            .map_err(|error| format!("{format}: {error}"))
+            .unwrap();
         assert!(!report.has_any_error(), "{format}: {report:?}");
         (read, output.into_inner(), report)
     }
 
-    /// A compressed manifest needs a binding that does not depend on the store's
-    /// size (a box hash); with any other binding it is saved uncompressed.
+    /// An embedded compressed manifest needs a binding that does not depend on
+    /// the store's size (a box hash); with any other binding it is saved
+    /// uncompressed.
     #[test]
     fn direct_asset_io_saves_compressed_manifests() {
         let bmff = bmff_fixture();
@@ -1123,6 +1009,36 @@ mod tests {
                 compressed,
                 "{format}: compressed only with a box hash"
             );
+        }
+    }
+
+    /// A detached store is compressed whatever binds the asset, since its size
+    /// does not affect the asset's hashes.
+    #[test]
+    fn direct_asset_io_compresses_detached_manifests() {
+        let bmff = bmff_fixture();
+        let cases: [(&str, &[u8]); 2] = [
+            (FIXTURES[0].0, FIXTURES[0].1),
+            ("video/mp4", bmff.as_slice()),
+        ];
+        for (format, source) in cases {
+            let context = test_context()
+                .with_settings(r#"{"builder":{"prefer_box_hash":false}}"#)
+                .unwrap()
+                .with_signer(test_signer(SigningAlg::Ed25519));
+            let mut store = unsigned_store(&context);
+            let claim = store.provenance_claim_mut().unwrap();
+            claim.set_external_manifest();
+            claim.set_compressed_manifest(true);
+            let mut output = Cursor::new(Vec::new());
+            let manifest = store
+                .save_to_stream_asset_io(format, &mut Cursor::new(source), &mut output, &context)
+                .expect("detached compressed save");
+            assert!(
+                manifest.windows(4).any(|w| w == b"brob"),
+                "{format}: detached store not compressed"
+            );
+            assert_valid_manifest(format, &manifest, &mut output);
         }
     }
 
@@ -1322,13 +1238,7 @@ mod tests {
         let mut seeded = Cursor::new([&source[..2], &app11, &source[2..]].concat());
         let mut embedded = Cursor::new(Vec::new());
         unsigned_store(&context)
-            .save_to_stream_asset_io(
-                "image/jpeg",
-                &mut seeded,
-                &mut embedded,
-                context.signer().unwrap(),
-                &context,
-            )
+            .save_to_stream_asset_io("image/jpeg", &mut seeded, &mut embedded, &context)
             .unwrap();
         let mut detached = unsigned_store(&context);
         detached
@@ -1337,13 +1247,7 @@ mod tests {
             .set_external_manifest();
         let mut output = Cursor::new(Vec::new());
         let manifest = detached
-            .save_to_stream_asset_io(
-                "image/jpeg",
-                &mut embedded,
-                &mut output,
-                context.signer().unwrap(),
-                &context,
-            )
+            .save_to_stream_asset_io("image/jpeg", &mut embedded, &mut output, &context)
             .unwrap();
         output.rewind().unwrap();
         let structure = handler.parse(&mut output).unwrap();
@@ -1373,7 +1277,6 @@ mod tests {
                     "video/mp4",
                     &mut Cursor::new(bmff_fixture()),
                     &mut output,
-                    context.signer().unwrap(),
                     &context,
                 )
                 .unwrap();
@@ -1427,7 +1330,6 @@ mod tests {
             "video/mp4",
             &mut Cursor::new(bmff_fixture()),
             &mut output,
-            context.signer().unwrap(),
             &context,
         );
         assert!(matches!(result, Err(Error::NotImplemented(_))));
@@ -1458,7 +1360,6 @@ mod tests {
                 "video/mp4",
                 &mut Cursor::new(bmff_fixture()),
                 &mut output,
-                context.signer().unwrap(),
                 &context,
             )
             .unwrap();
@@ -1521,7 +1422,6 @@ mod tests {
                     "video/mp4",
                     &mut Cursor::new(bmff_fixture()),
                     &mut output,
-                    context.signer().unwrap(),
                     &context,
                 )
                 .unwrap();
@@ -1565,7 +1465,6 @@ mod tests {
                 format,
                 &mut Cursor::new(source),
                 &mut Cursor::new(Vec::new()),
-                context.signer().unwrap(),
                 &context,
             )
             .unwrap();
@@ -1586,13 +1485,7 @@ mod tests {
             .unwrap();
         let mut output = Cursor::new(Vec::new());
         let manifest = next
-            .save_to_stream_asset_io(
-                format,
-                &mut Cursor::new(source),
-                &mut output,
-                context.signer().unwrap(),
-                &context,
-            )
+            .save_to_stream_asset_io(format, &mut Cursor::new(source), &mut output, &context)
             .unwrap();
         let actual = BoxHash::from_assertion(
             next.provenance_claim().unwrap().box_hash_assertions()[0].assertion(),
@@ -1650,10 +1543,10 @@ mod tests {
                         format,
                         &mut Cursor::new(source),
                         &mut output,
-                        context.signer().unwrap(),
                         &context,
                     )
-                    .unwrap_or_else(|error| panic!("{format}/{mode}: {error}"));
+                    .map_err(|error| format!("{format}/{mode}: {error}"))
+                    .unwrap();
                 let handler = ::asset_io::HandlerRegistry::builtin()
                     .handler(format)
                     .unwrap()
@@ -1682,20 +1575,16 @@ mod tests {
             let mut store = unsigned_store(&context);
 
             let manifest = store
-                .save_to_stream_asset_io(
-                    format,
-                    &mut input,
-                    &mut output,
-                    context.signer().unwrap(),
-                    &context,
-                )
-                .unwrap_or_else(|error| panic!("{format}: {error}"));
+                .save_to_stream_asset_io(format, &mut input, &mut output, &context)
+                .map_err(|error| format!("{format}: {error}"))
+                .unwrap();
             assert!(!manifest.is_empty(), "{format}: empty manifest");
 
             output.rewind().unwrap();
             let reader = Reader::from_context(test_context())
                 .with_stream(format, &mut output)
-                .unwrap_or_else(|error| panic!("{format}: {error}"));
+                .map_err(|error| format!("{format}: {error}"))
+                .unwrap();
             assert_ne!(
                 reader.validation_state(),
                 ValidationState::Invalid,
@@ -1716,14 +1605,9 @@ mod tests {
             let mut output = TrackedOutput::default();
             let mut store = unsigned_store(&context);
             store
-                .save_to_stream_asset_io(
-                    format,
-                    &mut input,
-                    &mut output,
-                    context.signer().unwrap(),
-                    &context,
-                )
-                .unwrap_or_else(|error| panic!("{format}: {error}"));
+                .save_to_stream_asset_io(format, &mut input, &mut output, &context)
+                .map_err(|error| format!("{format}: {error}"))
+                .unwrap();
 
             let handler = ::asset_io::HandlerRegistry::builtin()
                 .handler(format)
@@ -1767,7 +1651,8 @@ mod tests {
             output.stream.rewind().unwrap();
             let reader = Reader::from_context(test_context())
                 .with_stream(format, &mut output.stream)
-                .unwrap_or_else(|error| panic!("{format}: {error}"));
+                .map_err(|error| format!("{format}: {error}"))
+                .unwrap();
             assert_ne!(
                 reader.validation_state(),
                 ValidationState::Invalid,
@@ -1792,13 +1677,7 @@ mod tests {
                 ..Default::default()
             };
             let error = store
-                .save_to_stream_asset_io(
-                    "image/jpeg",
-                    &mut input,
-                    &mut output,
-                    context.signer().unwrap(),
-                    &context,
-                )
+                .save_to_stream_asset_io("image/jpeg", &mut input, &mut output, &context)
                 .unwrap_err();
             if cancel {
                 assert!(matches!(error, Error::OperationCancelled), "{error}");
@@ -1849,7 +1728,6 @@ mod tests {
                     "image/x-direct",
                     &mut Cursor::new(source),
                     &mut output,
-                    context.signer().unwrap(),
                     context,
                 )
                 .map(|manifest| (manifest, output))
@@ -1882,7 +1760,6 @@ mod tests {
                 "zip",
                 &mut Cursor::new(include_bytes!("../../tests/fixtures/sample1.zip")),
                 &mut output,
-                context.signer().unwrap(),
                 &context,
             )
             .unwrap();
@@ -1959,13 +1836,8 @@ mod tests {
                     let embed = matches!(mode, "embed" | "embed_remote");
                     let mut input = Cursor::new(source);
                     let mut output = TrackedOutput::default();
-                    let result = store.save_to_stream_asset_io(
-                        format,
-                        &mut input,
-                        &mut output,
-                        context.signer().unwrap(),
-                        &context,
-                    );
+                    let result =
+                        store.save_to_stream_asset_io(format, &mut input, &mut output, &context);
                     let supported = match binding {
                         "data" => format != "video/mp4" || !embed,
                         "bmff" => format == "video/mp4",
@@ -1983,8 +1855,9 @@ mod tests {
                         );
                         continue;
                     }
-                    let manifest =
-                        result.unwrap_or_else(|error| panic!("{format}/{binding}/{mode}: {error}"));
+                    let manifest = result
+                        .map_err(|error| format!("{format}/{binding}/{mode}: {error}"))
+                        .unwrap();
                     assert_valid_manifest(format, &manifest, &mut output.stream);
                     let handler = ::asset_io::HandlerRegistry::builtin()
                         .handler(format)

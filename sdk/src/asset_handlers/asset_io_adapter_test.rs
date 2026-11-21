@@ -250,6 +250,36 @@ fn manifest_locations_agree() {
 }
 
 #[test]
+fn riff_manifest_location_leaves_the_pad_byte_hashed() {
+    let bytes = fs::read(crate::utils::test::fixture_path("sample1.wav")).unwrap();
+    let mut manifest = store(b"x");
+    if manifest.len().is_multiple_of(2) {
+        manifest = store(b"xx");
+    }
+    assert!(!manifest.len().is_multiple_of(2));
+    let old = RiffIO::new("wav");
+    let new = AssetIoAdapter::new("wav");
+    let mut output = Cursor::new(Vec::new());
+    old.get_writer("wav")
+        .unwrap()
+        .write_c2pa(&mut Cursor::new(&bytes), &mut output, &manifest)
+        .unwrap();
+    let c2pa = |io: &dyn AssetIO| {
+        io.get_writer("wav")
+            .unwrap()
+            .get_object_locations(&mut Cursor::new(output.get_ref()))
+            .unwrap()
+            .into_iter()
+            .find(|l| l.htype == ObjectType::C2pa)
+            .map(|l| (l.offset, l.length))
+            .unwrap()
+    };
+    let (_, length) = c2pa(&old);
+    assert_eq!(length, manifest.len() as u64 + 8);
+    assert_eq!(c2pa(&new), c2pa(&old));
+}
+
+#[test]
 fn xmp_locations_follow_item_extents() {
     let registry = ::asset_io::HandlerRegistry::builtin();
     let mut compared = 0;

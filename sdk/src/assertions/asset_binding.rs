@@ -139,6 +139,16 @@ pub(crate) trait AssetBinding {
     /// Store the digests of the spans [`plan_hashes`](Self::plan_hashes) returned.
     fn set_hashes(&mut self, digests: Vec<Vec<u8>>);
 
+    /// Make the assertion exactly `len` bytes, the size it had when the store's
+    /// size was fixed. A binding whose size never changes only checks it.
+    fn fit_to_size(&mut self, len: usize) -> Result<()> {
+        if self.assertion()?.data().len() == len {
+            Ok(())
+        } else {
+            Err(Error::JumbfCreationError)
+        }
+    }
+
     /// Whether the hashes depend on where the manifest store is and how large it
     /// is. A binding that does not can be signed with a store of any size, such as
     /// a compressed one, without settling the store's size first.
@@ -235,16 +245,67 @@ impl AssertionBase for BuiltAssertion {
     }
 }
 
-/// Hashes [`HashSpan`]s as a write streams through it, checking progress once per
-/// chunk. A cancel or progress error stops the write and is returned unchanged.
-pub(crate) struct SpanHasher<'c> {
-    spans: Vec<(HashSpan, Hasher)>,
+/// Bytes streamed between progress reports, as the legacy hasher reports once per
+/// buffer it hashes. Chunks are far smaller, so reporting each would slow large
+/// assets down.
+const PROGRESS_INTERVAL: u64 = 16 * 1024 * 1024;
+
+/// Reports progress in `phase` as a plan streams through it, then passes each
+/// chunk to `inner`: once at the start, once per [`PROGRESS_INTERVAL`] and once
+/// at the end. A cancel or progress error stops the plan and is returned
+/// unchanged by [`asset_io_error`].
+pub(crate) struct ProgressSink<'c, S> {
+    inner: S,
     context: &'c Context,
+    phase: ProgressPhase,
+    size: u64,
     step: u32,
+    total: u32,
+    /// The output offset whose reaching is reported next.
+    next: u64,
 }
 
-impl<'c> SpanHasher<'c> {
-    pub fn new(spans: Vec<HashSpan>, context: &'c Context) -> Result<Self> {
+impl<'c, S: Sink> ProgressSink<'c, S> {
+    /// Report progress through `context` while streaming `size` bytes.
+    pub fn new(inner: S, context: &'c Context, phase: ProgressPhase, size: u64) -> Self {
+        let total = u32::try_from(size.div_ceil(PROGRESS_INTERVAL) + 1).unwrap_or(u32::MAX);
+        Self {
+            inner,
+            context,
+            phase,
+            size,
+            step: 0,
+            total,
+            next: 0,
+        }
+    }
+
+    pub fn into_inner(self) -> S {
+        self.inner
+    }
+}
+
+impl<S: Sink> Sink for ProgressSink<'_, S> {
+    fn chunk(&mut self, chunk: Chunk<'_>) -> ::asset_io::Result<()> {
+        let end = chunk.offset + chunk.data.len() as u64;
+        while self.step < self.total && end >= self.next {
+            self.step += 1;
+            self.context
+                .check_progress(self.phase.clone(), self.step, self.total)
+                .map_err(::asset_io::Error::callback)?;
+            self.next = (self.next + PROGRESS_INTERVAL).min(self.size);
+        }
+        self.inner.chunk(chunk)
+    }
+}
+
+/// Hashes [`HashSpan`]s as a write streams through it.
+pub(crate) struct SpanHasher {
+    spans: Vec<(HashSpan, Hasher)>,
+}
+
+impl SpanHasher {
+    pub fn new(spans: Vec<HashSpan>) -> Result<Self> {
         let spans = spans
             .into_iter()
             .map(|span| {
@@ -252,11 +313,7 @@ impl<'c> SpanHasher<'c> {
                 Ok((span, hasher))
             })
             .collect::<Result<_>>()?;
-        Ok(Self {
-            spans,
-            context,
-            step: 0,
-        })
+        Ok(Self { spans })
     }
 
     /// One digest per span, in order.
@@ -306,12 +363,8 @@ impl<'c> SpanHasher<'c> {
     }
 }
 
-impl Sink for SpanHasher<'_> {
+impl Sink for SpanHasher {
     fn chunk(&mut self, chunk: Chunk<'_>) -> ::asset_io::Result<()> {
-        self.step = self.step.saturating_add(1);
-        self.context
-            .check_progress(ProgressPhase::Hashing, self.step, 0)
-            .map_err(::asset_io::Error::callback)?;
         let chunk_end = chunk.offset + chunk.data.len() as u64;
         for (span, hasher) in &mut self.spans {
             let start = chunk.offset.max(span.range.offset());
@@ -369,7 +422,7 @@ pub(crate) fn asset_io_error(error: ::asset_io::Error) -> Error {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use ::asset_io::{Role, SegmentId};
+    use ::asset_io::{NullSink, Role, SegmentId};
 
     use super::*;
     use crate::{
@@ -385,7 +438,6 @@ mod tests {
             .iter()
             .map(|&(start, len)| ByteRange::new(start, len).unwrap())
             .collect();
-        let context = test_context();
         let segment = SegmentId::from_index(0).unwrap();
         for alg in ["sha256", "sha384", "sha512"] {
             for chunk_size in [1, 3, 7, 40] {
@@ -395,7 +447,7 @@ mod tests {
                         .unwrap(),
                     HashSpan::new(ByteRange::new(5, 20).unwrap(), alg),
                 ];
-                let mut sink = SpanHasher::new(spans, &context).unwrap();
+                let mut sink = SpanHasher::new(spans).unwrap();
                 for (i, chunk) in data.chunks(chunk_size).enumerate() {
                     sink.chunk(Chunk::new(
                         segment,
@@ -423,12 +475,11 @@ mod tests {
     #[test]
     fn span_hasher_hashes_offsets_before_their_bytes() {
         let data: Vec<u8> = (0..20).collect();
-        let context = test_context();
         let span = HashSpan::new(ByteRange::new(0, 20).unwrap(), "sha256")
             .excluding(vec![ByteRange::new(4, 2).unwrap()])
             .unwrap()
             .with_offsets(vec![10, 0]);
-        let mut sink = SpanHasher::new(vec![span], &context).unwrap();
+        let mut sink = SpanHasher::new(vec![span]).unwrap();
         for (i, chunk) in data.chunks(3).enumerate() {
             sink.chunk(Chunk::new(
                 SegmentId::from_index(0).unwrap(),
@@ -448,13 +499,43 @@ mod tests {
     }
 
     #[test]
+    fn progress_is_reported_per_interval_not_per_chunk() {
+        let steps = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = steps.clone();
+        let context = test_context().with_progress_callback(move |phase, step, total| {
+            seen.lock().unwrap().push((phase, step, total));
+            true
+        });
+        let size = 2 * PROGRESS_INTERVAL + PROGRESS_INTERVAL / 2;
+        let chunk = vec![0; 64 * 1024];
+        let mut sink = ProgressSink::new(NullSink, &context, ProgressPhase::Writing, size);
+        let mut offset = 0;
+        while offset < size {
+            let len = chunk.len().min((size - offset) as usize);
+            sink.chunk(Chunk::new(
+                SegmentId::from_index(0).unwrap(),
+                Role::Payload,
+                offset,
+                &chunk[..len],
+            ))
+            .unwrap();
+            offset += len as u64;
+        }
+        let expected: Vec<_> = (1..=4)
+            .map(|step| (ProgressPhase::Writing, step, 4))
+            .collect();
+        assert_eq!(*steps.lock().unwrap(), expected);
+    }
+
+    #[test]
     fn a_progress_error_is_returned_unchanged() {
         let context = test_context().with_progress_callback(|_, _, _| false);
-        let mut sink = SpanHasher::new(
-            vec![HashSpan::new(ByteRange::new(0, 4).unwrap(), "sha256")],
+        let mut sink = ProgressSink::new(
+            SpanHasher::new(vec![HashSpan::new(ByteRange::new(0, 4).unwrap(), "sha256")]).unwrap(),
             &context,
-        )
-        .unwrap();
+            ProgressPhase::Hashing,
+            4,
+        );
         let error = sink
             .chunk(Chunk::new(
                 SegmentId::from_index(0).unwrap(),
