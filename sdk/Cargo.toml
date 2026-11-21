@@ -29,7 +29,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["openssl", "default_http"]
-add_thumbnails = ["dep:image"]
+add_thumbnails = ["dep:image", "dep:png", "dep:tiff"]
 # Experimental Builder action/ingredient filtering API (`Builder::filter_actions`,
 # `Builder::filter_ingredients`, `Ingredient::effective_id`). Experimental feature: exempt from
 # the crate's usual semantic-versioning stability guarantees and may change or be removed in any
@@ -228,6 +228,10 @@ image = { version = "0.25.10", default-features = false, features = [
     # TODO: AVIF requires the dav1d crate which causes some complications compiling
     # "avif-native"
 ], optional = true }
+# Already dependencies of `image`; used directly to decode large PNG and TIFF
+# images row by row when generating thumbnails, instead of all at once.
+png = { version = "0.18.1", optional = true }
+tiff = { version = "0.11.3", optional = true }
 
 [target.'cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))'.dependencies.chrono]
 version = "0.4.44"

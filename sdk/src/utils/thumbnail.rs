@@ -13,7 +13,7 @@
 
 use std::{
     fmt,
-    io::{BufRead, Cursor, Seek, Write},
+    io::{BufRead, Cursor, Seek, SeekFrom, Write},
 };
 
 use image::{
@@ -21,6 +21,7 @@ use image::{
         jpeg::JpegEncoder,
         png::{CompressionType, FilterType, PngEncoder},
     },
+    metadata::Orientation,
     DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits,
 };
 
@@ -31,6 +32,25 @@ use crate::{
     },
     Error, Result,
 };
+
+mod streaming;
+
+/// Largest decoded image, in bytes, a thumbnail is made from. 512 MiB covers all
+/// legitimate inputs incl. 16-bit 50 MP professional images (~302 MB) and
+/// matches `image`'s `Limits::default`.
+const MAX_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Defense-in-depth against decompression bombs: reject an image whose decoded
+/// size is over [`MAX_IMAGE_BYTES`] before decoding it. (`DynamicImage::from_decoder`
+/// allocates the pixel buffer directly, bypassing `Limits::max_alloc`.)
+fn check_decoded_size(total_bytes: u64) -> Result<()> {
+    if total_bytes > MAX_IMAGE_BYTES {
+        return Err(Error::InvalidAsset(format!(
+            "image decoded size ({total_bytes} bytes) exceeds the maximum allowed (512 MiB)"
+        )));
+    }
+    Ok(())
+}
 
 impl ThumbnailFormat {
     /// Create a new [ThumbnailFormat] from the given format extension or mime type.
@@ -114,6 +134,21 @@ where
     }
 }
 
+/// Decode the whole image at full size, and its orientation.
+fn decode_full<R: BufRead + Seek>(
+    input_format: ThumbnailFormat,
+    input: R,
+) -> Result<(DynamicImage, Orientation)> {
+    // Apply the image crate's own `Limits` (default `max_alloc` = 512 MiB) so
+    // decoders that honor them reject crafted inputs internally.
+    let mut reader = ImageReader::with_format(input, input_format.into());
+    reader.limits(Limits::default());
+    let mut decoder = reader.into_decoder()?;
+    let orientation = decoder.orientation()?;
+    check_decoded_size(decoder.total_bytes())?;
+    Ok((DynamicImage::from_decoder(decoder)?, orientation))
+}
+
 /// Make a thumbnail from the input stream and write to the output stream.
 ///
 /// This function takes into account two [Settings][crate::Settings]:
@@ -121,10 +156,13 @@ where
 /// * `builder.thumbnail.quality`
 /// * `builder.thumbnail.format`
 /// * `builder.thumbnail.prefer_smallest_format`
+///
+/// Large PNG and TIFF images are reduced row by row as they are decoded, so the
+/// full-size image is never held in memory.
 pub fn make_thumbnail_from_stream<R, W>(
     input_format: ThumbnailFormat,
     output_format: Option<ThumbnailFormat>,
-    input: R,
+    mut input: R,
     output: &mut W,
     settings: &Settings,
 ) -> Result<ThumbnailFormat>
@@ -132,27 +170,21 @@ where
     R: BufRead + Seek,
     W: Write + Seek,
 {
-    // Apply the image crate's own `Limits` (default `max_alloc` = 512 MiB) so
-    // decoders that honor them reject crafted inputs internally.
-    let mut reader = ImageReader::with_format(input, input_format.into());
-    reader.limits(Limits::default());
-    let mut decoder = reader.into_decoder()?;
-    let orientation = decoder.orientation()?;
+    let long_edge = settings.builder.thumbnail.long_edge;
 
-    // Defense-in-depth against decompression bombs: `DynamicImage::from_decoder`
-    // allocates the pixel buffer directly via `vec![0u8; total_bytes]`, which
-    // bypasses `Limits::max_alloc`. Reject decoded sizes over 512 MiB ourselves
-    // before that allocation runs. 512 MiB covers all legitimate inputs incl.
-    // 16-bit 50 MP professional images (~302 MB) and matches `Limits::default`.
-    const MAX_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
-    let total_bytes = decoder.total_bytes();
-    if total_bytes > MAX_IMAGE_BYTES {
-        return Err(Error::InvalidAsset(format!(
-            "image decoded size ({total_bytes} bytes) exceeds the maximum allowed (512 MiB)"
-        )));
-    }
-
-    let mut image = DynamicImage::from_decoder(decoder)?;
+    let start = input.stream_position()?;
+    let reduced = match input_format {
+        ThumbnailFormat::Png => streaming::reduce_png(&mut input, long_edge)?,
+        ThumbnailFormat::Tiff => streaming::reduce_tiff(&mut input, long_edge)?,
+        _ => None,
+    };
+    let (mut image, orientation) = match reduced {
+        Some(reduced) => (reduced.image, reduced.orientation),
+        None => {
+            input.seek(SeekFrom::Start(start))?;
+            decode_full(input_format, input)?
+        }
+    };
     image.apply_orientation(orientation);
 
     let output_format = match output_format {
@@ -179,8 +211,7 @@ where
         }
     };
 
-    let long_edge = settings.builder.thumbnail.long_edge;
-    image = image.thumbnail(long_edge, long_edge);
+    let image = image.thumbnail(long_edge, long_edge);
 
     let quality = settings.builder.thumbnail.quality;
     // TODO: investigate more formats
