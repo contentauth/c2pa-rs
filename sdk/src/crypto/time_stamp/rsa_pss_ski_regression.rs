@@ -12,7 +12,7 @@
 
 #![allow(clippy::unwrap_used)]
 
-use x509_cert::der::{Decode as Decode07, Encode as Encode07};
+use x509_cert::der::{Decode as DerDecode, Encode as DerEncode};
 
 use super::*;
 use crate::crypto::time_stamp::response::SignerInfos;

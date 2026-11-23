@@ -900,7 +900,7 @@ mod tests {
     use der::{asn1::Any, Decode, Encode};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
-    use x509_cert::der::{Decode as DecodeDer07, Encode as EncodeDer07};
+    use x509_cert::der::{Decode as DerDecode, Encode as DerEncode};
 
     use super::*;
     use crate::crypto::{cert_chain_pem_to_der, ocsp::test_responder::ocsp_time};

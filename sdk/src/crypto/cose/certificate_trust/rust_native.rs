@@ -364,7 +364,7 @@ mod tests {
     use x509_cert::{
         der::{
             asn1::{Any, ObjectIdentifier, OctetString},
-            Decode as Decode07, Encode as Encode07,
+            Decode as DerDecode, Encode as DerEncode,
         },
         Certificate,
     };
@@ -391,7 +391,7 @@ mod tests {
 
     fn certificate() -> Certificate {
         let (pem, _) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
-        Decode07::from_der(&cert_chain_pem_to_der(pem).unwrap()[0]).unwrap()
+        DerDecode::from_der(&cert_chain_pem_to_der(pem).unwrap()[0]).unwrap()
     }
 
     fn pss_algorithm(parameters: Option<Vec<u8>>) -> Option<String> {
@@ -400,7 +400,7 @@ mod tests {
             parameters: parameters.map(any),
         };
 
-        let der = Encode07::to_der(&algorithm).unwrap();
+        let der = DerEncode::to_der(&algorithm).unwrap();
         let (_, algorithm) = AlgorithmIdentifier::from_der(&der).unwrap();
         signing_alg_from_rsapss_alg(&algorithm)
     }
@@ -448,7 +448,7 @@ mod tests {
         ] {
             let mut cert = certificate();
             cert.signature_algorithm.oid = oid(&id);
-            let der = Encode07::to_der(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(cert_signing_alg(&parsed).as_deref(), Some(name));
             let (sig, hash) = signing_alg_to_sig_and_hash_oid(name).unwrap();
@@ -469,7 +469,7 @@ mod tests {
         assert!(signing_alg_to_sig_and_hash_oid("unknown").is_none());
         let mut cert = certificate();
         cert.signature_algorithm.oid = oid(&[1, 2, 3, 4]);
-        let der = Encode07::to_der(&cert).unwrap();
+        let der = DerEncode::to_der(&cert).unwrap();
         let (_, parsed) = X509Certificate::from_der(&der).unwrap();
         assert!(cert_signing_alg(&parsed).is_none());
     }
@@ -505,7 +505,7 @@ mod tests {
                 mask: der::Any::from_der(
                     &x509_cert::spki::AlgorithmIdentifierOwned {
                         oid: oid(&[1, 2, 840, 113549, 1, 1, 8]),
-                        parameters: Some(any(Encode07::to_der(&alg(mask_hash)).unwrap())),
+                        parameters: Some(any(DerEncode::to_der(&alg(mask_hash)).unwrap())),
                     }
                     .to_der()
                     .unwrap(),
@@ -520,7 +520,7 @@ mod tests {
                 parameters: Some(any(params)),
             };
 
-            let der = Encode07::to_der(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(cert_signing_alg(&parsed).as_deref(), expected);
         }
@@ -558,7 +558,7 @@ mod tests {
             assert!(pss_algorithm(Some(params.to_der().unwrap())).is_none());
         }
 
-        let hash = Encode07::to_der(&alg(&sha256)).unwrap();
+        let hash = DerEncode::to_der(&alg(&sha256)).unwrap();
         for tag in [0xa0, 0x81, 0xa1] {
             let mut body = vec![0xa0, hash.len() as u8];
             body.extend_from_slice(&hash);
@@ -610,7 +610,7 @@ mod tests {
         let pem =
             include_bytes!("../../../../tests/fixtures/crypto/cose/ca_authorization_root.pub");
         let root_der = cert_chain_pem_to_der(pem).unwrap().remove(0);
-        let root: Certificate = Decode07::from_der(&root_der).unwrap();
+        let root: Certificate = DerDecode::from_der(&root_der).unwrap();
         let key_usage = oid(&[2, 5, 29, 15]);
         let constraints = oid(&[2, 5, 29, 19]);
         for (omit_usage, valid) in [(true, true), (false, false)] {
@@ -626,7 +626,7 @@ mod tests {
                     .extn_value = OctetString::new([3, 2, 7, 0x80]).unwrap();
             }
 
-            let der = Encode07::to_der(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(
                 check_ca_authorization(&parsed.tbs_certificate, 0).is_ok(),
@@ -640,7 +640,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .retain(|ext| ext.extn_id != constraints);
-        let der = Encode07::to_der(&cert).unwrap();
+        let der = DerEncode::to_der(&cert).unwrap();
         let (_, parsed) = X509Certificate::from_der(&der).unwrap();
         assert_eq!(
             check_ca_authorization(&parsed.tbs_certificate, 0),
@@ -675,7 +675,8 @@ mod tests {
                     .find(|ext| ext.extn_id == oid(&[2, 5, 29, 37]))
                     .unwrap()
                     .extn_value =
-                    OctetString::new(Encode07::to_der(&vec![oid(&[1, 2, 3, 4])]).unwrap()).unwrap();
+                    OctetString::new(DerEncode::to_der(&vec![oid(&[1, 2, 3, 4])]).unwrap())
+                        .unwrap();
             }
 
             assert_eq!(
@@ -683,7 +684,7 @@ mod tests {
                     &policy,
                     None,
                     &[],
-                    &Encode07::to_der(&cert).unwrap(),
+                    &DerEncode::to_der(&cert).unwrap(),
                     None
                 ),
                 Err(CertificateTrustError::InvalidEku)

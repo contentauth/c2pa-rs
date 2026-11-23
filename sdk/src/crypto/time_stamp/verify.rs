@@ -1628,7 +1628,7 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn certificates_with_utc_and_generalized_time_validity_are_accepted() {
-        use x509_cert::{der::Decode as DecodeDer07, time::Time, Certificate};
+        use x509_cert::{der::Decode as DerDecode, time::Time, Certificate};
 
         for (not_after, generalized) in [(2_524_607_999, false), (2_524_608_000, true)] {
             for signed_attrs in [false, true] {
@@ -2241,7 +2241,7 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn signer_lookup_matches_issuer_serial_and_decoded_ski() {
-        use x509_cert::der::Decode as Decode07;
+        use x509_cert::der::Decode as DerDecode;
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),

@@ -67,7 +67,7 @@ impl IssuerResponder {
         use x509_cert::{
             der::{
                 asn1::{BitString, ObjectIdentifier, OctetString},
-                Decode as DecodeDer07, Encode as EncodeDer07,
+                Decode as DerDecode, Encode as DerEncode,
             },
             spki::AlgorithmIdentifierOwned,
             Certificate,
@@ -122,7 +122,7 @@ impl IssuerResponder {
 
     pub(crate) fn basic_response(&self, by_name: bool) -> BasicOcspResponse {
         use x509_cert::{
-            der::{Decode as DecodeDer07, Encode as EncodeDer07},
+            der::{Decode as DerDecode, Encode as DerEncode},
             Certificate,
         };
 
@@ -182,9 +182,7 @@ impl IssuerResponder {
     pub(crate) fn delegated_response(&self, mut basic: BasicOcspResponse) -> Vec<u8> {
         use ed25519_dalek::Signer;
         use x509_cert::{
-            der::{
-                asn1::BitString as BitStringDer07, Decode as DecodeDer07, Encode as EncodeDer07,
-            },
+            der::{asn1::BitString as DerBitString, Decode as DerDecode, Encode as DerEncode},
             Certificate,
         };
 
@@ -208,9 +206,9 @@ impl IssuerResponder {
         cert.tbs_certificate
             .subject_public_key_info
             .subject_public_key =
-            BitStringDer07::from_bytes(&key.verifying_key().to_bytes()).unwrap();
+            DerBitString::from_bytes(&key.verifying_key().to_bytes()).unwrap();
 
-        cert.signature = BitStringDer07::from_bytes(
+        cert.signature = DerBitString::from_bytes(
             &self
                 .key
                 .sign(&cert.tbs_certificate.to_der().unwrap())

@@ -320,7 +320,7 @@ pub mod tests {
         use x509_cert::{
             der::{
                 asn1::{ObjectIdentifier, OctetString},
-                Decode as DecodeDer07, Encode as EncodeDer07,
+                Decode as DerDecode, Encode as DerEncode,
             },
             Certificate,
         };

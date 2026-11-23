@@ -357,7 +357,7 @@ mod tests {
             attr::AttributeTypeAndValue,
             der::{
                 asn1::{Any, ObjectIdentifier, Utf8StringRef},
-                Decode as DecodeDer07, Encode as EncodeDer07,
+                Decode as DerDecode, Encode as DerEncode,
             },
             name::{RdnSequence, RelativeDistinguishedName},
             Certificate,
@@ -732,7 +732,7 @@ mod tests {
         use x509_cert::{
             der::{
                 asn1::{Any, OctetString},
-                Decode as DecodeDer07, Encode as EncodeDer07,
+                Decode as DerDecode, Encode as DerEncode,
             },
             Certificate,
         };

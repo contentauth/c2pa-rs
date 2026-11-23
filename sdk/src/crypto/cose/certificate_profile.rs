@@ -772,7 +772,7 @@ mod tests {
     use x509_cert::{
         der::{
             asn1::{Any, BitString, ObjectIdentifier, OctetString},
-            Decode as Decode07, Encode as Encode07,
+            Decode as DerDecode, Encode as DerEncode,
         },
         Certificate,
     };
@@ -871,7 +871,7 @@ mod tests {
             .unwrap();
 
         let assert_rejected = |cert: &Certificate, expected_description: &str| {
-            let der = Encode07::to_der(cert).unwrap();
+            let der = DerEncode::to_der(cert).unwrap();
             let mut validation_log = StatusTracker::default();
             assert!(
                 check_end_entity_certificate_profile(&der, &ctp, &mut validation_log, None)
@@ -886,7 +886,7 @@ mod tests {
         };
 
         // Parameters in the subject public key info algorithm.
-        let mut cert: Certificate = Decode07::from_der(&chain.ee_der).unwrap();
+        let mut cert: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         cert.tbs_certificate
             .subject_public_key_info
             .algorithm
@@ -897,7 +897,7 @@ mod tests {
         );
 
         // Parameters in both the outer and the signed (tbsCertificate) signature algorithm.
-        let mut cert: Certificate = Decode07::from_der(&chain.ee_der).unwrap();
+        let mut cert: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         cert.signature_algorithm.parameters = Some(der_null.clone());
         cert.tbs_certificate.signature.parameters = Some(der_null.clone());
         assert_rejected(
@@ -922,15 +922,15 @@ mod tests {
             "certificate signature algorithm does not match tbsCertificate signature algorithm";
 
         // Parameters only in the outer signature algorithm.
-        let mut cert: Certificate = Decode07::from_der(&chain.ee_der).unwrap();
+        let mut cert: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         cert.signature_algorithm.parameters = Some(der_null.clone());
 
         // Parameters only in the signed (tbsCertificate) signature algorithm.
-        let mut cert_inner: Certificate = Decode07::from_der(&chain.ee_der).unwrap();
+        let mut cert_inner: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         cert_inner.tbs_certificate.signature.parameters = Some(der_null);
 
         for cert in [cert, cert_inner] {
-            let der = Encode07::to_der(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             let mut validation_log = StatusTracker::default();
             assert!(
                 check_end_entity_certificate_profile(&der, &ctp, &mut validation_log, None)
@@ -1006,20 +1006,20 @@ mod tests {
     )]
     fn ocsp_signing_allows_nonrepudiation_without_digital_signature() {
         let chain = generate_ephemeral_chain("ocsp-key-usage.local").unwrap();
-        let mut cert: Certificate = Decode07::from_der(&chain.ee_der).unwrap();
+        let mut cert: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         // KeyUsage BIT STRING with only nonRepudiation asserted.
         extension(&mut cert, &[2, 5, 29, 15], vec![0x03, 0x02, 0x06, 0x40]);
         extension(
             &mut cert,
             &[2, 5, 29, 37],
-            Encode07::to_der(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9])]).unwrap(),
+            DerEncode::to_der(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9])]).unwrap(),
         );
 
         let ctp = CertificateTrustPolicy::default();
         let mut validation_log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(
-                &Encode07::to_der(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &ctp,
                 &mut validation_log,
                 None,
@@ -1032,12 +1032,12 @@ mod tests {
         extension(
             &mut cert,
             &[2, 5, 29, 37],
-            Encode07::to_der(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4])]).unwrap(),
+            DerEncode::to_der(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4])]).unwrap(),
         );
         let mut validation_log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(
-                &Encode07::to_der(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &ctp,
                 &mut validation_log,
                 None,
@@ -1062,7 +1062,7 @@ mod tests {
     }
 
     fn profile_cert() -> Certificate {
-        Decode07::from_der(&x509_der_from_pem(include_bytes!(
+        DerDecode::from_der(&x509_der_from_pem(include_bytes!(
             "../../../tests/fixtures/certs/ed25519.pub"
         )))
         .unwrap()
@@ -1094,7 +1094,7 @@ mod tests {
 
     fn assert_profile_error(cert: &Certificate, expected: super::CertificateProfileError) {
         // These mutations test profile validation, not certificate signature verification.
-        let der = Encode07::to_der(cert).unwrap();
+        let der = DerEncode::to_der(cert).unwrap();
         let mut log = StatusTracker::default();
         let result = super::check_certificate_profile(
             &der,
@@ -1144,7 +1144,7 @@ mod tests {
         for parameters in [
             None,
             Some(any(vec![5, 0])),
-            Some(any(Encode07::to_der(&oid(&[1, 2, 3, 4])).unwrap())),
+            Some(any(DerEncode::to_der(&oid(&[1, 2, 3, 4])).unwrap())),
         ] {
             let mut cert = profile_cert();
             cert.tbs_certificate.subject_public_key_info.algorithm =
@@ -1171,7 +1171,11 @@ mod tests {
             ],
         ] {
             let mut cert = profile_cert();
-            extension(&mut cert, &[2, 5, 29, 37], Encode07::to_der(&ekus).unwrap());
+            extension(
+                &mut cert,
+                &[2, 5, 29, 37],
+                DerEncode::to_der(&ekus).unwrap(),
+            );
             assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
         }
 
@@ -1204,7 +1208,7 @@ mod tests {
                 });
             let mut log = StatusTracker::default();
             let result = super::check_certificate_profile(
-                &Encode07::to_der(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut log,
                 None,
@@ -1222,7 +1226,7 @@ mod tests {
         let mut log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(
-                &Encode07::to_der(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &ctp,
                 &mut log,
                 None,
@@ -1243,7 +1247,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .retain(|e| e.extn_id != oid(&[2, 5, 29, 37]));
-        let der = Encode07::to_der(&cert).unwrap();
+        let der = DerEncode::to_der(&cert).unwrap();
         let mut log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
@@ -1290,13 +1294,13 @@ mod tests {
                 extension(
                     &mut cert,
                     &[2, 5, 29, 37],
-                    Encode07::to_der(&purposes).unwrap(),
+                    DerEncode::to_der(&purposes).unwrap(),
                 );
                 let mut ctp = CertificateTrustPolicy::default();
                 ctp.add_mandatory_ekus(required.to_string().as_bytes());
                 let mut log = StatusTracker::default();
                 let result = check_end_entity_certificate_profile(
-                    &Encode07::to_der(&cert).unwrap(),
+                    &DerEncode::to_der(&cert).unwrap(),
                     &ctp,
                     &mut log,
                     None,
@@ -1344,10 +1348,10 @@ mod tests {
             extension(
                 &mut cert,
                 &[2, 5, 29, 37],
-                Encode07::to_der(&purposes).unwrap(),
+                DerEncode::to_der(&purposes).unwrap(),
             );
 
-            let der = Encode07::to_der(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
 
             for use_defaults in [false, true] {
                 for configured in [
@@ -1459,7 +1463,7 @@ mod tests {
             cert.tbs_certificate
                 .subject_public_key_info
                 .subject_public_key = BitString::from_bytes(&key).unwrap();
-            let der = Encode07::to_der(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             assert_eq!(
                 super::check_certificate_profile(
                     &der,
@@ -1477,7 +1481,7 @@ mod tests {
             exponent: der::asn1::Int,
         }
 
-        let mut cert: Certificate = Decode07::from_der(&x509_der_from_pem(include_bytes!(
+        let mut cert: Certificate = DerDecode::from_der(&x509_der_from_pem(include_bytes!(
             "../../../tests/fixtures/certs/ps256.pub"
         )))
         .unwrap();
@@ -1548,7 +1552,7 @@ mod tests {
                 mask: der::Any::from_der(
                     &x509_cert::spki::AlgorithmIdentifierOwned {
                         oid: oid(&[1, 2, 840, 113549, 1, 1, 8]),
-                        parameters: Some(any(Encode07::to_der(&mask_alg).unwrap())),
+                        parameters: Some(any(DerEncode::to_der(&mask_alg).unwrap())),
                     }
                     .to_der()
                     .unwrap(),
@@ -1565,7 +1569,7 @@ mod tests {
             cert.tbs_certificate.signature = cert.signature_algorithm.clone();
             let mut log = StatusTracker::default();
             let result = super::check_certificate_profile(
-                &Encode07::to_der(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut log,
                 None,
@@ -1631,7 +1635,7 @@ mod tests {
     #[test]
     fn supplied_timestamp_checks_both_validity_boundaries_inclusively() {
         let cert = profile_cert();
-        let der = Encode07::to_der(&cert).unwrap();
+        let der = DerEncode::to_der(&cert).unwrap();
         let (_, parsed) = x509_parser::prelude::X509Certificate::from_der(&der).unwrap();
         let start = parsed.validity().not_before.timestamp();
         let end = parsed.validity().not_after.timestamp();
@@ -1667,7 +1671,7 @@ mod tests {
             parameters: None,
         };
 
-        let hash = Encode07::to_der(&sha256).unwrap();
+        let hash = DerEncode::to_der(&sha256).unwrap();
         let mut malformed = vec![
             vec![5, 0],
             vec![0x30, 0],
@@ -1697,7 +1701,7 @@ mod tests {
             };
             cert.tbs_certificate.signature = cert.signature_algorithm.clone();
             let result = super::check_certificate_profile(
-                &Encode07::to_der(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut StatusTracker::default(),
                 None,
@@ -1758,7 +1762,7 @@ mod tests {
                     critical: true,
                     extn_value: OctetString::new(value).unwrap(),
                 });
-            let der = Encode07::to_der(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             let (_, parsed) = x509_parser::prelude::X509Certificate::from_der(&der).unwrap();
             let parsed_extension = parsed
                 .extensions()

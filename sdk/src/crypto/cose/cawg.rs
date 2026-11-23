@@ -372,7 +372,7 @@ mod tests {
     use x509_cert::{
         der::{
             asn1::{ObjectIdentifier, OctetString},
-            Decode as Decode07, Encode as Encode07,
+            Decode as DerDecode, Encode as DerEncode,
         },
         ext::Extension,
         Certificate,
@@ -392,7 +392,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        let mut certificate: Certificate = Decode07::from_der(&pem.contents).unwrap();
+        let mut certificate: Certificate = DerDecode::from_der(&pem.contents).unwrap();
 
         let extensions = certificate.tbs_certificate.extensions.as_mut().unwrap();
         extensions.retain(|ext| ext.extn_id != oid("2.5.29.32") && ext.extn_id != oid("2.5.29.37"));
@@ -400,7 +400,7 @@ mod tests {
             extn_id: oid("2.5.29.37"),
             critical: false,
             extn_value: OctetString::new(
-                Encode07::to_der(&purposes.iter().map(|s| oid(s)).collect::<Vec<_>>()).unwrap(),
+                DerEncode::to_der(&purposes.iter().map(|s| oid(s)).collect::<Vec<_>>()).unwrap(),
             )
             .unwrap(),
         });
@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn all_six_interim_policies_are_accepted() {
         for policy in SMIME_POLICIES {
-            let der = Encode07::to_der(&certificate(&[policy], &[EMAIL])).unwrap();
+            let der = DerEncode::to_der(&certificate(&[policy], &[EMAIL])).unwrap();
             assert!(
                 interim_certificate_is_acceptable(
                     &der,
@@ -501,7 +501,7 @@ mod tests {
             vec!["2.23.140.1.5.4.1"],
             vec!["1.2.3.4"],
         ] {
-            let der = Encode07::to_der(&certificate(&policies, &[EMAIL])).unwrap();
+            let der = DerEncode::to_der(&certificate(&policies, &[EMAIL])).unwrap();
             assert!(
                 !interim_certificate_is_acceptable(
                     &der,
@@ -528,7 +528,7 @@ mod tests {
         extensions.push(extension);
 
         assert!(interim_certificate_is_acceptable(
-            &Encode07::to_der(&cert).unwrap(),
+            &DerEncode::to_der(&cert).unwrap(),
             at(INTERIM_TRUST_END - 1),
             None,
             &CertificateTrustPolicy::default(),
@@ -544,7 +544,7 @@ mod tests {
             .extn_value = OctetString::new([0x30, 0x01, 0]).unwrap();
 
         assert!(interim_certificate_is_acceptable(
-            &Encode07::to_der(&cert).unwrap(),
+            &DerEncode::to_der(&cert).unwrap(),
             at(INTERIM_TRUST_END - 1),
             None,
             &CertificateTrustPolicy::default(),
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn cutoff_includes_the_whole_utc_day_and_uses_only_attested_time() {
-        let der = Encode07::to_der(&certificate(&[SMIME_POLICIES[0]], &[EMAIL])).unwrap();
+        let der = DerEncode::to_der(&certificate(&[SMIME_POLICIES[0]], &[EMAIL])).unwrap();
         let policy = CertificateTrustPolicy::default();
         for now in [
             INTERIM_TRUST_END - 86_400,
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn document_signing_is_not_an_interim_purpose_including_mixed_eku() {
         for purposes in [vec![DOCUMENT_SIGNING], vec![EMAIL, DOCUMENT_SIGNING]] {
-            let der = Encode07::to_der(&certificate(&[], &purposes)).unwrap();
+            let der = DerEncode::to_der(&certificate(&[], &purposes)).unwrap();
             assert!(interim_certificate_is_acceptable(
                 &der,
                 at(INTERIM_TRUST_END + 1),
@@ -602,7 +602,7 @@ mod tests {
             "1.3.6.1.5.5.7.3.9",
             "1.3.6.1.4.1.62558.2.1",
         ] {
-            let der = Encode07::to_der(&certificate(&[SMIME_POLICIES[0]], &[purpose])).unwrap();
+            let der = DerEncode::to_der(&certificate(&[SMIME_POLICIES[0]], &[purpose])).unwrap();
             assert!(interim_certificate_is_acceptable(
                 &der,
                 at(INTERIM_TRUST_END - 1),
@@ -612,7 +612,7 @@ mod tests {
             .unwrap());
         }
 
-        let der = Encode07::to_der(&certificate(&[], &[EMAIL, DOCUMENT_SIGNING])).unwrap();
+        let der = DerEncode::to_der(&certificate(&[], &[EMAIL, DOCUMENT_SIGNING])).unwrap();
 
         let mut policy = CertificateTrustPolicy::new();
         policy.clear_ekus();
@@ -637,7 +637,7 @@ mod tests {
     }
 
     fn signed_cose_with_certificate(certificate: &Certificate, data: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        let der = Encode07::to_der(certificate).unwrap();
+        let der = DerEncode::to_der(certificate).unwrap();
 
         let key = c2pa_raw_crypto::signer_from_private_key(
             include_bytes!("../../../tests/fixtures/certs/ed25519.pem"),
