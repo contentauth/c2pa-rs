@@ -419,6 +419,8 @@ pub(crate) mod opc {
     const MANIFEST_EXTENSION: &str = "c2pa";
     const MANIFEST_CONTENT_TYPE: &str = "application/c2pa";
 
+    const MAX_CONTENT_TYPES_LEN: u64 = 16 * 1024 * 1024;
+
     /// Writes a copy of `archive` to `output_stream` with `application/c2pa` declared for the
     /// manifest part in the OPC `[Content_Types].xml`.
     ///
@@ -439,10 +441,24 @@ pub(crate) mod opc {
         let file = archive
             .by_index(content_types_index)
             .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-        let mut new_content_types = io_utils::stream_with_fs_fallback(threshold_mb, file.size())?;
-        if !add_c2pa_content_type(BufReader::new(file), &mut new_content_types)? {
+        let mut new_content_types = io_utils::stream_with_fs_fallback(
+            threshold_mb,
+            file.size().min(MAX_CONTENT_TYPES_LEN),
+        )?;
+
+        let mut content_types = BufReader::new(file.take(MAX_CONTENT_TYPES_LEN + 1));
+        let changed = add_c2pa_content_type(&mut content_types, &mut new_content_types);
+
+        if content_types.get_ref().limit() == 0 {
+            return Err(Error::InvalidAsset(format!(
+                "{CONTENT_TYPES_PATH} is larger than {MAX_CONTENT_TYPES_LEN} bytes"
+            )));
+        }
+        if !changed? {
             return Ok(false);
         }
+
+        drop(content_types);
         new_content_types.rewind()?;
 
         zip_replace_entries(
@@ -588,6 +604,8 @@ pub(crate) mod opc {
         #![allow(clippy::unwrap_used)]
 
         use std::io::{Cursor, Seek};
+
+        use quick_xml::events::{BytesEnd, BytesText};
 
         use super::*;
 
@@ -841,6 +859,45 @@ pub(crate) mod opc {
             )
             .unwrap());
             assert!(again.get_ref().is_empty());
+        }
+
+        #[test]
+        fn test_declare_manifest_content_type_size_is_limited() {
+            let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            writer
+                .start_file(
+                    CONTENT_TYPES_PATH,
+                    zip::write::SimpleFileOptions::DEFAULT
+                        .compression_method(zip::CompressionMethod::Deflated),
+                )
+                .unwrap();
+
+            let mut xml_writer = Writer::new(&mut writer);
+            xml_writer
+                .write_event(Event::Start(BytesStart::new("Types")))
+                .unwrap();
+            xml_writer
+                .write_event(Event::Text(BytesText::new(
+                    &" ".repeat(MAX_CONTENT_TYPES_LEN as usize),
+                )))
+                .unwrap();
+            xml_writer
+                .write_event(Event::End(BytesEnd::new("Types")))
+                .unwrap();
+
+            let mut zip = writer.finish().unwrap();
+            assert!(zip.get_ref().len() < 1024 * 1024);
+
+            let mut output = Cursor::new(Vec::new());
+            let result = declare_manifest_content_type(
+                &mut ZipArchive::new(&mut zip).unwrap(),
+                &mut output,
+                THRESHOLD_MB,
+            );
+            assert!(
+                matches!(&result, Err(Error::InvalidAsset(msg)) if msg.contains("larger than")),
+                "expected the size limit error, got {result:?}"
+            );
         }
 
         #[test]
