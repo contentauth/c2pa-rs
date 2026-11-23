@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io::{Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -32,14 +32,16 @@ impl C2paWriter for ZipIO {
         &self,
         input_stream: &mut dyn ReadSeek,
         output_stream: &mut dyn ReadWriteSeek,
-        store_bytes: &[u8],
+        mut store_bytes: &[u8],
     ) -> Result<()> {
         let mut archive =
             ZipArchive::new(input_stream).map_err(|err| Error::InvalidAsset(err.to_string()))?;
         match archive.index_for_name(MANIFEST_PATH) {
-            Some(_) => {
-                zip_replace_entries(&mut archive, output_stream, &[(MANIFEST_PATH, store_bytes)])
-            }
+            Some(_) => zip_replace_entries(
+                &mut archive,
+                output_stream,
+                &mut [(MANIFEST_PATH, &mut store_bytes)],
+            ),
             None => zip_append_c2pa(&mut archive, output_stream, store_bytes),
         }
         .map_err(|err| Error::InvalidAsset(err.to_string()))
@@ -196,7 +198,7 @@ where
 pub(crate) fn zip_replace_entries<R, W>(
     archive: &mut ZipArchive<R>,
     output_stream: &mut W,
-    replacements: &[(&str, &[u8])],
+    replacements: &mut [(&str, &mut dyn Read)],
 ) -> ZipResult<()>
 where
     R: Read + Seek,
@@ -211,14 +213,14 @@ where
         let file = archive.by_index_raw(index)?;
         let replacement = str::from_utf8(file.name_raw()).ok().and_then(|name| {
             replacements
-                .iter()
+                .iter_mut()
                 .find(|(replacement_name, _)| *replacement_name == name)
         });
         match replacement {
             Some((name, contents)) => {
                 let options = file.options();
                 writer.start_file(*name, options)?;
-                writer.write_all(contents)?;
+                io::copy(contents, &mut writer)?;
             }
             None => writer.raw_copy_file(file)?,
         }
@@ -391,6 +393,440 @@ where
     }
 
     Ok(entries)
+}
+
+/// Support for Open Packaging Conventions (OPC) packages, such as Office Open XML and OpenXPS.
+pub(crate) mod opc {
+    use std::io::{BufRead, BufReader, Read, Seek, Write};
+
+    use quick_xml::{
+        events::{BytesStart, Event},
+        Reader, Writer,
+    };
+    use zip::ZipArchive;
+
+    use super::zip_replace_entries;
+    use crate::{asset_io::ReadWriteSeek, error::Result, utils::io_utils, Error};
+
+    const CONTENT_TYPES_PATH: &str = "[Content_Types].xml";
+    const MANIFEST_PART_NAME: &str = "/META-INF/content_credential.c2pa";
+    const MANIFEST_EXTENSION: &str = "c2pa";
+    const MANIFEST_CONTENT_TYPE: &str = "application/c2pa";
+
+    /// Writes a copy of `archive` to `output_stream` with `application/c2pa` declared for the
+    /// manifest part in the OPC `[Content_Types].xml`.
+    ///
+    /// Returns `false` without writing anything if the archive isn't an OPC package or already
+    /// declares the content type.
+    pub(crate) fn declare_manifest_content_type<R>(
+        archive: &mut ZipArchive<R>,
+        output_stream: &mut dyn ReadWriteSeek,
+        threshold_mb: usize,
+    ) -> Result<bool>
+    where
+        R: Read + Seek,
+    {
+        let Some(content_types_index) = archive.index_for_name(CONTENT_TYPES_PATH) else {
+            return Ok(false);
+        };
+
+        let file = archive
+            .by_index(content_types_index)
+            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+        let mut new_content_types = io_utils::stream_with_fs_fallback(threshold_mb, file.size())?;
+        if !add_c2pa_content_type(BufReader::new(file), &mut new_content_types)? {
+            return Ok(false);
+        }
+        new_content_types.rewind()?;
+
+        zip_replace_entries(
+            archive,
+            output_stream,
+            &mut [(CONTENT_TYPES_PATH, &mut new_content_types)],
+        )
+        .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+
+        Ok(true)
+    }
+
+    /// Ensures an OPC `[Content_Types].xml` declares `application/c2pa` for the manifest part.
+    ///
+    /// Writes the patched content types to `output` and returns `true`, or returns `false` if the
+    /// content types already declare it (in which case `output` should be discarded).
+    fn add_c2pa_content_type<R: BufRead, W: Write>(content_types: R, output: W) -> Result<bool> {
+        let mut reader = Reader::from_reader(content_types);
+        let mut writer = Writer::new(output);
+        let mut buffer = Vec::new();
+
+        let mut has_default = false;
+        let mut has_override = false;
+        let mut changed = false;
+        let mut skipping_override = false;
+
+        loop {
+            let event = reader
+                .read_event_into(&mut buffer)
+                .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+
+            // skip all the incorrect stuff in the existing Override
+            if skipping_override {
+                match &event {
+                    Event::End(end) if end.local_name().as_ref() == b"Override" => {
+                        skipping_override = false;
+                    }
+                    Event::Eof => break,
+                    _ => {}
+                }
+
+                buffer.clear();
+                continue;
+            }
+
+            match &event {
+                // handle `Override`s
+                Event::Start(element) | Event::Empty(element) if is_manifest_override(element)? => {
+                    has_override = true;
+
+                    // if we encounter an Override for c2pa that has issues, we write the fixed up one
+                    // and then skip the rest of the contents
+                    if !attribute_value(element, b"ContentType")?.is_some_and(|content_type| {
+                        content_type
+                            .trim()
+                            .eq_ignore_ascii_case(MANIFEST_CONTENT_TYPE)
+                    }) {
+                        let prefix = element.name().prefix();
+                        let new_override =
+                            override_element(prefix.as_ref().map(|prefix| prefix.as_ref()))?;
+
+                        writer.write_event(Event::Empty(new_override))?;
+                        changed = true;
+
+                        skipping_override = matches!(event, Event::Start(_));
+
+                        buffer.clear();
+                        continue;
+                    }
+                }
+                // handle `Default`s
+                Event::Start(element) | Event::Empty(element)
+                    if element.local_name().as_ref() == b"Default"
+                        && attribute_value(element, b"Extension")?.is_some_and(|extension| {
+                            extension.eq_ignore_ascii_case(MANIFEST_EXTENSION)
+                        }) =>
+                {
+                    has_default =
+                        attribute_value(element, b"ContentType")?.is_some_and(|content_type| {
+                            content_type
+                                .trim()
+                                .eq_ignore_ascii_case(MANIFEST_CONTENT_TYPE)
+                        });
+                }
+                // if we are at the end and there's nothing declared
+                Event::End(end)
+                    if end.local_name().as_ref() == b"Types" && !has_override && !has_default =>
+                {
+                    let prefix = end.name().prefix();
+                    let element = override_element(prefix.as_ref().map(|prefix| prefix.as_ref()))?;
+
+                    writer.write_event(Event::Empty(element))?;
+                    changed = true;
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+
+            writer.write_event(event)?;
+            buffer.clear();
+        }
+
+        Ok(changed)
+    }
+
+    fn attribute_value(element: &BytesStart, name: &[u8]) -> Result<Option<String>> {
+        for attribute in element.attributes() {
+            let attribute = attribute.map_err(|err| Error::InvalidAsset(err.to_string()))?;
+            if attribute.key.local_name().as_ref() == name {
+                let value = String::from_utf8(attribute.value.into_owned())
+                    .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+                return Ok(Some(value));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn is_manifest_override(element: &BytesStart) -> Result<bool> {
+        Ok(element.local_name().as_ref() == b"Override"
+            && attribute_value(element, b"PartName")?
+                .is_some_and(|part_name| part_name.eq_ignore_ascii_case(MANIFEST_PART_NAME)))
+    }
+
+    fn override_element(prefix: Option<&[u8]>) -> Result<BytesStart<'static>> {
+        let name = match prefix {
+            Some(prefix) => format!(
+                "{}:Override",
+                str::from_utf8(prefix).map_err(|err| Error::InvalidAsset(err.to_string()))?
+            ),
+            None => "Override".to_string(),
+        };
+
+        Ok(BytesStart::new(name).with_attributes([
+            ("PartName", MANIFEST_PART_NAME),
+            ("ContentType", MANIFEST_CONTENT_TYPE),
+        ]))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #![allow(clippy::unwrap_used)]
+
+        use std::io::{Cursor, Seek};
+
+        use super::*;
+
+        const ZIP: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
+        const DOCX: &[u8] = include_bytes!("../../tests/fixtures/sample1.docx");
+        const ODT: &[u8] = include_bytes!("../../tests/fixtures/sample1.odt");
+
+        const THRESHOLD_MB: usize = 1;
+
+        const MANIFEST_OVERRIDE: &str = r#"
+            <Override
+                PartName="/META-INF/content_credential.c2pa"
+                ContentType="application/c2pa"/>
+        "#;
+
+        /// Runs [`add_c2pa_content_type`], returning the patched content types if it changed them.
+        fn add_c2pa_content_type_string(content_types: &str) -> Option<String> {
+            let mut output = Vec::new();
+            add_c2pa_content_type(content_types.as_bytes(), &mut output)
+                .unwrap()
+                .then(|| String::from_utf8(output).unwrap())
+        }
+
+        /// Joins xml's lines with their indentation trimmed.
+        fn compact(xml: &str) -> String {
+            xml.lines()
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace(" <", "<")
+                .replace("> ", ">")
+                .trim()
+                .to_string()
+        }
+
+        fn read_entry(stream: &mut Cursor<Vec<u8>>, name: &str) -> Option<String> {
+            stream.rewind().unwrap();
+
+            let mut archive = ZipArchive::new(stream).unwrap();
+            let mut file = archive.by_name(name).ok()?;
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).unwrap();
+
+            Some(contents)
+        }
+
+        #[test]
+        fn test_declare_c2pa_content_type_adds_override() {
+            let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                    <Default Extension="xml" ContentType="application/xml"/>
+                </Types>
+            "#;
+            let patched = add_c2pa_content_type_string(xml).unwrap();
+            assert_eq!(
+                compact(&patched),
+                compact(&format!(
+                    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                            <Default Extension="xml" ContentType="application/xml"/>
+                            {MANIFEST_OVERRIDE}
+                        </Types>
+                    "#
+                ))
+            );
+            assert!(add_c2pa_content_type_string(&patched).is_none());
+        }
+
+        #[test]
+        fn test_declare_c2pa_content_type_invalid_xml() {
+            let mismatched = r#"
+                <Types>
+                    <Default Extension="xml" ContentType="application/xml">
+                </Types>
+            "#;
+            assert!(matches!(
+                add_c2pa_content_type(mismatched.as_bytes(), Vec::new()),
+                Err(Error::InvalidAsset(_))
+            ));
+        }
+
+        #[test]
+        fn test_declare_c2pa_content_type_long_form_override() {
+            let xml = r#"
+                <Types>
+                    <Override
+                        PartName="/META-INF/content_credential.c2pa"
+                        ContentType="text/plain">
+                    </Override>
+                </Types>
+            "#;
+            let patched = add_c2pa_content_type_string(xml).unwrap();
+            assert_eq!(
+                compact(&patched),
+                compact(&format!("<Types>{MANIFEST_OVERRIDE}</Types>"))
+            );
+
+            let xml = r#"
+                <Types>
+                    <Override
+                        PartName="/META-INF/content_credential.c2pa"
+                        ContentType="application/c2pa">
+                    </Override>
+                </Types>
+            "#;
+            assert!(add_c2pa_content_type_string(xml).is_none());
+        }
+
+        #[test]
+        fn test_declare_c2pa_content_type_override_beats_default() {
+            let xml = r#"
+                <Types>
+                    <Default Extension="c2pa" ContentType="application/c2pa"/>
+                    <Override
+                        PartName="/META-INF/content_credential.c2pa"
+                        ContentType="text/plain"/>
+                </Types>
+            "#;
+            let patched = add_c2pa_content_type_string(xml).unwrap();
+            assert_eq!(
+                compact(&patched),
+                compact(&format!(
+                    r#"
+                        <Types>
+                            <Default Extension="c2pa" ContentType="application/c2pa"/>
+                            {MANIFEST_OVERRIDE}
+                        </Types>
+                    "#
+                ))
+            );
+        }
+
+        #[test]
+        fn test_declare_c2pa_content_type_already_declared() {
+            let by_default = r#"
+                <Types>
+                    <Default Extension="C2PA" ContentType="application/c2pa"/>
+                </Types>
+            "#;
+            assert!(add_c2pa_content_type_string(by_default).is_none());
+
+            let by_override = r#"
+                <Types>
+                    <Override
+                        PartName="/meta-inf/CONTENT_CREDENTIAL.c2pa"
+                        ContentType="application/c2pa"/>
+                </Types>
+            "#;
+            assert!(add_c2pa_content_type_string(by_override).is_none());
+        }
+
+        #[test]
+        fn test_declare_c2pa_content_type_fixes_wrong_types() {
+            // a Default with the wrong type is overridden for the manifest part
+            let xml = r#"
+                <Types>
+                    <Default Extension="c2pa" ContentType="application/octet-stream"/>
+                </Types>
+            "#;
+            let patched = add_c2pa_content_type_string(xml).unwrap();
+            assert_eq!(
+                compact(&patched),
+                compact(&format!(
+                    r#"
+                        <Types>
+                            <Default Extension="c2pa" ContentType="application/octet-stream"/>
+                            {MANIFEST_OVERRIDE}
+                        </Types>
+                    "#
+                ))
+            );
+
+            // an Override with the wrong type is replaced
+            let xml = r#"
+                <Types>
+                    <Override
+                        PartName="/META-INF/content_credential.c2pa"
+                        ContentType="text/plain"/>
+                </Types>
+            "#;
+            let patched = add_c2pa_content_type_string(xml).unwrap();
+            assert_eq!(
+                compact(&patched),
+                compact(&format!("<Types>{MANIFEST_OVERRIDE}</Types>"))
+            );
+        }
+
+        #[test]
+        fn test_declare_manifest_content_type_opc() {
+            let mut input = Cursor::new(DOCX.to_vec());
+            let original = read_entry(&mut input, CONTENT_TYPES_PATH).unwrap();
+            assert!(!compact(&original).contains(&compact(MANIFEST_OVERRIDE)));
+
+            let mut declared = Cursor::new(Vec::new());
+            assert!(declare_manifest_content_type(
+                &mut ZipArchive::new(&mut input).unwrap(),
+                &mut declared,
+                THRESHOLD_MB
+            )
+            .unwrap());
+            assert!(
+                compact(&read_entry(&mut declared, CONTENT_TYPES_PATH).unwrap())
+                    .contains(&compact(MANIFEST_OVERRIDE))
+            );
+
+            // every other entry is unchanged and in the same order
+            input.rewind().unwrap();
+            declared.rewind().unwrap();
+            let input_names: Vec<String> = ZipArchive::new(&mut input)
+                .unwrap()
+                .file_names()
+                .map(|name| name.unwrap().into_owned())
+                .collect();
+            let declared_names: Vec<String> = ZipArchive::new(&mut declared)
+                .unwrap()
+                .file_names()
+                .map(|name| name.unwrap().into_owned())
+                .collect();
+            assert_eq!(input_names, declared_names);
+
+            // already declared, so nothing else to do
+            let mut again = Cursor::new(Vec::new());
+            assert!(!declare_manifest_content_type(
+                &mut ZipArchive::new(&mut declared).unwrap(),
+                &mut again,
+                THRESHOLD_MB
+            )
+            .unwrap());
+            assert!(again.get_ref().is_empty());
+        }
+
+        #[test]
+        fn test_declare_manifest_content_type_skips_non_opc() {
+            for sample in [ZIP, ODT] {
+                let mut input = Cursor::new(sample.to_vec());
+                let mut output = Cursor::new(Vec::new());
+                assert!(!declare_manifest_content_type(
+                    &mut ZipArchive::new(&mut input).unwrap(),
+                    &mut output,
+                    THRESHOLD_MB
+                )
+                .unwrap());
+                assert!(output.get_ref().is_empty());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
