@@ -1572,6 +1572,34 @@ impl Store {
         self.to_jumbf_internal(signer.reserve_size())
     }
 
+    /// CBOR placeholder of exactly `size` bytes. An indefinite-length array has
+    /// two framing bytes whatever its length, unlike a definite array whose
+    /// header grows at length boundaries and can make some sizes unreachable.
+    fn dynamic_assertion_placeholder(size: usize) -> Result<Vec<u8>> {
+        if size == 0 {
+            return Err(Error::BadParam(
+                "dynamic assertion reserve size must be at least one byte".into(),
+            ));
+        }
+        let mut data = Vec::new();
+        data.try_reserve_exact(size).map_err(|_| {
+            Error::BadParam(format!(
+                "dynamic assertion reserve size of {size} bytes is too large"
+            ))
+        })?;
+        let mut encoder = c2pa_cbor::Encoder::new(&mut data);
+        if size == 1 {
+            encoder.encode(&0u8)?;
+        } else {
+            encoder.write_array_indefinite()?;
+            for _ in 2..size {
+                encoder.encode(&0u8)?;
+            }
+            encoder.write_break()?;
+        }
+        Ok(data)
+    }
+
     /// Inserts placeholders for dynamic assertions to be updated later.
     #[async_generic(async_signature(
         &mut self,
@@ -1589,9 +1617,7 @@ impl Store {
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size()?;
-            let data1 = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
-            let cbor_delta = data1.len() - reserve_size;
-            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
+            let da_data = Self::dynamic_assertion_placeholder(reserve_size)?;
             assertions.push(UserCbor::new(&da.label(), da_data));
         }
 

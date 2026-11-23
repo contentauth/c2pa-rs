@@ -4520,6 +4520,61 @@ fn test_boxhash_embeddable_manifest() {
 }
 
 #[test]
+fn test_dynamic_assertion_placeholder_reserves_exact_size() {
+    #[derive(Debug)]
+    struct ReservedAssertion(usize);
+
+    impl DynamicAssertion for ReservedAssertion {
+        fn label(&self) -> String {
+            "com.example.reserved".to_string()
+        }
+
+        fn reserve_size(&self) -> Result<usize> {
+            Ok(self.0)
+        }
+
+        fn content(
+            &self,
+            _label: &str,
+            _size: Option<usize>,
+            _claim: &PartialClaim,
+        ) -> Result<DynamicAssertionContent> {
+            Err(Error::NotImplemented("placeholder-only test".into()))
+        }
+    }
+
+    for size in [
+        0, 1, 2, 23, 24, 25, 26, 255, 256, 257, 258, 259, 65_535, 65_536, 65_537, 65_538, 65_539,
+        65_540,
+    ] {
+        let mut store = Store::from_context(&Context::new());
+        store.commit_claim(Claim::new("test", None, 1)).unwrap();
+        let assertions: Vec<Box<dyn DynamicAssertion>> = vec![Box::new(ReservedAssertion(size))];
+        let result = store.add_dynamic_assertion_placeholders(&assertions);
+        if size == 0 {
+            assert!(matches!(result, Err(Error::BadParam(_))));
+            continue;
+        }
+        result.expect("reserve dynamic assertion placeholder");
+        let claim = store.provenance_claim().unwrap();
+        let placeholder = claim
+            .claim_assertion_store()
+            .last()
+            .unwrap()
+            .assertion()
+            .data();
+        assert_eq!(placeholder.len(), size, "reserve size {size}");
+    }
+    let mut store = Store::from_context(&Context::new());
+    store.commit_claim(Claim::new("test", None, 1)).unwrap();
+    let assertions: Vec<Box<dyn DynamicAssertion>> = vec![Box::new(ReservedAssertion(usize::MAX))];
+    assert!(matches!(
+        store.add_dynamic_assertion_placeholders(&assertions),
+        Err(Error::BadParam(_))
+    ));
+}
+
+#[test]
 fn test_sign_manifest_reserves_dynamic_assertion_placeholders_itself() {
     // A signer that advertises a dynamic assertion, with the caller never
     // reserving a placeholder slot for it. `sign_manifest` must reserve (and
