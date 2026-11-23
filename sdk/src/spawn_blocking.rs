@@ -323,8 +323,9 @@ mod tests {
             } else {
                 let (source, gate) = gated(Cursor::new(UNSIGNED));
                 gates.push(gate);
+                // Ed25519 keeps the concurrent signs cheap so they don't starve timing-sensitive tests.
                 signs.spawn(builder().sign_spawn_blocking(
-                    test_signer(SigningAlg::Ps256),
+                    test_signer(SigningAlg::Ed25519),
                     "image/jpeg",
                     source,
                     Cursor::new(Vec::new()),

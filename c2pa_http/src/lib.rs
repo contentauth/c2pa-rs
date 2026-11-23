@@ -623,12 +623,41 @@ pub mod tests {
     pub(crate) fn slow_server(delay_body: bool) -> (String, std::thread::JoinHandle<()>) {
         use std::{
             io::{BufRead, BufReader, Write},
-            net::TcpListener,
+            net::{TcpListener, TcpStream},
+            time::Instant,
         };
+
+        /// Accepts one connection, or `None` if no client connects within `limit`.
+        fn accept_within(listener: &TcpListener, limit: Duration) -> Option<TcpStream> {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + limit;
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        // Windows sockets inherit the listener's non-blocking mode.
+                        stream.set_nonblocking(false).unwrap();
+                        return Some(stream);
+                    }
+                    Err(e)
+                        if e.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(e) => {
+                        assert_eq!(e.kind(), io::ErrorKind::WouldBlock, "{e}");
+                        return None;
+                    }
+                }
+            }
+        }
+
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let task = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
+            // A client whose timeout expires before it connects never arrives.
+            let Some(mut stream) = accept_within(&listener, Duration::from_secs(5)) else {
+                return;
+            };
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
@@ -636,16 +665,16 @@ pub mod tests {
                 let mut reader = BufReader::new(&mut stream);
                 loop {
                     let mut line = String::new();
-                    assert_ne!(reader.read_line(&mut line).unwrap(), 0);
-                    if line == "\r\n" {
-                        break;
+                    // A client whose timeout expires mid-request hangs up before the headers end.
+                    match reader.read_line(&mut line) {
+                        Ok(0) | Err(_) => return,
+                        Ok(_) if line == "\r\n" => break,
+                        Ok(_) => {}
                     }
                 }
             }
             if delay_body {
-                stream
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")
-                    .unwrap();
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n");
             }
             std::thread::sleep(Duration::from_millis(600));
             if !delay_body {
