@@ -67,9 +67,8 @@ fn from_claim(claim: &Claim) -> MaybeBinding {
         return Ok(None);
     };
     let mut hash = DataHash::from_assertion(assertion.assertion())?;
-    if hash.is_remote_hash() {
-        return Err(Error::NotImplemented("remote data hash".into()));
-    }
+    // The deprecated `url` field is ignored (C2PA 2.5 §data hash): a hash built
+    // from this one is written without it, and a supplied one keeps its bytes.
     // As in `save_to_stream`, a data hash the caller already computed is signed
     // as given. One without a hash only requests a binding.
     if is_computed(&hash.hash) {

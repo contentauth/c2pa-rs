@@ -7030,6 +7030,78 @@ mod tests {
         Ok(())
     }
 
+    /// Signing BMFF with Merkle tree settings embeds the Merkle maps and, when proofs
+    /// are requested, the proof boxes after the last `mdat`. A signed result also
+    /// re-signs, replacing its proofs.
+    #[test]
+    fn test_builder_signs_bmff_with_merkle_settings() -> Result<()> {
+        use crate::utils::{test::test_context, test_signer::test_signer};
+
+        const C2PA_UUID: [u8; 16] = [
+            0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e,
+            0xc4, 0x81,
+        ];
+
+        fn merkle_proof_boxes(data: &[u8]) -> usize {
+            let mut pattern = C2PA_UUID.to_vec();
+            pattern.extend_from_slice(&[0; 4]);
+            pattern.extend_from_slice(b"merkle\0");
+            data.windows(pattern.len())
+                .filter(|w| *w == pattern.as_slice())
+                .count()
+        }
+
+        fn sign(source: &[u8], max_proofs: i64) -> Result<Vec<u8>> {
+            let context = test_context()
+                .with_settings_value("core.merkle_tree_chunk_size_in_kb", 1)?
+                .with_settings_value("core.merkle_tree_max_proofs", max_proofs)?;
+            let mut builder =
+                Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+            let signer = test_signer(SigningAlg::Ps256);
+            let mut output = Cursor::new(Vec::new());
+            builder.sign(
+                signer.as_ref(),
+                "video/mp4",
+                &mut Cursor::new(source),
+                &mut output,
+            )?;
+            Ok(output.into_inner())
+        }
+
+        fn assert_valid(data: &[u8]) -> Result<()> {
+            let reader =
+                Reader::from_context(test_context()).with_stream("video/mp4", Cursor::new(data))?;
+            assert!(
+                matches!(
+                    reader.validation_state(),
+                    ValidationState::Valid | ValidationState::Trusted
+                ),
+                "{:?}",
+                reader.validation_status()
+            );
+            Ok(())
+        }
+
+        for max_proofs in [0, 5] {
+            let signed = sign(TEST_VIDEO_MP4, max_proofs)?;
+            assert_valid(&signed)?;
+            assert!(signed.windows(6).any(|w| w == b"merkle"));
+            assert_eq!(merkle_proof_boxes(&signed) > 0, max_proofs > 0);
+        }
+
+        // The proofs of an already signed asset are replaced, not duplicated. (The
+        // legacy BMFF writer cannot re-sign a file that has Merkle boxes.)
+        #[cfg(feature = "unstable_asset_io")]
+        {
+            let signed = sign(TEST_VIDEO_MP4, 5)?;
+            let resigned = sign(&signed, 5)?;
+            assert_valid(&resigned)?;
+            assert_eq!(merkle_proof_boxes(&resigned), merkle_proof_boxes(&signed));
+        }
+
+        Ok(())
+    }
+
     /// Simulates a client that hashes mdat chunks while writing, then hands those
     /// hashes to the SDK so it can construct the Merkle tree without re-reading the
     /// (potentially multi-gigabyte) mdat content.

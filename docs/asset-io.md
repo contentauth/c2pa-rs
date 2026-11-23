@@ -65,9 +65,34 @@ Unknown formats use a private, unregistered pass-through handler that describes
 the asset as unnamed payload bytes. They share the normal write-and-hash pipeline
 but cannot embed a manifest or write XMP.
 
+### Merkle trees
+
+When `core.merkle_tree_chunk_size_in_kb` is set, a default ISO BMFF hash covers the
+`mdat` media with Merkle trees, as `Store::save_to_stream` does, and the output
+matches its Merkle maps and proof boxes. Nothing is read twice and no extra stream
+is needed:
+
+- The `mdat` boxes are the same in the output as in the source, so their sizes give
+  every tree's shape. The Merkle maps and the `merkle` proof boxes, which follow the
+  last `mdat`, get their final size before anything is written. The proof boxes are
+  written as zeros.
+- The leaves are hashed in blocks as the output is written, in the same pass as the
+  rest of the hash. They fill in the Merkle maps, and the proof boxes are then
+  patched in place. Proof boxes are excluded from the flat hash, so patching them
+  does not change it.
+- `core.merkle_tree_max_proofs` rows of each tree are kept in the proof boxes. A new
+  set replaces the proofs the asset has; without a Merkle setting they are kept when
+  it is re-signed.
+
+A BMFF hash the caller already computed is signed as given even with Merkle maps;
+its proof boxes must already be in the asset. Merkle maps without a computed hash
+are rejected.
+
 ### Current limitations
 
-Merkle BMFF bindings and remote BMFF hashes are rejected explicitly. The path is synchronous; async signers use `save_to_stream_async`.
+The deprecated `url` field of a data or BMFF hash is ignored, as C2PA 2.5 directs
+consumers to do: a binding built from the assertion is written without it. The path
+is synchronous; async signers use `save_to_stream_async`.
 
 For callback behavior, see [Progress and cancellation API](progress_callbacks.md#typical-phase-sequences).
 
@@ -92,8 +117,9 @@ Still read through `bmff_io.rs` either way, until asset-io provides them:
 timed-media sample tables (`BmffSampleReader`), and the framing of Merkle
 proof boxes the SDK writes itself (`write_c2pa_box`).
 
-This does not route public Builder signing through the direct-save pipeline
-above or add Merkle support to that pipeline.
+`Builder::sign` and everything built on it use the direct-save pipeline above.
+Fragmented BMFF signing (`Builder::sign_fragmented_files`) does not: it still uses
+the legacy BMFF code.
 
 ## Differences from the legacy handlers
 

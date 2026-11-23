@@ -8,14 +8,16 @@ use ::asset_io::{
         BoxFuture, ContainerHandler, FormatSpec, Io, MetadataUpdate, PlanBuilder, StructureBuilder,
         WritePlan,
     },
+    containers::bmff::BmffUpdates,
+    labels::MERKLE,
     ItemKind, NullSink, SegmentId, Sink, Structure, Updates,
 };
 use async_generic::async_generic;
 
 use crate::{
     assertions::asset_binding::{
-        asset_io_error, binding_from_claim, default_binding, AssetBinding, BuiltAssertion,
-        PlannedAsset, ProgressSink, SpanHasher,
+        asset_io_error, binding_from_claim, default_binding, AssetBinding, BindingHasher,
+        BuiltAssertion, PlannedAsset, ProgressSink,
     },
     asset_handlers::asset_io_adapter::MANIFEST_PLACEHOLDER,
     asset_io::{ReadSeek, ReadWriteSeek},
@@ -96,6 +98,45 @@ fn plan_write<'a>(
             ::asset_io::Error::UnsupportedItem(ItemKind::C2pa) => Error::UnsupportedType,
             other => asset_io_error(other),
         })
+}
+
+/// Fill the placeholder Merkle proof boxes of `written`, already in `output`, with
+/// `proofs`, which are the size the boxes were planned with.
+fn patch_merkle(
+    written: &Structure,
+    output: &mut dyn ReadWriteSeek,
+    proofs: &[Vec<u8>],
+) -> Result<()> {
+    let items: Vec<_> = written.items_labelled(ItemKind::Other, MERKLE).collect();
+    if items.len() != proofs.len() {
+        return Err(Error::JumbfCreationError);
+    }
+    output.rewind()?;
+    let mut output = output;
+    for (item, proof) in items.into_iter().zip(proofs) {
+        written
+            .patch_exact(&mut output, item, proof)
+            .map_err(asset_io_error)?;
+    }
+    output.flush()?;
+    output.rewind()?;
+    Ok(())
+}
+
+/// The Merkle proof payloads already in the asset, if any.
+fn existing_merkle_proofs(
+    structure: &Structure,
+    input: &mut dyn ReadSeek,
+) -> Result<Option<Vec<Vec<u8>>>> {
+    let proofs = structure
+        .items_labelled(ItemKind::Other, MERKLE)
+        .map(|item| {
+            structure
+                .read_item(&mut &mut *input, item)
+                .map_err(asset_io_error)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((!proofs.is_empty()).then_some(proofs))
 }
 
 /// The XMP to write so the asset's provenance points at `remote_url`, or no
@@ -316,6 +357,20 @@ impl Store {
         };
         binding.check_structure(&structure)?;
 
+        // Merkle proof boxes belong with the manifest that describes them. A Merkle
+        // binding replaces the asset's own with its proofs, planned at their final
+        // size and patched in once the leaves are hashed; any other keeps them.
+        let mut merkle = match binding.merkle_proofs() {
+            Some(proofs) => Some(proofs.to_vec()),
+            None => existing_merkle_proofs(&structure, input)?,
+        };
+        let base_updates = updates_with;
+        let updates_with = |store: Option<Vec<u8>>, merkle: &Option<Vec<Vec<u8>>>| match merkle {
+            Some(proofs) if proofs.is_empty() => base_updates(store).remove_merkle(),
+            Some(proofs) => base_updates(store).set_merkle(proofs.clone()),
+            None => base_updates(store),
+        };
+
         // A compressed store's size is only known once it is signed, so an
         // embedded one can only be bound by a binding that does not depend on the
         // store's size; anything else is saved uncompressed. Such a store is hashed
@@ -340,7 +395,7 @@ impl Store {
         let mut sizes = None;
         if embed && !write_after_signing {
             self.put_binding(binding.as_ref(), existing)?;
-            let updates = updates_with(Some(self.to_jumbf_internal(reserve_size)?));
+            let updates = updates_with(Some(self.to_jumbf_internal(reserve_size)?), &merkle);
             {
                 let plan = plan_write(&structure, input, &updates)?;
                 binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, &alg)?;
@@ -353,14 +408,19 @@ impl Store {
         }
 
         // Hash the output, writing it unless it waits for the signed store.
-        let updates = updates_with(store);
+        let updates = updates_with(store, &merkle);
         let plan = plan_write(&structure, input, &updates)?;
-        let spans = binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, &alg)?;
+        let (spans, leaves) = {
+            let mut planned = PlannedAsset::new(&plan, &mut *input)?;
+            let spans = binding.plan_hashes(&mut planned, &alg)?;
+            (spans, binding.plan_leaves(&planned)?)
+        };
+        let merkle_planned = leaves.is_some();
         match sizes {
             Some((binding_len, _)) => binding.fit_to_size(binding_len)?,
             None => self.put_binding(binding.as_ref(), existing)?,
         }
-        let hasher = SpanHasher::new(spans)?;
+        let hasher = BindingHasher::new(spans, leaves)?;
         let hasher = if write_after_signing {
             let sink = &mut std::io::sink();
             run_plan(&plan, input, sink, hasher, ProgressPhase::Hashing, context)?
@@ -374,7 +434,12 @@ impl Store {
                 context,
             )?
         };
-        binding.set_hashes(hasher.finish());
+        let (digests, leaf_digests) = hasher.finish();
+        binding.set_hashes(digests);
+        if let Some(leaf_digests) = leaf_digests {
+            binding.set_leaves(leaf_digests)?;
+            merkle = binding.merkle_proofs().map(<[_]>::to_vec);
+        }
         self.put_binding(binding.as_ref(), true)?;
 
         let store_len = sizes.map(|(_, store_len)| store_len);
@@ -390,7 +455,7 @@ impl Store {
                 .await?
         };
         if write_after_signing {
-            let updates = updates_with(Some(signed.clone()));
+            let updates = updates_with(Some(signed.clone()), &merkle);
             let plan = plan_write(&structure, input, &updates)?;
             write_plan(
                 &plan,
@@ -400,8 +465,13 @@ impl Store {
                 ProgressPhase::Writing,
                 context,
             )?;
-        } else if embed {
-            patch_store(plan.structure(), output, &signed)?;
+        } else {
+            if embed {
+                patch_store(plan.structure(), output, &signed)?;
+            }
+            if let (true, Some(proofs)) = (merkle_planned, &merkle) {
+                patch_merkle(plan.structure(), output, proofs)?;
+            }
         }
         if embed {
             context.check_progress(ProgressPhase::Embedding, 1, 1)?;
@@ -605,6 +675,12 @@ mod tests {
     }
 
     fn bmff_fixture() -> Vec<u8> {
+        bmff_fixture_with_mdats(&[256])
+    }
+
+    /// A file with one `mdat` box per size in `sizes`; its sample table points at
+    /// the first.
+    fn bmff_fixture_with_mdats(sizes: &[usize]) -> Vec<u8> {
         fn atom(name: &[u8; 4], bytes: &[u8]) -> Vec<u8> {
             let mut out = ((bytes.len() + 8) as u32).to_be_bytes().to_vec();
             out.extend_from_slice(name);
@@ -626,7 +702,10 @@ mod tests {
         let last = moov.len();
         moov[last - 4..].copy_from_slice(&mdat_offset.to_be_bytes());
         bytes.extend(moov);
-        bytes.extend(atom(b"mdat", &[42; 256]));
+        for (index, &size) in sizes.iter().enumerate() {
+            let media: Vec<u8> = (0..size).map(|n| (n * 7 + index) as u8).collect();
+            bytes.extend(atom(b"mdat", &media));
+        }
         bytes
     }
 
@@ -1640,6 +1719,234 @@ mod tests {
         }
     }
 
+    /// The deprecated `url` field of a hash assertion is ignored when signing
+    /// (C2PA 2.5): the hash is bound as usual and written without it.
+    #[test]
+    fn direct_asset_io_ignores_the_deprecated_hash_url() {
+        use crate::{assertions::UserCbor, utils::cbor_types::UriT};
+
+        // The assertion's CBOR with a `url` entry added, as another generator wrote it.
+        fn with_url(assertion: crate::assertion::Assertion) -> Vec<u8> {
+            let mut data = assertion.data().to_vec();
+            assert!(data[0] >> 5 == 5 && data[0] & 0x1f < 23, "a short map");
+            data[0] += 1;
+            data.extend(c2pa_cbor::to_vec(&"url").unwrap());
+            data.extend(c2pa_cbor::to_vec(&UriT("https://example.com/hash".into())).unwrap());
+            data
+        }
+
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let bmff = bmff_fixture();
+
+        for (format, source, label) in [
+            (FIXTURES[0].0, FIXTURES[0].1, DataHash::LABEL),
+            ("video/mp4", bmff.as_slice(), BmffHash::LABEL),
+        ] {
+            let assertion = if label == DataHash::LABEL {
+                DataHash::new("requested", "sha256").to_assertion().unwrap()
+            } else {
+                let mut hash = BmffHash::new("requested", "sha256", None);
+                hash.set_default_exclusions_with_options(context.settings());
+                hash.to_assertion().unwrap()
+            };
+            let mut store = unsigned_store(&context);
+            store
+                .provenance_claim_mut()
+                .unwrap()
+                .add_assertion(&UserCbor::new(label, with_url(assertion)))
+                .unwrap();
+            let claim = store.provenance_claim().unwrap();
+            let remote = if label == DataHash::LABEL {
+                DataHash::from_assertion(claim.data_hash_assertions()[0].assertion())
+                    .unwrap()
+                    .is_remote_hash()
+            } else {
+                BmffHash::from_assertion(claim.bmff_hash_assertions()[0].assertion())
+                    .unwrap()
+                    .is_remote_hash()
+            };
+            assert!(remote, "{format}: the test hash has a url");
+            let mut output = Cursor::new(Vec::new());
+            let manifest = store
+                .save_to_stream_asset_io(format, &mut Cursor::new(source), &mut output, &context)
+                .map_err(|error| format!("{format}: {error}"))
+                .unwrap();
+
+            let claim = store.provenance_claim().unwrap();
+            if label == DataHash::LABEL {
+                let hash = DataHash::from_assertion(claim.data_hash_assertions()[0].assertion());
+                assert!(!hash.unwrap().is_remote_hash(), "{format}");
+            } else {
+                let hash = BmffHash::from_assertion(claim.bmff_hash_assertions()[0].assertion());
+                assert!(!hash.unwrap().is_remote_hash(), "{format}");
+            }
+            assert_valid_manifest(format, &manifest, &mut output);
+        }
+    }
+
+    /// A BMFF hash the caller computed is signed as given even when it has Merkle
+    /// maps, whose proofs are already in the asset. It is not refused as
+    /// unsupported; a wrong one fails verification instead.
+    #[test]
+    fn direct_asset_io_signs_a_supplied_bmff_hash_with_merkle_maps() {
+        let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
+        let mut store = unsigned_store(&context);
+        let mut hash = BmffHash::new("supplied", "sha256", None);
+        hash.set_default_exclusions_with_options(context.settings());
+        hash.set_hash(vec![1; 32]);
+        hash.set_merkle(Vec::new());
+        store
+            .provenance_claim_mut()
+            .unwrap()
+            .add_assertion(&hash)
+            .unwrap();
+        let result = store.save_to_stream_asset_io(
+            "video/mp4",
+            &mut Cursor::new(bmff_fixture()),
+            &mut Cursor::new(Vec::new()),
+            &context,
+        );
+        assert!(
+            !matches!(result, Err(Error::NotImplemented(_))),
+            "{result:?}"
+        );
+    }
+
+    /// The Merkle maps and proof boxes of a direct save are those of the legacy save:
+    /// both come from the source's media. A signed file takes a new manifest with
+    /// its proofs replaced, or kept when the new manifest has no Merkle tree.
+    #[test]
+    fn direct_asset_io_bmff_merkle_matches_the_legacy_save() {
+        use ::asset_io::{labels::MERKLE, ItemKind};
+
+        const VIDEO: &[u8] = include_bytes!("../../tests/fixtures/video1_no_manifest.mp4");
+
+        /// The Merkle settings: a block size in KB (0 is one leaf per `mdat`) and the
+        /// most proof rows to keep.
+        fn merkle_context(merkle: Option<(i64, i64)>) -> Context {
+            let mut context = test_context().with_signer(test_signer(SigningAlg::Ps256));
+            if let Some((chunk_kb, max_proofs)) = merkle {
+                context = context
+                    .with_settings_value("core.merkle_tree_chunk_size_in_kb", chunk_kb)
+                    .unwrap()
+                    .with_settings_value("core.merkle_tree_max_proofs", max_proofs)
+                    .unwrap();
+            }
+            context
+        }
+
+        fn merkle_store(context: &Context) -> Store {
+            // Merkle trees need BMFF hash v3, so a v2 claim.
+            let mut store = Store::from_context(context);
+            store
+                .commit_claim(crate::utils::test::create_test_claim().unwrap())
+                .unwrap();
+            store
+        }
+
+        fn proofs(data: &[u8]) -> Vec<Vec<u8>> {
+            let handler = ::asset_io::HandlerRegistry::builtin()
+                .handler("video/mp4")
+                .unwrap()
+                .clone();
+            let mut stream = Cursor::new(data);
+            let structure = handler.parse(&mut stream).unwrap();
+            structure
+                .items_labelled(ItemKind::Other, MERKLE)
+                .map(|item| structure.read_item(&mut stream, item).unwrap())
+                .collect()
+        }
+
+        fn maps(store: &Store) -> Vec<u8> {
+            let hash = BmffHash::from_assertion(
+                store.provenance_claim().unwrap().bmff_hash_assertions()[0].assertion(),
+            )
+            .unwrap();
+            c2pa_cbor::to_vec(&hash.merkle().expect("Merkle maps")).unwrap()
+        }
+
+        // Two `mdat` boxes of three 1 KB blocks each, to cover each in turn.
+        let two = bmff_fixture_with_mdats(&[3000, 2500]);
+        let cases: [(&[u8], i64, i64); 6] = [
+            (VIDEO, 1, 0),
+            (VIDEO, 1, 3),
+            (&two, 1, 0),
+            (&two, 1, 3),
+            (&two, 0, 3),
+            (&two, 1, 100),
+        ];
+        for (source, chunk_kb, max_proofs) in cases {
+            let case = format!("{} bytes, {chunk_kb} KB, {max_proofs} proofs", source.len());
+            let context = merkle_context(Some((chunk_kb, max_proofs)));
+            let mut direct_store = merkle_store(&context);
+            let mut direct = Cursor::new(Vec::new());
+            let direct_manifest = direct_store
+                .save_to_stream_asset_io(
+                    "video/mp4",
+                    &mut Cursor::new(source),
+                    &mut direct,
+                    &context,
+                )
+                .unwrap();
+
+            let mut legacy_store = merkle_store(&context);
+            let mut legacy = Cursor::new(Vec::new());
+            legacy_store
+                .save_to_stream(
+                    "video/mp4",
+                    &mut Cursor::new(source),
+                    &mut legacy,
+                    context.signer().unwrap(),
+                    &context,
+                )
+                .unwrap();
+
+            assert_eq!(maps(&direct_store), maps(&legacy_store), "{case}");
+            let direct_proofs = proofs(direct.get_ref());
+            assert_eq!(direct_proofs, proofs(legacy.get_ref()), "{case}");
+            assert_valid_manifest("video/mp4", &direct_manifest, &mut direct);
+
+            // Re-sign: a new tree replaces the proofs, no tree keeps them.
+            for resign in [Some((chunk_kb, max_proofs)), None] {
+                let context = merkle_context(resign);
+                let mut resigned = Cursor::new(Vec::new());
+                let manifest = merkle_store(&context)
+                    .save_to_stream_asset_io(
+                        "video/mp4",
+                        &mut Cursor::new(direct.get_ref().as_slice()),
+                        &mut resigned,
+                        &context,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    proofs(resigned.get_ref()),
+                    direct_proofs,
+                    "{case}: {resign:?}"
+                );
+                assert_valid_manifest("video/mp4", &manifest, &mut resigned);
+            }
+        }
+
+        // Proof boxes are written when there are proof rows to keep.
+        let boxes = |source: &[u8], merkle| {
+            let context = merkle_context(Some(merkle));
+            let mut output = Cursor::new(Vec::new());
+            merkle_store(&context)
+                .save_to_stream_asset_io(
+                    "video/mp4",
+                    &mut Cursor::new(source),
+                    &mut output,
+                    &context,
+                )
+                .unwrap();
+            proofs(output.get_ref()).len()
+        };
+        assert_eq!(boxes(&two, (1, 0)), 0);
+        assert_eq!(boxes(&two, (1, 3)), 6);
+        assert_eq!(boxes(&two, (0, 3)), 0);
+    }
+
+    /// An unsupported BMFF request is refused before anything is written.
     #[test]
     fn direct_asset_io_rejects_unsupported_bmff_requests_before_writing() {
         let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));

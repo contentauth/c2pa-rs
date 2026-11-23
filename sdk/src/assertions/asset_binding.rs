@@ -157,6 +157,27 @@ pub(crate) trait AssetBinding: MaybeSend {
     fn depends_on_store_size(&self) -> bool {
         true
     }
+
+    /// The Merkle proofs, one box payload each, that belong after the last media
+    /// box of the output (ISO BMFF). They have their final size from the start, as
+    /// zeros, so the output can be planned. [`set_leaves`](Self::set_leaves) fills
+    /// them in, and the caller patches them into the written output. `Some` even
+    /// when empty, to replace the proofs the asset already has.
+    fn merkle_proofs(&self) -> Option<&[Vec<u8>]> {
+        None
+    }
+
+    /// The regions of `asset`, the planned output, to hash in blocks as it is
+    /// written: the leaves of a Merkle tree.
+    fn plan_leaves(&mut self, _asset: &PlannedAsset<'_, '_>) -> Result<Option<LeafPlan>> {
+        Ok(None)
+    }
+
+    /// Store the leaf digests of the plan [`plan_leaves`](Self::plan_leaves)
+    /// returned, one list per region, and complete the Merkle tree from them.
+    fn set_leaves(&mut self, _leaves: LeafDigests) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// A hard binding the caller already computed, signed unchanged as
@@ -427,6 +448,130 @@ impl Sink for SpanHasher {
     }
 }
 
+/// The digests of the blocks of each region of a [`LeafPlan`], in order.
+pub(crate) type LeafDigests = Vec<Vec<Vec<u8>>>;
+
+/// Regions of the output to hash in consecutive blocks of one size, a digest per
+/// block: the leaves of a Merkle tree. The last block of a region is whatever is
+/// left of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LeafPlan {
+    /// The regions, in output order and disjoint.
+    pub regions: Vec<ByteRange>,
+    /// The size of a full block, in bytes.
+    pub block: u64,
+    /// The hash algorithm.
+    pub alg: String,
+}
+
+/// Hashes the blocks of a [`LeafPlan`] as a write streams through it. The output
+/// arrives in order, so one hasher is open at a time however many leaves there are.
+pub(crate) struct LeafHasher {
+    plan: LeafPlan,
+    /// The region being hashed.
+    region: usize,
+    /// The block being hashed, and how much of it has been.
+    open: Option<(Hasher, u64)>,
+    /// The digests so far, one list per region.
+    leaves: LeafDigests,
+}
+
+impl LeafHasher {
+    pub fn new(plan: LeafPlan) -> Result<Self> {
+        if plan.block == 0 {
+            return Err(Error::BadParam("Merkle block size is 0".into()));
+        }
+        Hasher::new(&plan.alg)?;
+        Ok(Self {
+            leaves: vec![Vec::new(); plan.regions.len()],
+            plan,
+            region: 0,
+            open: None,
+        })
+    }
+
+    /// The digests, one list per region.
+    pub fn finish(self) -> LeafDigests {
+        self.leaves
+    }
+}
+
+impl Sink for LeafHasher {
+    fn chunk(&mut self, chunk: Chunk<'_>) -> ::asset_io::Result<()> {
+        let end = chunk.offset + chunk.data.len() as u64;
+        let mut at = chunk.offset;
+        while at < end {
+            let Some(region) = self.plan.regions.get(self.region) else {
+                break;
+            };
+            if region.is_empty() || at >= region.end() {
+                self.region += 1;
+                continue;
+            }
+            if at < region.offset() {
+                at = region.offset().min(end);
+                continue;
+            }
+            let stop = end.min(region.end());
+            while at < stop {
+                let (hasher, filled) = match self.open.take() {
+                    Some(open) => open,
+                    None => (
+                        Hasher::new(&self.plan.alg).map_err(::asset_io::Error::callback)?,
+                        0,
+                    ),
+                };
+                let (mut hasher, mut filled) = (hasher, filled);
+                let take = (self.plan.block - filled).min(stop - at);
+                let from = (at - chunk.offset) as usize;
+                hasher.update(&chunk.data[from..from + take as usize]);
+                filled += take;
+                at += take;
+                if filled == self.plan.block || at == region.end() {
+                    self.leaves[self.region].push(Hasher::finalize(hasher));
+                } else {
+                    self.open = Some((hasher, filled));
+                }
+            }
+            if at == region.end() {
+                self.region += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Hashes the spans of a binding and, for a Merkle tree, its leaf blocks, in the
+/// one pass of a write.
+pub(crate) struct BindingHasher {
+    spans: SpanHasher,
+    leaves: Option<LeafHasher>,
+}
+
+impl BindingHasher {
+    pub fn new(spans: Vec<HashSpan>, leaves: Option<LeafPlan>) -> Result<Self> {
+        Ok(Self {
+            spans: SpanHasher::new(spans)?,
+            leaves: leaves.map(LeafHasher::new).transpose()?,
+        })
+    }
+
+    /// The span digests, and the leaf digests if there was a plan for them.
+    pub fn finish(self) -> (Vec<Vec<u8>>, Option<LeafDigests>) {
+        (self.spans.finish(), self.leaves.map(LeafHasher::finish))
+    }
+}
+
+impl Sink for BindingHasher {
+    fn chunk(&mut self, chunk: Chunk<'_>) -> ::asset_io::Result<()> {
+        self.spans.chunk(chunk)?;
+        match &mut self.leaves {
+            Some(leaves) => leaves.chunk(chunk),
+            None => Ok(()),
+        }
+    }
+}
+
 /// Sort `ranges`, drop empty ones and merge those that overlap or touch.
 pub(crate) fn normalize_ranges(ranges: &mut Vec<ByteRange>) -> Result<()> {
     ranges.sort_by_key(ByteRange::offset);
@@ -518,6 +663,64 @@ mod tests {
                 assert_eq!(digests[1], hash_by_alg(alg, &data[5..25], None), "{alg}");
             }
         }
+    }
+
+    /// Blocks and regions that straddle chunk edges are hashed as if the bytes had
+    /// arrived at once, including a short last block, an empty region and bytes
+    /// between regions.
+    #[test]
+    fn leaf_hasher_handles_chunk_boundaries_blocks_and_regions() {
+        let data: Vec<u8> = (0..100).collect();
+        let regions = [(4, 17), (21, 0), (30, 25), (60, 5), (70, 30)];
+        let segment = SegmentId::from_index(0).unwrap();
+        for alg in ["sha256", "sha512"] {
+            for block in [1, 4, 5, 16, 17, 1000] {
+                let expected: Vec<Vec<Vec<u8>>> = regions
+                    .iter()
+                    .map(|&(start, len)| {
+                        data[start..start + len]
+                            .chunks(block)
+                            .map(|leaf| hash_by_alg(alg, leaf, None))
+                            .collect()
+                    })
+                    .collect();
+                for chunk_size in [1, 3, 7, 16, 100] {
+                    let plan = LeafPlan {
+                        regions: regions
+                            .iter()
+                            .map(|&(start, len)| ByteRange::new(start as u64, len as u64).unwrap())
+                            .collect(),
+                        block: block as u64,
+                        alg: alg.to_owned(),
+                    };
+                    let mut sink = LeafHasher::new(plan).unwrap();
+                    for (i, chunk) in data.chunks(chunk_size).enumerate() {
+                        sink.chunk(Chunk::new(
+                            segment,
+                            Role::Payload,
+                            (i * chunk_size) as u64,
+                            chunk,
+                        ))
+                        .unwrap();
+                    }
+                    assert_eq!(
+                        sink.finish(),
+                        expected,
+                        "{alg}: block {block}, chunk size {chunk_size}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn leaf_hasher_rejects_a_zero_block() {
+        let plan = LeafPlan {
+            regions: Vec::new(),
+            block: 0,
+            alg: "sha256".into(),
+        };
+        assert!(LeafHasher::new(plan).is_err());
     }
 
     #[test]

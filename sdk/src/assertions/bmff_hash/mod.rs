@@ -2361,6 +2361,35 @@ impl BmffHash {
     ) -> crate::Result<Vec<Vec<u8>>> {
         // build the Merkle tree
         let m_tree = self.create_merkle_tree_for_merkle_map(reader, box_info, merkle_map)?;
+        let proofs = Self::merkle_map_from_tree(&m_tree, merkle_map, max_proofs)?;
+
+        // convert the cbor Vecs to BMFF UUID boxes
+        Ok(proofs
+            .iter()
+            .map(|cbor_data| {
+                let mut uuid_box_data: Vec<u8> = Vec::with_capacity(cbor_data.len() + 32);
+                crate::asset_handlers::bmff_io::write_c2pa_box(
+                    &mut uuid_box_data,
+                    &[],
+                    crate::asset_handlers::bmff_io::MERKLE,
+                    cbor_data,
+                    0,
+                )
+                .unwrap_or_default(); // this cannot fail unless the vec allocation above fails
+                uuid_box_data
+            })
+            .collect())
+    }
+
+    /// Fill `merkle_map` from `m_tree` with the stored tree row and the leaf count,
+    /// and return the payload of each Merkle proof box, padded to one length. There
+    /// are none when the leaves themselves are stored. A tree built from any leaves
+    /// of the same number and hash length has the same shape, and so the same sizes.
+    pub(crate) fn merkle_map_from_tree(
+        m_tree: &C2PAMerkleTree,
+        merkle_map: &mut MerkleMap,
+        max_proofs: usize,
+    ) -> crate::Result<Vec<Vec<u8>>> {
         let num_leaves = m_tree.leaves.len();
 
         // save desired Merkle tree row
@@ -2420,23 +2449,6 @@ impl BmffHash {
                 uuid_box.resize(max_length, 0);
             }
         }
-
-        // convert the cbor Vecs to BMFF UUID boxes
-        uuid_boxes = uuid_boxes
-            .iter()
-            .map(|cbor_data| {
-                let mut uuid_box_data: Vec<u8> = Vec::with_capacity(cbor_data.len() + 32);
-                crate::asset_handlers::bmff_io::write_c2pa_box(
-                    &mut uuid_box_data,
-                    &[],
-                    crate::asset_handlers::bmff_io::MERKLE,
-                    cbor_data,
-                    0,
-                )
-                .unwrap_or_default(); // this cannot fail unless the vec allocation above fails
-                uuid_box_data
-            })
-            .collect();
 
         Ok(uuid_boxes)
     }
