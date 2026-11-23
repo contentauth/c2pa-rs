@@ -152,18 +152,21 @@ fn from_claim(claim: &Claim) -> MaybeBinding {
     Ok(Some(Box::new(hash)))
 }
 
-/// The default for a container made entirely of named boxes, except ISO BMFF,
-/// whose binding C2PA defines separately, when the settings prefer a box hash.
+/// Manifest-only archives use a box hash excluding the C2PA store. Other named
+/// containers use it when preferred, except ISO BMFF, which has its own binding.
 fn default_for(
     structure: &Structure,
     context: &Context,
     _claim: &Claim,
     _alg: &str,
 ) -> MaybeBinding {
-    Ok((context.settings().builder.prefer_box_hash
-        && !is_bmff(structure)
-        && structure.supports_named_boxes())
-    .then(|| Box::new(BoxHash { boxes: Vec::new() }) as Box<dyn AssetBinding>))
+    Ok(
+        (structure.container_id() == ::asset_io::containers::c2pa::ID
+            || (context.settings().builder.prefer_box_hash
+                && !is_bmff(structure)
+                && structure.supports_named_boxes()))
+        .then(|| Box::new(BoxHash { boxes: Vec::new() }) as Box<dyn AssetBinding>),
+    )
 }
 
 fn is_bmff(structure: &Structure) -> bool {
@@ -174,6 +177,14 @@ fn is_bmff(structure: &Structure) -> bool {
 /// established overlapping ranges for expanded elements).
 fn output_boxes(asset: &PlannedAsset<'_, '_>) -> Result<Vec<OutputBox>> {
     let structure = asset.structure();
+    // Archive compatibility: the entire manifest-only carrier is one excluded box.
+    if structure.container_id() == ::asset_io::containers::c2pa::ID {
+        return Ok(vec![OutputBox {
+            name: C2PA_BOXHASH.to_string(),
+            range: ByteRange::new(0, structure.total_size()).map_err(asset_io_error)?,
+            metadata: Vec::new(),
+        }]);
+    }
     let store = asset.store();
     // Fails for a structure that is not entirely named boxes.
     structure
@@ -211,7 +222,9 @@ impl AssetBinding for BoxHash {
                 "BMFF requires the BMFF hard binding".into(),
             ));
         }
-        if !structure.supports_named_boxes() {
+        if structure.container_id() != ::asset_io::containers::c2pa::ID
+            && !structure.supports_named_boxes()
+        {
             return Err(Error::NotImplemented(
                 "box hash requires a structure made entirely of named boxes".into(),
             ));

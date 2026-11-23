@@ -256,6 +256,7 @@ impl Store {
         // An asset with no container handler is copied unchanged.
         let handler = handler.unwrap_or_else(|| Arc::new(OpaqueHandler));
         let structure = open_structure(handler, input)?;
+        let manifest_only = structure.container_id() == ::asset_io::containers::c2pa::ID;
         let xmp = provenance_xmp(&structure, input, remote_url.as_deref())?;
         // Any existing store is removed, and replaced by `store` if given.
         let updates_with = |store: Option<Vec<u8>>| {
@@ -324,7 +325,9 @@ impl Store {
         if claim.compressed() && embed && binding.depends_on_store_size() {
             claim.set_compressed_manifest(false);
         }
-        let write_after_signing = embed && claim.compressed();
+        // Manifest-only output may discard writes, so write the signed store once
+        // instead of patching a placeholder in the destination.
+        let write_after_signing = embed && (claim.compressed() || manifest_only);
         let reserve_size = signer.reserve_size();
 
         // Fix the binding's and an embedded store's sizes from the binding's ranges
@@ -679,6 +682,57 @@ mod tests {
         }
         assert_eq!(end, structure.total_size());
         assert_eq!(patching, embed);
+    }
+
+    #[test]
+    fn direct_asset_io_manifest_only_accepts_empty_streams() {
+        let context = test_context()
+            .with_settings(
+                r#"{"builder":{"prefer_box_hash":false},"verify":{"verify_after_sign":true,"verify_after_sign_hash":true}}"#,
+            )
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ed25519));
+        for compressed in [false, true] {
+            let mut store = unsigned_store(&context);
+            store
+                .provenance_claim_mut()
+                .unwrap()
+                .set_compressed_manifest(compressed);
+            let manifest = store
+                .save_to_stream_asset_io(
+                    "application/c2pa",
+                    &mut io::empty(),
+                    &mut io::empty(),
+                    &context,
+                )
+                .expect("manifest-only signing with empty streams");
+            assert!(!manifest.is_empty());
+            let claim = store.provenance_claim().unwrap();
+            assert_eq!(claim.compressed(), compressed);
+            let assertions = claim.box_hash_assertions();
+            assert_eq!(assertions.len(), 1);
+            let binding = BoxHash::from_assertion(assertions[0].assertion()).unwrap();
+            assert_eq!(binding.boxes.len(), 1);
+            assert_eq!(binding.boxes[0].names, ["C2PA"]);
+            assert!(binding.boxes[0].hash.is_empty());
+
+            let mut store = unsigned_store(&context);
+            store
+                .provenance_claim_mut()
+                .unwrap()
+                .set_compressed_manifest(compressed);
+            let mut output = Cursor::new(Vec::new());
+            let manifest = store
+                .save_to_stream_asset_io(
+                    "application/c2pa",
+                    &mut io::empty(),
+                    &mut output,
+                    &context,
+                )
+                .expect("manifest-only signing to a retained destination");
+            assert_eq!(output.get_ref(), &manifest);
+            assert_valid_manifest("application/c2pa", &manifest, &mut output);
+        }
     }
 
     #[test]

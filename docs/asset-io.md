@@ -51,6 +51,11 @@ Every mode returns the signed manifest bytes. The caller must persist/upload
 sidecar and remote manifests; this path does not do so. Only embedded mode
 patches the output.
 
+Manifest-only `.c2pa` archives retain the compatibility BoxHash containing only
+the excluded C2PA store. They accept an empty source and write the signed store
+once, so a discarded destination such as `std::io::empty()` is also supported;
+the signed bytes are still returned.
+
 ### Routing
 
 The context's handler registry decides how a format is saved: an asset-io
