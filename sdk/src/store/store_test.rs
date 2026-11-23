@@ -5948,6 +5948,41 @@ fn test_sign_zip_with_existing_manifest_and_nonstandard_headers() {
 }
 
 #[test]
+fn test_sign_opc_declares_manifest_content_type() {
+    let mut context = Context::new();
+    context.settings_mut().verify.verify_after_sign = false;
+
+    let mut store = Store::from_context(&context);
+    store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+    let signer = test_signer(SigningAlg::Ps256);
+    let mut input = Cursor::new(include_bytes!("../../tests/fixtures/sample1.docx").to_vec());
+    let mut output = Cursor::new(Vec::new());
+    store
+        .save_to_stream("docx", &mut input, &mut output, signer.as_ref(), &context)
+        .unwrap();
+
+    let mut report = StatusTracker::default();
+    output.rewind().unwrap();
+    Store::from_stream("docx", &mut output, &mut report, &context).unwrap();
+
+    assert!(report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH));
+    assert!(!report.has_any_error());
+
+    output.rewind().unwrap();
+    let mut archive = zip::ZipArchive::new(&mut output).unwrap();
+    let mut content_types = String::new();
+    archive
+        .by_name("[Content_Types].xml")
+        .unwrap()
+        .read_to_string(&mut content_types)
+        .unwrap();
+    assert!(content_types.contains(
+        r#"<Override PartName="/META-INF/content_credential.c2pa" ContentType="application/c2pa"/>"#
+    ));
+}
+
+#[test]
 fn test_sign_zip_update_manifest_is_unsupported() {
     let mut context = Context::new();
     context.settings_mut().verify.verify_after_sign = false;
