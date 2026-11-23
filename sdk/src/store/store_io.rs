@@ -843,20 +843,20 @@ impl Store {
 
             // declare "[Content_Types].xml" for OPC packages before hashing
             if !remove_manifests && pc.collection_hash_assertions().is_empty() {
-                let mut declared = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                let mut added = io_utils::stream_with_fs_fallback(threshold, input_len)?;
                 let changed = if source_is_intermediate {
                     intermediate_stream.rewind()?;
                     let mut archive = ZipArchive::new(&mut intermediate_stream)
                         .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-                    opc::declare_manifest_content_type(&mut archive, &mut declared, threshold)?
+                    opc::add_c2pa_content_type(&mut archive, &mut added, threshold)?
                 } else {
                     input_stream.rewind()?;
                     let mut archive = ZipArchive::new(&mut *input_stream)
                         .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-                    opc::declare_manifest_content_type(&mut archive, &mut declared, threshold)?
+                    opc::add_c2pa_content_type(&mut archive, &mut added, threshold)?
                 };
                 if changed {
-                    intermediate_stream = declared;
+                    intermediate_stream = added;
                     source_is_intermediate = true;
                 }
             }

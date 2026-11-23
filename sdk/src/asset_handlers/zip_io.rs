@@ -426,7 +426,7 @@ pub(crate) mod opc {
     ///
     /// Returns `false` without writing anything if the archive isn't an OPC package or already
     /// declares the content type.
-    pub(crate) fn declare_manifest_content_type<R>(
+    pub(crate) fn add_c2pa_content_type<R>(
         archive: &mut ZipArchive<R>,
         output_stream: &mut dyn ReadWriteSeek,
         threshold_mb: usize,
@@ -447,7 +447,7 @@ pub(crate) mod opc {
         )?;
 
         let mut content_types = BufReader::new(file.take(MAX_CONTENT_TYPES_LEN + 1));
-        let changed = add_c2pa_content_type(&mut content_types, &mut new_content_types);
+        let changed = patch_content_types_xml(&mut content_types, &mut new_content_types);
 
         if content_types.get_ref().limit() == 0 {
             return Err(Error::InvalidAsset(format!(
@@ -475,7 +475,7 @@ pub(crate) mod opc {
     ///
     /// Writes the patched content types to `output` and returns `true`, or returns `false` if the
     /// content types already declare it (in which case `output` should be discarded).
-    fn add_c2pa_content_type<R: BufRead, W: Write>(content_types: R, output: W) -> Result<bool> {
+    fn patch_content_types_xml<R: BufRead, W: Write>(content_types: R, output: W) -> Result<bool> {
         let mut reader = Reader::from_reader(content_types);
         let mut writer = Writer::new(output);
         let mut buffer = Vec::new();
@@ -621,10 +621,10 @@ pub(crate) mod opc {
                 ContentType="application/c2pa"/>
         "#;
 
-        /// Runs [`add_c2pa_content_type`], returning the patched content types if it changed them.
-        fn add_c2pa_content_type_string(content_types: &str) -> Option<String> {
+        /// Runs [`patch_content_types_xml`], returning the patched content types if it changed them.
+        fn patch_content_types_xml_string(content_types: &str) -> Option<String> {
             let mut output = Vec::new();
-            add_c2pa_content_type(content_types.as_bytes(), &mut output)
+            patch_content_types_xml(content_types.as_bytes(), &mut output)
                 .unwrap()
                 .then(|| String::from_utf8(output).unwrap())
         }
@@ -653,13 +653,13 @@ pub(crate) mod opc {
         }
 
         #[test]
-        fn test_declare_c2pa_content_type_adds_override() {
+        fn test_patch_content_types_xml_adds_override() {
             let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
                 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
                     <Default Extension="xml" ContentType="application/xml"/>
                 </Types>
             "#;
-            let patched = add_c2pa_content_type_string(xml).unwrap();
+            let patched = patch_content_types_xml_string(xml).unwrap();
             assert_eq!(
                 compact(&patched),
                 compact(&format!(
@@ -671,24 +671,24 @@ pub(crate) mod opc {
                     "#
                 ))
             );
-            assert!(add_c2pa_content_type_string(&patched).is_none());
+            assert!(patch_content_types_xml_string(&patched).is_none());
         }
 
         #[test]
-        fn test_declare_c2pa_content_type_invalid_xml() {
+        fn test_patch_content_types_xml_invalid_xml() {
             let mismatched = r#"
                 <Types>
                     <Default Extension="xml" ContentType="application/xml">
                 </Types>
             "#;
             assert!(matches!(
-                add_c2pa_content_type(mismatched.as_bytes(), Vec::new()),
+                patch_content_types_xml(mismatched.as_bytes(), Vec::new()),
                 Err(Error::InvalidAsset(_))
             ));
         }
 
         #[test]
-        fn test_declare_c2pa_content_type_long_form_override() {
+        fn test_patch_content_types_xml_long_form_override() {
             let xml = r#"
                 <Types>
                     <Override
@@ -697,7 +697,7 @@ pub(crate) mod opc {
                     </Override>
                 </Types>
             "#;
-            let patched = add_c2pa_content_type_string(xml).unwrap();
+            let patched = patch_content_types_xml_string(xml).unwrap();
             assert_eq!(
                 compact(&patched),
                 compact(&format!("<Types>{MANIFEST_OVERRIDE}</Types>"))
@@ -711,11 +711,11 @@ pub(crate) mod opc {
                     </Override>
                 </Types>
             "#;
-            assert!(add_c2pa_content_type_string(xml).is_none());
+            assert!(patch_content_types_xml_string(xml).is_none());
         }
 
         #[test]
-        fn test_declare_c2pa_content_type_override_beats_default() {
+        fn test_patch_content_types_xml_override_beats_default() {
             let xml = r#"
                 <Types>
                     <Default Extension="c2pa" ContentType="application/c2pa"/>
@@ -724,7 +724,7 @@ pub(crate) mod opc {
                         ContentType="text/plain"/>
                 </Types>
             "#;
-            let patched = add_c2pa_content_type_string(xml).unwrap();
+            let patched = patch_content_types_xml_string(xml).unwrap();
             assert_eq!(
                 compact(&patched),
                 compact(&format!(
@@ -739,13 +739,13 @@ pub(crate) mod opc {
         }
 
         #[test]
-        fn test_declare_c2pa_content_type_already_declared() {
+        fn test_patch_content_types_xml_already_declared() {
             let by_default = r#"
                 <Types>
                     <Default Extension="C2PA" ContentType="application/c2pa"/>
                 </Types>
             "#;
-            assert!(add_c2pa_content_type_string(by_default).is_none());
+            assert!(patch_content_types_xml_string(by_default).is_none());
 
             let by_override = r#"
                 <Types>
@@ -754,7 +754,7 @@ pub(crate) mod opc {
                         ContentType="application/c2pa"/>
                 </Types>
             "#;
-            assert!(add_c2pa_content_type_string(by_override).is_none());
+            assert!(patch_content_types_xml_string(by_override).is_none());
 
             let escaped = r#"
                 <Types>
@@ -763,11 +763,11 @@ pub(crate) mod opc {
                         ContentType="application&#x2F;c2pa"/>
                 </Types>
             "#;
-            assert!(add_c2pa_content_type_string(escaped).is_none());
+            assert!(patch_content_types_xml_string(escaped).is_none());
         }
 
         #[test]
-        fn test_declare_c2pa_content_type_unknown_entity() {
+        fn test_patch_content_types_xml_unknown_entity() {
             let xml = r#"
                 <Types>
                     <Override
@@ -776,20 +776,20 @@ pub(crate) mod opc {
                 </Types>
             "#;
             assert!(matches!(
-                add_c2pa_content_type(xml.as_bytes(), Vec::new()),
+                patch_content_types_xml(xml.as_bytes(), Vec::new()),
                 Err(Error::InvalidAsset(_))
             ));
         }
 
         #[test]
-        fn test_declare_c2pa_content_type_fixes_wrong_types() {
+        fn test_patch_content_types_xml_fixes_wrong_types() {
             // a Default with the wrong type is overridden for the manifest part
             let xml = r#"
                 <Types>
                     <Default Extension="c2pa" ContentType="application/octet-stream"/>
                 </Types>
             "#;
-            let patched = add_c2pa_content_type_string(xml).unwrap();
+            let patched = patch_content_types_xml_string(xml).unwrap();
             assert_eq!(
                 compact(&patched),
                 compact(&format!(
@@ -810,7 +810,7 @@ pub(crate) mod opc {
                         ContentType="text/plain"/>
                 </Types>
             "#;
-            let patched = add_c2pa_content_type_string(xml).unwrap();
+            let patched = patch_content_types_xml_string(xml).unwrap();
             assert_eq!(
                 compact(&patched),
                 compact(&format!("<Types>{MANIFEST_OVERRIDE}</Types>"))
@@ -818,42 +818,42 @@ pub(crate) mod opc {
         }
 
         #[test]
-        fn test_declare_manifest_content_type_opc() {
+        fn test_add_c2pa_content_type_opc() {
             let mut input = Cursor::new(DOCX.to_vec());
             let original = read_entry(&mut input, CONTENT_TYPES_PATH).unwrap();
             assert!(!compact(&original).contains(&compact(MANIFEST_OVERRIDE)));
 
-            let mut declared = Cursor::new(Vec::new());
-            assert!(declare_manifest_content_type(
+            let mut added = Cursor::new(Vec::new());
+            assert!(add_c2pa_content_type(
                 &mut ZipArchive::new(&mut input).unwrap(),
-                &mut declared,
+                &mut added,
                 THRESHOLD_MB
             )
             .unwrap());
             assert!(
-                compact(&read_entry(&mut declared, CONTENT_TYPES_PATH).unwrap())
+                compact(&read_entry(&mut added, CONTENT_TYPES_PATH).unwrap())
                     .contains(&compact(MANIFEST_OVERRIDE))
             );
 
             // every other entry is unchanged and in the same order
             input.rewind().unwrap();
-            declared.rewind().unwrap();
+            added.rewind().unwrap();
             let input_names: Vec<String> = ZipArchive::new(&mut input)
                 .unwrap()
                 .file_names()
                 .map(|name| name.unwrap().into_owned())
                 .collect();
-            let declared_names: Vec<String> = ZipArchive::new(&mut declared)
+            let added_names: Vec<String> = ZipArchive::new(&mut added)
                 .unwrap()
                 .file_names()
                 .map(|name| name.unwrap().into_owned())
                 .collect();
-            assert_eq!(input_names, declared_names);
+            assert_eq!(input_names, added_names);
 
             // already declared, so nothing else to do
             let mut again = Cursor::new(Vec::new());
-            assert!(!declare_manifest_content_type(
-                &mut ZipArchive::new(&mut declared).unwrap(),
+            assert!(!add_c2pa_content_type(
+                &mut ZipArchive::new(&mut added).unwrap(),
                 &mut again,
                 THRESHOLD_MB
             )
@@ -862,7 +862,7 @@ pub(crate) mod opc {
         }
 
         #[test]
-        fn test_declare_manifest_content_type_size_is_limited() {
+        fn test_add_c2pa_content_type_size_is_limited() {
             let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
             writer
                 .start_file(
@@ -889,7 +889,7 @@ pub(crate) mod opc {
             assert!(zip.get_ref().len() < 1024 * 1024);
 
             let mut output = Cursor::new(Vec::new());
-            let result = declare_manifest_content_type(
+            let result = add_c2pa_content_type(
                 &mut ZipArchive::new(&mut zip).unwrap(),
                 &mut output,
                 THRESHOLD_MB,
@@ -901,11 +901,11 @@ pub(crate) mod opc {
         }
 
         #[test]
-        fn test_declare_manifest_content_type_skips_non_opc() {
+        fn test_add_c2pa_content_type_skips_non_opc() {
             for sample in [ZIP, ODT] {
                 let mut input = Cursor::new(sample.to_vec());
                 let mut output = Cursor::new(Vec::new());
-                assert!(!declare_manifest_content_type(
+                assert!(!add_c2pa_content_type(
                     &mut ZipArchive::new(&mut input).unwrap(),
                     &mut output,
                     THRESHOLD_MB

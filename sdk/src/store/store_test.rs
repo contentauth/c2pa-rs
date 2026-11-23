@@ -5948,7 +5948,7 @@ fn test_sign_zip_with_existing_manifest_and_nonstandard_headers() {
 }
 
 #[test]
-fn test_sign_opc_declares_manifest_content_type() {
+fn test_sign_opc_adds_c2pa_content_type() {
     let mut context = Context::new();
     context.settings_mut().verify.verify_after_sign = false;
 
