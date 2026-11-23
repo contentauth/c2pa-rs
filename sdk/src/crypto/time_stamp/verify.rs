@@ -1445,10 +1445,13 @@ pub(crate) mod message_imprint_regression {
         cb.set_subject_name(&name).unwrap();
         cb.set_issuer_name(&name).unwrap();
         cb.set_pubkey(&key).unwrap();
-        cb.set_not_before(&Asn1Time::from_unix(not_before).unwrap())
-            .unwrap();
-        cb.set_not_after(&Asn1Time::from_unix(not_after).unwrap())
-            .unwrap();
+        // Windows' Unix-time conversion rejects pre-epoch dates.
+        let asn1_time = |seconds| {
+            let date = chrono::DateTime::from_timestamp(seconds, 0).unwrap();
+            Asn1Time::from_str_x509(&date.format("%Y%m%d%H%M%SZ").to_string()).unwrap()
+        };
+        cb.set_not_before(&asn1_time(not_before)).unwrap();
+        cb.set_not_after(&asn1_time(not_after)).unwrap();
 
         if let Some(purpose) = purpose {
             let mut eku = ExtendedKeyUsage::new();
