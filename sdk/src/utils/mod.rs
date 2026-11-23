@@ -30,6 +30,7 @@ pub(crate) mod mime;
 #[allow(dead_code)] // for wasm build
 pub(crate) mod patch;
 pub(crate) mod path_utils;
+pub(crate) mod riff_c2pa;
 #[cfg(feature = "add_thumbnails")]
 pub(crate) mod thumbnail;
 pub(crate) mod time_it;

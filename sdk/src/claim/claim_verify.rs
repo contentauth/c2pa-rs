@@ -24,8 +24,6 @@ use crate::{
         Actions, BmffHash, BoxHash, CollectionHash, DataHash, DataMap, Ingredient, Metadata,
         Relationship,
     },
-    asset_handlers::riff_io::RiffIO,
-    asset_io::AssetIO,
     claim::Claim,
     context::{Context, ProgressPhase},
     cose_validator::{
@@ -45,7 +43,10 @@ use crate::{
     settings::Settings,
     status_tracker::StatusTracker,
     store::StoreValidationInfo,
-    utils::hash_utils::{vec_compare, HashRange},
+    utils::{
+        hash_utils::{vec_compare, HashRange},
+        riff_c2pa::RiffC2paChunk,
+    },
     validation_status,
 };
 
@@ -104,17 +105,17 @@ pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
 /// Per C2PA 15.12, the exclusion range containing the manifest store must hold only
 /// the manifest store and padding. `manifest_store_range` is the manifest's real
 /// location, found independently by re-parsing the asset; a legitimate exclusion
-/// covers exactly it, optionally retaining the 8-byte RIFF chunk header in the
-/// hash. A mismatch means the exclusion covers non-manifest bytes -- a
+/// covers exactly it. A mismatch means the exclusion covers non-manifest bytes -- a
 /// detached manifest applied to an unrelated asset, or content injected into the
-/// space freed by shrinking the manifest.
+/// space freed by shrinking the manifest. RIFF-based assets follow the rules in
+/// [`riff_exclusions_match_manifest`] instead.
 ///
 /// This fails closed: an exclusion that cannot be checked against a manifest found
 /// in the asset (none there, or the lookup failed) does not match.
 pub(super) fn data_hash_exclusions_match_manifest(
     exclusions: &[HashRange],
     manifest_store_range: Option<&HashRange>,
-    asset_format: Option<&str>,
+    riff_chunk: Option<&RiffC2paChunk>,
 ) -> bool {
     // Remote/sidecar manifests carry a placeholder exclusion that excludes no
     // bytes; the whole asset is hashed, so there is nothing to police.
@@ -122,34 +123,67 @@ pub(super) fn data_hash_exclusions_match_manifest(
         return true;
     }
 
-    // An exclusion must cover exactly the manifest found in this asset. With none
-    // found, nothing may be excluded: a detached manifest on an unrelated asset
-    // (#2643), or one whose location could not be determined.
-    let Some(range) = manifest_store_range else {
-        return false;
-    };
-    if exclusions.contains(range) {
-        return true;
+    match (manifest_store_range, riff_chunk) {
+        (Some(_), Some(chunk)) => riff_exclusions_match_manifest(exclusions, chunk),
+        // An exclusion must cover exactly the manifest found in this asset.
+        (Some(range), None) => exclusions.contains(range),
+        // With none found, nothing may be excluded: a detached manifest on an
+        // unrelated asset (#2643), or one whose location could not be determined.
+        (None, _) => false,
     }
-    // RIFF embeds the manifest as chunk data. The chunk identifier and
-    // length can remain in the hash, so allow that exact payload range.
-    let is_riff = asset_format.is_some_and(|format| {
-        let format = crate::utils::mime::format_to_mime(format);
-        RiffIO::new(&format)
-            .supported_types()
-            .contains(&format.as_str())
-    });
-    is_riff
-        && range.length() >= 8
-        && range.start().checked_add(8).is_some_and(|start| {
-            let payload_length = range.length() - 8;
-            exclusions.contains(&HashRange::new(start, payload_length))
-                // RIFF chunks are word-aligned. A trailing alignment byte
-                // may remain hashed along with the chunk header.
-                || (payload_length > 0
-                    && payload_length % 2 == 0
-                    && exclusions.contains(&HashRange::new(start, payload_length - 1)))
-        })
+}
+
+/// Validates the data hash exclusions of a RIFF-based asset, per the C2PA rules
+/// for hashing RIFF-based files. The manifest exclusion may begin at the `C2PA`
+/// chunk identifier, its size field, or the C2PA Manifest Store, and must end at
+/// the end of the chunk data or of its zero pad byte. An excluded pad byte must be
+/// zero, and an excluded top-level `RIFF` size field must end the `RIFF` chunk at
+/// the end of the `C2PA` chunk.
+fn riff_exclusions_match_manifest(exclusions: &[HashRange], chunk: &RiffC2paChunk) -> bool {
+    let covers = |e: &HashRange, start: u64, end: u64| {
+        e.start() < end && e.start().saturating_add(e.length()) > start
+    };
+
+    if chunk.pad.is_some_and(|pad| pad != 0)
+        && exclusions
+            .iter()
+            .any(|e| covers(e, chunk.data_end(), chunk.padded_end()))
+    {
+        return false;
+    }
+    if chunk.riff_end != chunk.padded_end() && exclusions.iter().any(|e| covers(e, 4, 8)) {
+        return false;
+    }
+
+    let starts = [chunk.offset, chunk.offset + 4, chunk.data_start()];
+    let mut ends = vec![chunk.data_end(), chunk.padded_end()];
+    if chunk.size_counts_pad() {
+        // Older writers counted the pad byte in the size field and excluded only
+        // the JUMBF superbox, leaving that zero byte hashed.
+        ends.push(chunk.data_end() - 1);
+    }
+    exclusions.iter().any(|e| {
+        starts.contains(&e.start())
+            && e.start()
+                .checked_add(e.length())
+                .is_some_and(|end| ends.contains(&end))
+    })
+}
+
+/// Returns the manifest exclusion of a RIFF-based asset adjusted for an Update
+/// Manifest: it keeps its starting position relative to the `C2PA` chunk and ends
+/// at the end of the current chunk data and pad byte. An odd recorded length means
+/// the original pad byte was hashed, so the adjusted range stops before the pad.
+pub(super) fn riff_update_manifest_exclusion(
+    exclusion: &HashRange,
+    chunk: &RiffC2paChunk,
+) -> HashRange {
+    let end = if exclusion.length() % 2 == 1 {
+        chunk.data_end()
+    } else {
+        chunk.padded_end()
+    };
+    HashRange::new(exclusion.start(), end.saturating_sub(exclusion.start()))
 }
 
 impl Claim {
@@ -1215,7 +1249,20 @@ impl Claim {
                         let mut start_adjust = 0;
                         let mut start_offset = 0;
                         if let Some(exclusions) = &mut dh.exclusions {
-                            if let Some(range) = &svi.manifest_store_range {
+                            if let Some(chunk) = &svi.riff_c2pa_chunk {
+                                // a RIFF exclusion may start at the chunk identifier, size field or data
+                                let starts = [chunk.offset, chunk.offset + 4, chunk.data_start()];
+                                if let Some(pos) =
+                                    exclusions.iter().position(|r| starts.contains(&r.start()))
+                                {
+                                    let range =
+                                        riff_update_manifest_exclusion(&exclusions[pos], chunk);
+                                    start_offset = range.start();
+                                    start_adjust =
+                                        range.length().saturating_sub(exclusions[pos].length());
+                                    exclusions[pos] = range;
+                                }
+                            } else if let Some(range) = &svi.manifest_store_range {
                                 // find the range that starts at the same position as the manifest store range
                                 if let Some(pos) =
                                     exclusions.iter().position(|r| r.start() == range.start())
@@ -1245,7 +1292,7 @@ impl Claim {
                             if !data_hash_exclusions_match_manifest(
                                 exclusions,
                                 svi.manifest_store_range.as_ref(),
-                                asset_data.format().as_deref(),
+                                svi.riff_c2pa_chunk.as_ref(),
                             ) {
                                 let description = match &svi.manifest_location_error {
                                     Some(error) => format!(
