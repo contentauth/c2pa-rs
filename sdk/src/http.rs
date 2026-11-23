@@ -102,7 +102,7 @@
 
 pub use c2pa_http::{
     http, restricted, AsyncGenericResolver, AsyncHttpResolver, CancellationToken,
-    HttpResolverError, RequestTimeout, SyncGenericResolver, SyncHttpResolver,
+    HttpResolverError, MaxResponseBodySize, RequestTimeout, SyncGenericResolver, SyncHttpResolver,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use c2pa_http::{RequestHandle, RequestScheduler, ScheduledResolver};

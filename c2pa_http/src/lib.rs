@@ -63,6 +63,15 @@ pub use scheduler::{RequestHandle, RequestScheduler, ScheduledResolver};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RequestTimeout(pub Duration);
 
+/// A maximum response body size for one request, set as a request extension.
+///
+/// Callers that bound a response body while streaming it set this so the bound still holds when a
+/// resolver reads the whole body before returning it, as the request scheduler does: such a
+/// resolver stops reading past this many bytes and fails with
+/// [`HttpResolverError::ResponseTooLarge`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaxResponseBodySize(pub u64);
+
 /// Adds a default [`RequestTimeout`] to requests that do not set one.
 #[doc(hidden)]
 pub struct DefaultTimeoutResolver<T> {
@@ -485,14 +494,14 @@ pub enum HttpResolverError {
         uri: String,
     },
 
-    /// An error occurred from the underlying HTTP resolver.
-    #[error("an error occurred from the underlying http resolver: {0}")]
-    Other(Box<dyn std::error::Error + Send + Sync>),
-
     /// The request was cancelled through a [`CancellationToken`] or [`RequestHandle::cancel`]
     /// before it completed.
     #[error("the http request was cancelled")]
     Cancelled,
+
+    /// An error occurred from the underlying HTTP resolver.
+    #[error("an error occurred from the underlying http resolver: {0}")]
+    Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[cfg(all(

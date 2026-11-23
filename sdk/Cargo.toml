@@ -48,7 +48,7 @@ unstable_asset_io = ["dep:asset-io"]
 
 file_io = ["dep:glob"]
 fetch_remote_manifests = ["dep:wasi"]
-json_schema = ["dep:schemars", "c2pa-http/json_schema"]
+json_schema = ["dep:schemars", "c2pa_http/json_schema"]
 openssl = [
     "dep:openssl",
     "c2pa_raw_crypto/openssl",
@@ -62,11 +62,11 @@ unstable_structured_text = []
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
-http_reqwest_blocking = ["c2pa-http/http_reqwest_blocking"]
-http_ureq = ["c2pa-http/http_ureq"]
-http_wasi = ["c2pa-http/http_wasi"]
-http_wstd = ["c2pa-http/http_wstd"]
-http_reqwest = ["c2pa-http/http_reqwest"]
+http_reqwest_blocking = ["c2pa_http/http_reqwest_blocking"]
+http_ureq = ["c2pa_http/http_ureq"]
+http_wasi = ["c2pa_http/http_wasi"]
+http_wstd = ["c2pa_http/http_wstd"]
+http_reqwest = ["c2pa_http/http_reqwest"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -125,7 +125,7 @@ brotli = "7.0.0"
 byteorder = { version = "1.5.0", default-features = false }
 byteordered = "0.6.0"
 c2pa_cbor = "0.78.0"
-c2pa-http = { workspace = true }
+c2pa_http = { workspace = true }
 c2pa_raw_crypto = { version = "0.3.0", default-features = false, features = ["serde"] }
 coset = "0.4.2"
 cms = { version = "0.3.0-rc.2", default-features = false, features = ["std"] }

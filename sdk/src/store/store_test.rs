@@ -6150,6 +6150,29 @@ mod remote_manifest_response_tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_remote_manifest_size_limit_holds_on_the_request_scheduler() {
+        let scheduler = crate::http::RequestScheduler::new(std::num::NonZeroUsize::MIN).unwrap();
+        for (header, expected_read) in [
+            (None, TEST_RESPONSE_SIZE + 1),
+            (Some("1"), TEST_RESPONSE_SIZE + 1),
+            (Some("1000"), 0),
+        ] {
+            let context = Context::new()
+                .with_settings_value("verify.max_manifest_response_size", TEST_RESPONSE_SIZE)
+                .unwrap()
+                .with_request_scheduler(scheduler.clone());
+            let (result, bytes_read) =
+                fetch_with_context(context, header, 64 * 1024 * 1024, None, false).await;
+            assert_size_error(result);
+            assert_eq!(
+                bytes_read as u64, expected_read,
+                "Content-Length {header:?}"
+            );
+        }
+    }
+
     #[c2pa_test_async]
     async fn test_remote_manifest_body_limit_ignores_untrusted_header() {
         for use_async in [false, true] {

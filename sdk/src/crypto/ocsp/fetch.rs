@@ -31,7 +31,7 @@ use crate::{
         base64,
         ocsp::asn1::{CertId, OcspRequest, Request, TbsRequest},
     },
-    http::HttpResolverError,
+    http::{HttpResolverError, MaxResponseBodySize},
 };
 
 const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
@@ -221,29 +221,29 @@ pub(crate) fn fetch_ocsp_response(
             request = request.header(header::HOST, host.to_string());
         }
 
-        let request = request.body(Vec::new()).ok()?;
+        let request = request
+            .extension(MaxResponseBodySize(MAX_OCSP_RESPONSE_SIZE as u64))
+            .body(Vec::new())
+            .ok()?;
         let response = if _sync {
-            context.resolver().http_resolve(request).ok()?
+            context.resolver().http_resolve(request)
         } else {
-            context
-                .resolver_async()
-                .http_resolve_async(request)
-                .await
-                .ok()?
+            context.resolver_async().http_resolve_async(request).await
         };
 
-        if response.status() == 200 {
-            match read_ocsp_response(response.into_body()) {
-                Ok(response) => return Some(response),
-                Err(HttpResolverError::ResponseTooLarge) => {
-                    log::warn!(
-                        "OCSP response exceeds the {MAX_OCSP_RESPONSE_SIZE}-byte fetch limit"
-                    );
-                }
-                Err(error) => {
-                    log::debug!("Could not read OCSP response: {error}");
-                    return None;
-                }
+        let body = match response {
+            Ok(response) if response.status() == 200 => read_ocsp_response(response.into_body()),
+            Ok(_) => continue,
+            Err(error) => Err(error),
+        };
+        match body {
+            Ok(response) => return Some(response),
+            Err(HttpResolverError::ResponseTooLarge) => {
+                log::warn!("OCSP response exceeds the {MAX_OCSP_RESPONSE_SIZE}-byte fetch limit");
+            }
+            Err(error) => {
+                log::debug!("Could not fetch OCSP response: {error}");
+                return None;
             }
         }
     }
@@ -778,6 +778,50 @@ mod tests {
             Some(vec![1, 2, 3])
         );
         assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn scheduled_fetch_bounds_an_oversized_response_and_falls_back() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// The first responder streams a body far past the limit; the second answers.
+        struct Responders(AtomicUsize, Arc<AtomicUsize>);
+
+        struct Counted(io::Take<io::Repeat>, Arc<AtomicUsize>);
+
+        impl Read for Counted {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let n = self.0.read(buf)?;
+                self.1.fetch_add(n, Ordering::SeqCst);
+                Ok(n)
+            }
+        }
+
+        impl SyncHttpResolver for Responders {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                let body: Box<dyn Read> = if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                    let oversized = io::repeat(42).take(16 * MAX_OCSP_RESPONSE_SIZE as u64);
+                    Box::new(Counted(oversized, Arc::clone(&self.1)))
+                } else {
+                    Box::new(Cursor::new(vec![1, 2, 3]))
+                };
+                Ok(Response::new(body))
+            }
+        }
+
+        let read = Arc::new(AtomicUsize::new(0));
+        let scheduler = crate::http::RequestScheduler::new(std::num::NonZeroUsize::MIN).unwrap();
+        let context = Context::new()
+            .with_resolver(Responders(AtomicUsize::new(0), Arc::clone(&read)))
+            .with_request_scheduler(scheduler);
+
+        let result = fetch_ocsp_response(&chain_with_two_responders(), 0, &context);
+        assert_eq!(result, Some(vec![1, 2, 3]));
+        assert_eq!(read.load(Ordering::SeqCst), MAX_OCSP_RESPONSE_SIZE + 1);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

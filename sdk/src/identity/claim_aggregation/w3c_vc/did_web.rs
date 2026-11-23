@@ -25,7 +25,7 @@ use async_generic::async_generic;
 use super::{did::Did, did_doc::DidDocument};
 use crate::{
     context::Context,
-    http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
+    http::{AsyncHttpResolver, HttpResolverError, MaxResponseBodySize, SyncHttpResolver},
 };
 
 /// Maximum number of bytes accepted from a DID Web server response body.
@@ -147,8 +147,16 @@ fn build_request(url: &str) -> Result<http::Request<Vec<u8>>, DidWebError> {
     http::Request::get(url)
         .header(header::USER_AGENT, USER_AGENT)
         .header(header::ACCEPT, "application/did+json")
+        .extension(MaxResponseBodySize(MAX_DID_DOC_SIZE))
         .body(Vec::new())
         .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))
+}
+
+fn request_error(url: &str, error: HttpResolverError) -> DidWebError {
+    match error {
+        HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
+        error => DidWebError::Request(url.to_owned(), error),
+    }
 }
 
 fn check_response_status(status: http::StatusCode, url: &str) -> Result<(), DidWebError> {
@@ -178,13 +186,13 @@ fn get_did_doc(url: &str, context: &Context) -> Result<Vec<u8>, DidWebError> {
         context
             .resolver()
             .http_resolve(request)
-            .map_err(|e| DidWebError::Request(url.to_owned(), e))?
+            .map_err(|e| request_error(url, e))?
     } else {
         context
             .resolver_async()
             .http_resolve_async(request)
             .await
-            .map_err(|e| DidWebError::Request(url.to_owned(), e))?
+            .map_err(|e| request_error(url, e))?
     };
 
     // Fast-fail if Content-Length exceeds the limit before reading any body bytes.
@@ -539,6 +547,33 @@ mod tests {
             });
 
             let context = Context::new();
+            let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
+
+            did_web::clear_proxies();
+
+            assert!(
+                matches!(result, Err(did_web::DidWebError::ResponseTooLarge)),
+                "expected ResponseTooLarge, got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn oversized_response_is_reported_as_too_large_on_the_scheduler() {
+            let server = MockServer::start();
+
+            did_web::set_proxy(did_web::TEST_MOCK_DOMAIN, &server.url("/"));
+
+            let oversized_body = vec![b'X'; (MAX_DID_DOC_SIZE + 1) as usize];
+            let _mock = server.mock(|when, then| {
+                when.method(GET).path("/.well-known/did.json");
+                then.status(200)
+                    .header("content-type", "application/did+json")
+                    .body(oversized_body);
+            });
+
+            let scheduler =
+                crate::http::RequestScheduler::new(std::num::NonZeroUsize::MIN).unwrap();
+            let context = Context::new().with_request_scheduler(scheduler);
             let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
 
             did_web::clear_proxies();

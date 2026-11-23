@@ -28,7 +28,7 @@ use http::{Request, Response};
 
 use crate::{
     cancel::Cancel, read_body, AsyncHttpResolver, CancellationToken, HttpResolverError,
-    SyncHttpResolver,
+    MaxResponseBodySize, SyncHttpResolver,
 };
 
 type Outcome = Result<Response<Vec<u8>>, HttpResolverError>;
@@ -113,7 +113,8 @@ impl RequestScheduler {
     }
 
     /// Limits the response bodies this handle's submissions accept, failing larger ones with
-    /// [`HttpResolverError::ResponseTooLarge`]. The default is no limit.
+    /// [`HttpResolverError::ResponseTooLarge`]. The default is no limit. A request's own
+    /// [`MaxResponseBodySize`] also applies; the smaller limit wins.
     pub fn with_max_response_body_size(mut self, limit: u64) -> Self {
         self.max_response_body_size = Some(limit);
         self
@@ -143,11 +144,19 @@ impl RequestScheduler {
         if let Some(token) = cancel {
             token.register(Arc::downgrade(&pending) as Weak<dyn Cancel>);
         }
+        let request_limit = request
+            .extensions()
+            .get::<MaxResponseBodySize>()
+            .map(|limit| limit.0);
+        let max_response_body_size = match (self.max_response_body_size, request_limit) {
+            (Some(scheduler), Some(request)) => Some(scheduler.min(request)),
+            (scheduler, request) => scheduler.or(request),
+        };
         let job = Job {
             pending: Arc::clone(&pending),
             resolver,
             request,
-            max_response_body_size: self.max_response_body_size,
+            max_response_body_size,
         };
         if let Err(mpsc::SendError(job)) = self.sender.send(job) {
             job.pending.complete(Err(HttpResolverError::Other(
@@ -598,6 +607,83 @@ mod tests {
         ));
         release.send(()).unwrap();
         busy.recv_timeout(TIMEOUT).unwrap().unwrap();
+    }
+
+    #[test]
+    fn request_body_limit_stops_reading_an_endless_body() {
+        struct Endless(Arc<AtomicUsize>);
+
+        impl SyncHttpResolver for Endless {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                let read = Arc::clone(&self.0);
+                let body = io::repeat(b'x').take(u64::MAX);
+                Ok(Response::new(Box::new(Counted(body, read)) as Box<dyn Read>))
+            }
+        }
+
+        struct Counted<R>(R, Arc<AtomicUsize>);
+
+        impl<R: Read> Read for Counted<R> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let n = self.0.read(buf)?;
+                self.1.fetch_add(n, Ordering::SeqCst);
+                Ok(n)
+            }
+        }
+
+        let read = Arc::new(AtomicUsize::new(0));
+        let request = Request::get("http://example.test/")
+            .extension(MaxResponseBodySize(1024))
+            .body(Vec::new())
+            .unwrap();
+        let (tx, rx) = mpsc::channel();
+        scheduler(1).submit(
+            Arc::new(Endless(Arc::clone(&read))),
+            request,
+            None,
+            move |outcome| tx.send(outcome).unwrap(),
+        );
+        assert!(matches!(
+            rx.recv_timeout(TIMEOUT).unwrap(),
+            Err(HttpResolverError::ResponseTooLarge)
+        ));
+        assert_eq!(read.load(Ordering::SeqCst), 1025);
+    }
+
+    #[test]
+    fn the_smaller_of_the_request_and_scheduler_limits_applies() {
+        for (scheduler_limit, request_limit, ok) in [
+            (None, Some(2), false),
+            (Some(2), Some(10), false),
+            (Some(10), Some(2), false),
+            (Some(10), Some(3), true),
+            (Some(3), None, true),
+        ] {
+            let mut scheduler = scheduler(1);
+            if let Some(limit) = scheduler_limit {
+                scheduler = scheduler.with_max_response_body_size(limit);
+            }
+            let mut request = Request::get("http://example.test/");
+            if let Some(limit) = request_limit {
+                request = request.extension(MaxResponseBodySize(limit));
+            }
+            let (tx, rx) = mpsc::channel();
+            scheduler.submit(
+                Echo::new(b"abc"),
+                request.body(Vec::new()).unwrap(),
+                None,
+                move |outcome| tx.send(outcome).unwrap(),
+            );
+            let outcome = rx.recv_timeout(TIMEOUT).unwrap();
+            assert_eq!(
+                outcome.is_ok(),
+                ok,
+                "{scheduler_limit:?} / {request_limit:?}: {outcome:?}"
+            );
+        }
     }
 
     #[test]
