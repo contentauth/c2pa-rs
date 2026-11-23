@@ -360,30 +360,47 @@ fn verify_data(
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use rasn::{types, Encoder};
-    use rasn_pkix::Certificate;
+    use der::{Decode, Encode};
+    use x509_cert::{
+        der::{
+            asn1::{Any, ObjectIdentifier, OctetString},
+            Decode as Decode07, Encode as Encode07,
+        },
+        Certificate,
+    };
 
     use super::*;
     use crate::{
         crypto::cert_chain_pem_to_der, utils::test_signer::cert_chain_and_private_key_for_alg,
     };
 
-    fn oid(value: &[u32]) -> types::ObjectIdentifier {
-        types::ObjectIdentifier::new(value.to_vec()).unwrap()
+    fn oid(value: &[u32]) -> ObjectIdentifier {
+        ObjectIdentifier::new(
+            &value
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join("."),
+        )
+        .unwrap()
+    }
+
+    fn any(value: Vec<u8>) -> Any {
+        Any::from_der(&value).unwrap()
     }
 
     fn certificate() -> Certificate {
         let (pem, _) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
-        rasn::der::decode(&cert_chain_pem_to_der(pem).unwrap()[0]).unwrap()
+        Decode07::from_der(&cert_chain_pem_to_der(pem).unwrap()[0]).unwrap()
     }
 
     fn pss_algorithm(parameters: Option<Vec<u8>>) -> Option<String> {
-        let algorithm = rasn_pkix::AlgorithmIdentifier {
-            algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
-            parameters: parameters.map(types::Any::new),
+        let algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
+            oid: oid(&[1, 2, 840, 113549, 1, 1, 10]),
+            parameters: parameters.map(any),
         };
 
-        let der = rasn::der::encode(&algorithm).unwrap();
+        let der = Encode07::to_der(&algorithm).unwrap();
         let (_, algorithm) = AlgorithmIdentifier::from_der(&der).unwrap();
         signing_alg_from_rsapss_alg(&algorithm)
     }
@@ -430,8 +447,8 @@ mod tests {
             (vec![1, 3, 101, 112], "ed25519", &ED25519_OID, &SHA512_OID),
         ] {
             let mut cert = certificate();
-            cert.signature_algorithm.algorithm = oid(&id);
-            let der = rasn::der::encode(&cert).unwrap();
+            cert.signature_algorithm.oid = oid(&id);
+            let der = Encode07::to_der(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(cert_signing_alg(&parsed).as_deref(), Some(name));
             let (sig, hash) = signing_alg_to_sig_and_hash_oid(name).unwrap();
@@ -451,24 +468,24 @@ mod tests {
 
         assert!(signing_alg_to_sig_and_hash_oid("unknown").is_none());
         let mut cert = certificate();
-        cert.signature_algorithm.algorithm = oid(&[1, 2, 3, 4]);
-        let der = rasn::der::encode(&cert).unwrap();
+        cert.signature_algorithm.oid = oid(&[1, 2, 3, 4]);
+        let der = Encode07::to_der(&cert).unwrap();
         let (_, parsed) = X509Certificate::from_der(&der).unwrap();
         assert!(cert_signing_alg(&parsed).is_none());
     }
 
     #[test]
     fn pss_requires_well_formed_matching_sha2_parameters() {
-        #[derive(rasn::AsnType, rasn::Encode)]
+        #[derive(der::Sequence)]
         struct Parameters {
-            #[rasn(tag(explicit(0)))]
-            hash: rasn_pkix::AlgorithmIdentifier,
-            #[rasn(tag(explicit(1)))]
-            mask: rasn_pkix::AlgorithmIdentifier,
+            #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
+            hash: der::Any,
+            #[asn1(context_specific = "1", tag_mode = "EXPLICIT")]
+            mask: der::Any,
         }
 
-        let alg = |id: &[u32]| rasn_pkix::AlgorithmIdentifier {
-            algorithm: oid(id),
+        let alg = |id: &[u32]| x509_cert::spki::AlgorithmIdentifierOwned {
+            oid: oid(id),
             parameters: None,
         };
 
@@ -483,22 +500,27 @@ mod tests {
             (&sha256, &sha384, None),
             (&sha1, &sha1, None),
         ] {
-            let params = rasn::der::encode(&Parameters {
-                hash: alg(hash),
-                mask: rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid(&[1, 2, 840, 113549, 1, 1, 8]),
-                    parameters: Some(types::Any::new(rasn::der::encode(&alg(mask_hash)).unwrap())),
-                },
+            let params = Encode::to_der(&Parameters {
+                hash: der::Any::from_der(&alg(hash).to_der().unwrap()).unwrap(),
+                mask: der::Any::from_der(
+                    &x509_cert::spki::AlgorithmIdentifierOwned {
+                        oid: oid(&[1, 2, 840, 113549, 1, 1, 8]),
+                        parameters: Some(any(Encode07::to_der(&alg(mask_hash)).unwrap())),
+                    }
+                    .to_der()
+                    .unwrap(),
+                )
+                .unwrap(),
             })
             .unwrap();
             assert_eq!(pss_algorithm(Some(params.clone())).as_deref(), expected);
             let mut cert = certificate();
-            cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
-                algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
-                parameters: Some(types::Any::new(params)),
+            cert.signature_algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
+                oid: oid(&[1, 2, 840, 113549, 1, 1, 10]),
+                parameters: Some(any(params)),
             };
 
-            let der = rasn::der::encode(&cert).unwrap();
+            let der = Encode07::to_der(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(cert_signing_alg(&parsed).as_deref(), expected);
         }
@@ -521,17 +543,22 @@ mod tests {
             Some(vec![0x30, 3, 2, 1, 1]),
         ] {
             let params = Parameters {
-                hash: alg(&sha256),
-                mask: rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid(&[1, 2, 840, 113549, 1, 1, 8]),
-                    parameters: mask_params.map(types::Any::new),
-                },
+                hash: der::Any::from_der(&alg(&sha256).to_der().unwrap()).unwrap(),
+                mask: der::Any::from_der(
+                    &x509_cert::spki::AlgorithmIdentifierOwned {
+                        oid: oid(&[1, 2, 840, 113549, 1, 1, 8]),
+                        parameters: mask_params.map(any),
+                    }
+                    .to_der()
+                    .unwrap(),
+                )
+                .unwrap(),
             };
 
-            assert!(pss_algorithm(Some(rasn::der::encode(&params).unwrap())).is_none());
+            assert!(pss_algorithm(Some(params.to_der().unwrap())).is_none());
         }
 
-        let hash = rasn::der::encode(&alg(&sha256)).unwrap();
+        let hash = Encode07::to_der(&alg(&sha256)).unwrap();
         for tag in [0xa0, 0x81, 0xa1] {
             let mut body = vec![0xa0, hash.len() as u8];
             body.extend_from_slice(&hash);
@@ -583,7 +610,7 @@ mod tests {
         let pem =
             include_bytes!("../../../../tests/fixtures/crypto/cose/ca_authorization_root.pub");
         let root_der = cert_chain_pem_to_der(pem).unwrap().remove(0);
-        let root: Certificate = rasn::der::decode(&root_der).unwrap();
+        let root: Certificate = Decode07::from_der(&root_der).unwrap();
         let key_usage = oid(&[2, 5, 29, 15]);
         let constraints = oid(&[2, 5, 29, 19]);
         for (omit_usage, valid) in [(true, true), (false, false)] {
@@ -596,10 +623,10 @@ mod tests {
                     .iter_mut()
                     .find(|ext| ext.extn_id == key_usage)
                     .unwrap()
-                    .extn_value = vec![3, 2, 7, 0x80].into();
+                    .extn_value = OctetString::new([3, 2, 7, 0x80]).unwrap();
             }
 
-            let der = rasn::der::encode(&cert).unwrap();
+            let der = Encode07::to_der(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(
                 check_ca_authorization(&parsed.tbs_certificate, 0).is_ok(),
@@ -613,7 +640,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .retain(|ext| ext.extn_id != constraints);
-        let der = rasn::der::encode(&cert).unwrap();
+        let der = Encode07::to_der(&cert).unwrap();
         let (_, parsed) = X509Certificate::from_der(&der).unwrap();
         assert_eq!(
             check_ca_authorization(&parsed.tbs_certificate, 0),
@@ -647,7 +674,8 @@ mod tests {
                     .iter_mut()
                     .find(|ext| ext.extn_id == oid(&[2, 5, 29, 37]))
                     .unwrap()
-                    .extn_value = rasn::der::encode(&vec![oid(&[1, 2, 3, 4])]).unwrap().into();
+                    .extn_value =
+                    OctetString::new(Encode07::to_der(&vec![oid(&[1, 2, 3, 4])]).unwrap()).unwrap();
             }
 
             assert_eq!(
@@ -655,7 +683,7 @@ mod tests {
                     &policy,
                     None,
                     &[],
-                    &rasn::der::encode(&cert).unwrap(),
+                    &Encode07::to_der(&cert).unwrap(),
                     None
                 ),
                 Err(CertificateTrustError::InvalidEku)

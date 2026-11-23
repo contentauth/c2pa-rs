@@ -924,7 +924,7 @@ mod ocsp_reporting_tests {
         let mut tampered = good_basic_response();
         tampered.tbs_response_data.responses[0]
             .cert_id
-            .serial_number = 1.into();
+            .serial_number = der::asn1::Int::new(&[1]).unwrap();
         let store = store(vec![vec![0], encode_response(&tampered)], None, &context);
         let claim = store.provenance_claim().unwrap();
         let mut log = StatusTracker::default();
@@ -1000,17 +1000,16 @@ mod ocsp_reporting_tests {
     fn fresh_good_reports_once_after_collection() {
         use chrono::{DateTime, Duration, Utc};
 
-        use crate::crypto::ocsp::test_responder::TestResponder;
+        use crate::crypto::ocsp::test_responder::{ocsp_time, TestResponder};
 
         let context = context(true);
         let responder = TestResponder::new();
         let mut basic = good_basic_response();
         let now = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
-        basic.tbs_response_data.produced_at = (now - Duration::hours(1)).fixed_offset();
-        basic.tbs_response_data.responses[0].this_update =
-            (now - Duration::hours(1)).fixed_offset();
+        basic.tbs_response_data.produced_at = ocsp_time(now - Duration::hours(1));
+        basic.tbs_response_data.responses[0].this_update = ocsp_time(now - Duration::hours(1));
         basic.tbs_response_data.responses[0].next_update =
-            Some((now + Duration::hours(24)).fixed_offset());
+            Some(ocsp_time(now + Duration::hours(24)));
         let mut store = store(vec![responder.sign(basic)], None, &context);
         store
             .ctp

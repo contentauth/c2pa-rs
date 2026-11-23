@@ -173,62 +173,72 @@ mod tests {
     ///
     /// `ou` and `c` may be empty — if so they are omitted from the subject.
     fn make_test_cert_der(cn: &str, o: &str, ou: &str, c: &str) -> Vec<u8> {
-        use chrono::Utc;
         use ed25519_dalek::{Signer as _, SigningKey};
-        use rasn::types::{Any, BitString, ObjectIdentifier, PrintableString, SetOf};
-        use rasn_pkix::{
-            AlgorithmIdentifier, AttributeTypeAndValue, Certificate, Name,
-            RelativeDistinguishedName, SubjectPublicKeyInfo, TbsCertificate, Time, Validity,
-            Version,
+        use x509_cert::{
+            attr::AttributeTypeAndValue,
+            der::{
+                asn1::{
+                    Any, BitString, GeneralizedTime, ObjectIdentifier, PrintableStringRef, SetOfVec,
+                },
+                Decode, Encode,
+            },
+            name::{RdnSequence, RelativeDistinguishedName},
+            spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned},
+            time::{Time, Validity},
+            Certificate, TbsCertificate, Version,
         };
 
         // Deterministic key so tests are reproducible.
         let key = SigningKey::from_bytes(&[42u8; 32]);
         let vk = key.verifying_key();
 
-        let ed_oid = ObjectIdentifier::new(vec![1u32, 3, 101, 112]).unwrap();
-        let alg = AlgorithmIdentifier {
-            algorithm: ed_oid,
+        let alg = AlgorithmIdentifierOwned {
+            oid: ObjectIdentifier::new_unwrap("1.3.101.112"),
             parameters: None,
         };
-        let spki = SubjectPublicKeyInfo {
+        let spki = SubjectPublicKeyInfoOwned {
             algorithm: alg.clone(),
-            subject_public_key: BitString::from_slice(vk.as_bytes()),
+            subject_public_key: BitString::from_bytes(vk.as_bytes()).unwrap(),
         };
 
-        let make_rdn = |oid_parts: &[u32], val: &str| -> RelativeDistinguishedName {
-            let ps = PrintableString::try_from(val.to_string()).unwrap();
-            let v = rasn::der::encode(&ps).unwrap();
+        let make_rdn = |oid: &str, val: &str| -> RelativeDistinguishedName {
+            let v = PrintableStringRef::new(val).unwrap().to_der().unwrap();
             let attr = AttributeTypeAndValue {
-                r#type: ObjectIdentifier::new(oid_parts.to_vec()).unwrap(),
-                value: Any::new(v),
+                oid: ObjectIdentifier::new(oid).unwrap(),
+                value: Any::from_der(&v).unwrap(),
             };
-            let mut set = SetOf::new();
-            set.insert(attr);
-            RelativeDistinguishedName::from(set)
+            let mut set = SetOfVec::new();
+            set.insert(attr).unwrap();
+            RelativeDistinguishedName(set)
         };
 
         let mut rdns = vec![
-            make_rdn(&[2, 5, 4, 3], cn), // CN
-            make_rdn(&[2, 5, 4, 10], o), // O
+            make_rdn("2.5.4.3", cn), // CN
+            make_rdn("2.5.4.10", o), // O
         ];
         if !ou.is_empty() {
-            rdns.push(make_rdn(&[2, 5, 4, 11], ou)); // OU
+            rdns.push(make_rdn("2.5.4.11", ou)); // OU
         }
         if !c.is_empty() {
-            rdns.push(make_rdn(&[2, 5, 4, 6], c)); // C
+            rdns.push(make_rdn("2.5.4.6", c)); // C
         }
-        let subject = Name::RdnSequence(rdns);
+        let subject = RdnSequence(rdns);
 
-        let now = Utc::now();
+        let now = crate::crypto::internal::time::utc_now();
         let validity = Validity {
-            not_before: Time::Utc(now - chrono::Duration::days(1)),
-            not_after: Time::Utc(now + chrono::Duration::days(365)),
+            not_before: Time::GeneralTime(
+                GeneralizedTime::from_system_time((now - chrono::Duration::days(1)).into())
+                    .unwrap(),
+            ),
+            not_after: Time::GeneralTime(
+                GeneralizedTime::from_system_time((now + chrono::Duration::days(365)).into())
+                    .unwrap(),
+            ),
         };
 
         let tbs = TbsCertificate {
             version: Version::V3,
-            serial_number: rasn::types::Integer::from(1i64),
+            serial_number: 1u32.into(),
             signature: alg.clone(),
             issuer: subject.clone(),
             validity,
@@ -239,16 +249,16 @@ mod tests {
             extensions: None,
         };
 
-        let tbs_der = rasn::der::encode(&tbs).unwrap();
+        let tbs_der = tbs.to_der().unwrap();
         let sig = key.sign(&tbs_der);
 
         let cert = Certificate {
             tbs_certificate: tbs,
             signature_algorithm: alg,
-            signature_value: BitString::from_slice(sig.to_bytes().as_slice()),
+            signature: BitString::from_bytes(sig.to_bytes().as_slice()).unwrap(),
         };
 
-        rasn::der::encode(&cert).unwrap()
+        cert.to_der().unwrap()
     }
 
     // ---------------------------------------------------------------------------

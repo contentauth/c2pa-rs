@@ -19,7 +19,7 @@
 
 //! In-house X.509 ephemeral certificate generation for Ed25519.
 //!
-//! Builds CA and end-entity certificates using rasn_pkix and ed25519-dalek,
+//! Builds CA and end-entity certificates using RustCrypto x509-cert and ed25519-dalek,
 //! without rcgen, so it works on Wasm (getrandom) and native targets.
 //!
 //! ## OpenSSL 3.x verification
@@ -41,12 +41,10 @@
 //!
 //! ### BasicConstraints encoding (OpenSSL 3.x)
 //!
-//! rasn encodes `BasicConstraints { ca: false, path_len_constraint: None }` as
-//! an **empty SEQUENCE** (`30 00`) because of `#[rasn(default)]` on the `ca`
-//! field — the value false is treated as default and omitted. OpenSSL expects
-//! the cA BOOLEAN to be present when the extension is present, so we use
-//! minimal DER for the EE cert: `SEQUENCE { BOOLEAN FALSE }` = `30 03 01 01
-//! 00`. See `test_basic_constraints_encoding_compare`.
+//! DER omits the default `ca: false`, yielding an empty SEQUENCE (`30 00`).
+//! Preserve the historical explicit FALSE encoding for EE certificate
+//! compatibility: `SEQUENCE { BOOLEAN FALSE }` = `30 03 01 01 00`.
+//! See `test_basic_constraints_encoding_compare`.
 //!
 //! ### Key Usage and Extended Key Usage
 //!
@@ -71,16 +69,33 @@
 //! "unsupported algorithm" or "unable to get certs public key" because our
 //! certs use Ed25519. The test skips the verify assertion in that case.
 
-use chrono::Utc;
+use chrono::{DateTime, Datelike, Utc};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use pkcs8::{EncodePrivateKey, LineEnding};
-use rasn::types::{Any, BitString, Integer, ObjectIdentifier, OctetString, PrintableString, SetOf};
-use rasn_pkix::{
-    AlgorithmIdentifier, AttributeTypeAndValue, AuthorityKeyIdentifier, BasicConstraints,
-    Certificate, Extension, Extensions, GeneralName, Name, RelativeDistinguishedName,
-    SubjectPublicKeyInfo, TbsCertificate, Time, Validity, Version,
-};
 use sha1::{Digest, Sha1};
+use x509_cert::{
+    attr::AttributeTypeAndValue,
+    certificate::{TbsCertificate, Version},
+    der::{
+        asn1::{
+            Any, BitString, GeneralizedTime, Ia5String, ObjectIdentifier, OctetString,
+            PrintableString, UtcTime,
+        },
+        Decode, Encode,
+    },
+    ext::{
+        pkix::{name::GeneralName, AuthorityKeyIdentifier, BasicConstraints, ExtendedKeyUsage},
+        Extension,
+    },
+    name::{Name, RdnSequence, RelativeDistinguishedName},
+    serial_number::SerialNumber,
+    spki::{
+        AlgorithmIdentifierOwned as AlgorithmIdentifier,
+        SubjectPublicKeyInfoOwned as SubjectPublicKeyInfo,
+    },
+    time::{Time, Validity},
+    Certificate,
+};
 
 use crate::{Error, Result};
 
@@ -118,8 +133,14 @@ const EKU_EMAIL_PROTECTION_OID: &[u64] = &[1, 3, 6, 1, 5, 5, 7, 3, 4];
 const EKU_ANY_OID: &[u64] = &[1, 3, 6, 1, 5, 5, 7, 3, 0];
 
 fn oid(components: &[u64]) -> Result<ObjectIdentifier> {
-    ObjectIdentifier::new(components.iter().map(|&c| c as u32).collect::<Vec<u32>>())
-        .ok_or_else(|| Error::OtherError(Box::new(std::io::Error::other("invalid OID"))))
+    ObjectIdentifier::from_arcs(components.iter().map(|&c| c as u32))
+        .map_err(|e| Error::OtherError(Box::new(e)))
+}
+
+fn encoded_octets(value: &impl Encode) -> Result<OctetString> {
+    let bytes = value.to_der().map_err(|e| Error::OtherError(Box::new(e)))?;
+
+    OctetString::new(bytes).map_err(|e| Error::OtherError(Box::new(e)))
 }
 
 fn fill_random(buf: &mut [u8]) -> Result<()> {
@@ -135,20 +156,17 @@ fn generate_ed25519_keypair() -> Result<SigningKey> {
 }
 
 fn dn_attr(oid_components: &[u64], value: &str) -> Result<AttributeTypeAndValue> {
-    let ps =
-        PrintableString::try_from(value.to_string()).map_err(|e| Error::OtherError(Box::new(e)))?;
-    let value_der = rasn::der::encode(&ps).map_err(|e| Error::OtherError(Box::new(e)))?;
+    let ps = PrintableString::new(value).map_err(|e| Error::OtherError(Box::new(e)))?;
 
     Ok(AttributeTypeAndValue {
-        r#type: oid(oid_components)?,
-        value: Any::new(value_der),
+        oid: oid(oid_components)?,
+        value: Any::encode_from(&ps).map_err(|e| Error::OtherError(Box::new(e)))?,
     })
 }
 
 fn rdn_single(oid_components: &[u64], value: &str) -> Result<RelativeDistinguishedName> {
-    let mut set = SetOf::new();
-    set.insert(dn_attr(oid_components, value)?);
-    Ok(RelativeDistinguishedName::from(set))
+    RelativeDistinguishedName::try_from(vec![dn_attr(oid_components, value)?])
+        .map_err(|e| Error::OtherError(Box::new(e)))
 }
 
 /// Build a Name from common name and optional organization.
@@ -158,12 +176,12 @@ fn build_name(cn: &str, org: Option<&str>) -> Result<Name> {
         rdns.push(rdn_single(ORG_OID, o)?);
     }
 
-    Ok(Name::RdnSequence(rdns))
+    Ok(RdnSequence(rdns))
 }
 
 fn ed25519_algorithm_identifier() -> Result<AlgorithmIdentifier> {
     Ok(AlgorithmIdentifier {
-        algorithm: oid(ED25519_OID)?,
+        oid: oid(ED25519_OID)?,
         parameters: None,
     })
 }
@@ -171,20 +189,35 @@ fn ed25519_algorithm_identifier() -> Result<AlgorithmIdentifier> {
 fn subject_public_key_info(verifying_key: &VerifyingKey) -> Result<SubjectPublicKeyInfo> {
     Ok(SubjectPublicKeyInfo {
         algorithm: ed25519_algorithm_identifier()?,
-        subject_public_key: BitString::from_slice(verifying_key.as_bytes()),
+        subject_public_key: BitString::from_bytes(verifying_key.as_bytes())
+            .map_err(|e| Error::OtherError(Box::new(e)))?,
     })
 }
 
 /// Validity: notBefore = now - 1 day, notAfter = now + 365 days.
-fn default_validity() -> Validity {
-    let now = Utc::now();
+fn default_validity() -> Result<Validity> {
+    validity_at(crate::crypto::internal::time::utc_now())
+}
+
+fn validity_at(now: DateTime<Utc>) -> Result<Validity> {
+    let encode_time = |date: DateTime<Utc>| {
+        let system_time = std::time::SystemTime::from(date);
+        let time = if date.year() < 2050 {
+            UtcTime::from_system_time(system_time).map(Time::UtcTime)
+        } else {
+            GeneralizedTime::from_system_time(system_time).map(Time::GeneralTime)
+        };
+
+        time.map_err(|e| Error::OtherError(Box::new(e)))
+    };
+
     let not_before = now - chrono::Duration::days(1);
     let not_after = now + chrono::Duration::days(365);
 
-    Validity {
-        not_before: Time::Utc(not_before),
-        not_after: Time::Utc(not_after),
-    }
+    Ok(Validity {
+        not_before: encode_time(not_before)?,
+        not_after: encode_time(not_after)?,
+    })
 }
 
 fn subject_key_identifier_ext(public_key_der: &[u8]) -> Result<Extension> {
@@ -193,13 +226,16 @@ fn subject_key_identifier_ext(public_key_der: &[u8]) -> Result<Extension> {
     Ok(Extension {
         extn_id: oid(SUBJECT_KEY_ID_OID)?,
         critical: false,
-        extn_value: OctetString::from(hash.to_vec()),
+        extn_value: OctetString::new(hash.to_vec()).map_err(|e| Error::OtherError(Box::new(e)))?,
     })
 }
 
 fn authority_key_identifier_ext(key_id: Option<Vec<u8>>) -> Result<Extension> {
     let aki = AuthorityKeyIdentifier {
-        key_identifier: key_id.map(OctetString::from),
+        key_identifier: key_id
+            .map(OctetString::new)
+            .transpose()
+            .map_err(|e| Error::OtherError(Box::new(e)))?,
         authority_cert_issuer: None,
         authority_cert_serial_number: None,
     };
@@ -207,14 +243,12 @@ fn authority_key_identifier_ext(key_id: Option<Vec<u8>>) -> Result<Extension> {
     Ok(Extension {
         extn_id: oid(AUTH_KEY_ID_OID)?,
         critical: false,
-        extn_value: rasn::der::encode(&aki)
-            .map_err(|e| Error::OtherError(Box::new(e)))?
-            .into(),
+        extn_value: encoded_octets(&aki)?,
     })
 }
 
 /// Serial number for certs: positive integer (must be unique per issuer).
-fn serial_number() -> Result<rasn_pkix::CertificateSerialNumber> {
+fn serial_number() -> Result<SerialNumber> {
     let mut bytes = [0u8; 7];
     fill_random(&mut bytes)?;
 
@@ -222,34 +256,32 @@ fn serial_number() -> Result<rasn_pkix::CertificateSerialNumber> {
         0, bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
     ]);
 
-    Ok(Integer::from((n as i64).saturating_add(1)))
+    SerialNumber::new(&(n + 1).to_be_bytes()).map_err(|e| Error::OtherError(Box::new(e)))
 }
 
 /// Build and sign a self-signed CA certificate.
 fn build_ca_cert(cn: &str, org: &str, keypair: &SigningKey) -> Result<Vec<u8>> {
     let verifying_key = keypair.verifying_key();
     let spki = subject_public_key_info(&verifying_key)?;
-    let spki_der = rasn::der::encode(&spki).map_err(|e| Error::OtherError(Box::new(e)))?;
+    let spki_der = spki.to_der().map_err(|e| Error::OtherError(Box::new(e)))?;
 
     let subject = build_name(cn, Some(org))?;
     let exts = vec![
         Extension {
             extn_id: oid(BASIC_CONSTRAINTS_OID)?,
             critical: true,
-            extn_value: rasn::der::encode(&BasicConstraints {
+            extn_value: encoded_octets(&BasicConstraints {
                 ca: true,
                 path_len_constraint: None,
-            })
-            .map_err(|e| Error::OtherError(Box::new(e)))?
-            .into(),
+            })?,
         },
         Extension {
             extn_id: oid(KEY_USAGE_OID)?,
             critical: true,
             // keyCertSign (5), cRLSign (6), digitalSignature (0)
-            extn_value: rasn::der::encode(&BitString::from_slice(&[0x86]))
-                .map_err(|e| Error::OtherError(Box::new(e)))?
-                .into(),
+            extn_value: encoded_octets(
+                &BitString::from_bytes(&[0x86]).map_err(|e| Error::OtherError(Box::new(e)))?,
+            )?,
         },
         subject_key_identifier_ext(&spki_der)?,
     ];
@@ -259,24 +291,25 @@ fn build_ca_cert(cn: &str, org: &str, keypair: &SigningKey) -> Result<Vec<u8>> {
         serial_number: serial_number()?,
         signature: ed25519_algorithm_identifier()?,
         issuer: subject.clone(),
-        validity: default_validity(),
+        validity: default_validity()?,
         subject,
         subject_public_key_info: spki,
         issuer_unique_id: None,
         subject_unique_id: None,
-        extensions: Some(Extensions::from(exts)),
+        extensions: Some(exts),
     };
 
-    let tbs_der = rasn::der::encode(&tbs).map_err(|e| Error::OtherError(Box::new(e)))?;
+    let tbs_der = tbs.to_der().map_err(|e| Error::OtherError(Box::new(e)))?;
     let sig = keypair.sign(&tbs_der);
 
     let cert = Certificate {
         tbs_certificate: tbs,
         signature_algorithm: ed25519_algorithm_identifier()?,
-        signature_value: BitString::from_slice(sig.to_bytes().as_slice()),
+        signature: BitString::from_bytes(sig.to_bytes().as_slice())
+            .map_err(|e| Error::OtherError(Box::new(e)))?,
     };
 
-    rasn::der::encode(&cert).map_err(|e| Error::OtherError(Box::new(e)))
+    cert.to_der().map_err(|e| Error::OtherError(Box::new(e)))
 }
 
 /// Context for CA signing (used to keep build_ee_cert under the argument
@@ -309,16 +342,13 @@ fn build_ee_cert(
 ) -> Result<Vec<u8>> {
     let verifying_key = ee_keypair.verifying_key();
     let spki = subject_public_key_info(&verifying_key)?;
-    let spki_der = rasn::der::encode(&spki).map_err(|e| Error::OtherError(Box::new(e)))?;
+    let spki_der = spki.to_der().map_err(|e| Error::OtherError(Box::new(e)))?;
 
     let subject = build_name(ee_cn, Some(ee_org))?;
 
     // Extended Key Usage: emailProtection (C2PA/signing) and anyExtendedKeyUsage
     // (any purpose)
-    let eku_list: rasn_pkix::ExtKeyUsageSyntax =
-        vec![oid(EKU_EMAIL_PROTECTION_OID)?, oid(EKU_ANY_OID)?];
-
-    let eku_value = rasn::der::encode(&eku_list).map_err(|e| Error::OtherError(Box::new(e)))?;
+    let eku_list = ExtendedKeyUsage(vec![oid(EKU_EMAIL_PROTECTION_OID)?, oid(EKU_ANY_OID)?]);
 
     let mut ext_pairs: Vec<(&str, Extension)> = vec![
         (
@@ -327,8 +357,9 @@ fn build_ee_cert(
                 extn_id: oid(BASIC_CONSTRAINTS_OID)?,
                 critical: true,
                 // Minimal DER for BasicConstraints cA=FALSE: SEQUENCE { BOOLEAN FALSE }.
-                // rasn's encoding is rejected by OpenSSL 3.x in ossl_x509v3_cache_extensions.
-                extn_value: OctetString::from([0x30, 0x03, 0x01, 0x01, 0x00]),
+                // Retain the explicit FALSE accepted by our OpenSSL verification tests.
+                extn_value: OctetString::new([0x30, 0x03, 0x01, 0x01, 0x00])
+                    .map_err(|e| Error::OtherError(Box::new(e)))?,
             },
         ),
         (
@@ -336,9 +367,9 @@ fn build_ee_cert(
             Extension {
                 extn_id: oid(KEY_USAGE_OID)?,
                 critical: true,
-                extn_value: rasn::der::encode(&BitString::from_slice(&[0x80]))
-                    .map_err(|e| Error::OtherError(Box::new(e)))?
-                    .into(),
+                extn_value: encoded_octets(
+                    &BitString::from_bytes(&[0x80]).map_err(|e| Error::OtherError(Box::new(e)))?,
+                )?,
             },
         ),
         (
@@ -346,7 +377,7 @@ fn build_ee_cert(
             Extension {
                 extn_id: oid(EXT_KEY_USAGE_OID)?,
                 critical: false,
-                extn_value: eku_value.clone().into(),
+                extn_value: encoded_octets(&eku_list)?,
             },
         ),
         (
@@ -362,14 +393,9 @@ fn build_ee_cert(
             Extension {
                 extn_id: oid(SUBJECT_ALT_NAME_OID)?,
                 critical: false,
-                extn_value: rasn::der::encode(&rasn_pkix::GeneralNames::from(vec![
-                    GeneralName::DnsName(
-                        rasn::types::Ia5String::try_from(san_dns.to_string())
-                            .map_err(|e| Error::OtherError(Box::new(e)))?,
-                    ),
-                ]))
-                .map_err(|e| Error::OtherError(Box::new(e)))?
-                .into(),
+                extn_value: encoded_octets(&vec![GeneralName::DnsName(
+                    Ia5String::new(san_dns).map_err(|e| Error::OtherError(Box::new(e)))?,
+                )])?,
             },
         ),
     ];
@@ -381,24 +407,25 @@ fn build_ee_cert(
         serial_number: serial_number()?,
         signature: ed25519_algorithm_identifier()?,
         issuer: ca.subject.clone(),
-        validity: default_validity(),
+        validity: default_validity()?,
         subject,
         subject_public_key_info: spki,
         issuer_unique_id: None,
         subject_unique_id: None,
-        extensions: Some(Extensions::from(exts)),
+        extensions: Some(exts),
     };
 
-    let tbs_der = rasn::der::encode(&tbs).map_err(|e| Error::OtherError(Box::new(e)))?;
+    let tbs_der = tbs.to_der().map_err(|e| Error::OtherError(Box::new(e)))?;
     let sig = ca.key.sign(&tbs_der);
 
     let cert = Certificate {
         tbs_certificate: tbs,
         signature_algorithm: ed25519_algorithm_identifier()?,
-        signature_value: BitString::from_slice(sig.to_bytes().as_slice()),
+        signature: BitString::from_bytes(sig.to_bytes().as_slice())
+            .map_err(|e| Error::OtherError(Box::new(e)))?,
     };
 
-    rasn::der::encode(&cert).map_err(|e| Error::OtherError(Box::new(e)))
+    cert.to_der().map_err(|e| Error::OtherError(Box::new(e)))
 }
 
 /// Result of generating ephemeral CA + EE chain.
@@ -426,12 +453,14 @@ pub fn generate_ephemeral_chain(ee_cert_name: &str) -> Result<EphemeralCertChain
         &ca_keypair,
     )?;
 
-    let ca_cert: Certificate =
-        rasn::der::decode(&ca_der).map_err(|e| Error::OtherError(Box::new(e)))?;
+    let ca_cert = Certificate::from_der(&ca_der).map_err(|e| Error::OtherError(Box::new(e)))?;
 
     let ca_ski = Some(
         Sha1::digest(
-            rasn::der::encode(&ca_cert.tbs_certificate.subject_public_key_info)
+            ca_cert
+                .tbs_certificate
+                .subject_public_key_info
+                .to_der()
                 .map_err(|e| Error::OtherError(Box::new(e)))?
                 .as_slice(),
         )
@@ -481,12 +510,14 @@ pub(crate) fn generate_ephemeral_chain_with_ee_skip(
         &ca_keypair,
     )?;
 
-    let ca_cert: Certificate =
-        rasn::der::decode(&ca_der).map_err(|e| Error::OtherError(Box::new(e)))?;
+    let ca_cert = Certificate::from_der(&ca_der).map_err(|e| Error::OtherError(Box::new(e)))?;
 
     let ca_ski = Some(
         Sha1::digest(
-            rasn::der::encode(&ca_cert.tbs_certificate.subject_public_key_info)
+            ca_cert
+                .tbs_certificate
+                .subject_public_key_info
+                .to_der()
                 .map_err(|e| Error::OtherError(Box::new(e)))?
                 .as_slice(),
         )
@@ -528,15 +559,81 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::process::Command;
 
-    use rasn_pkix::BasicConstraints;
+    use x509_cert::{
+        der::{Decode, Encode},
+        ext::pkix::BasicConstraints,
+        time::{Time, Validity},
+    };
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
+    fn validity_uses_utc_and_generalized_time_at_the_2050_boundary() {
+        let now = chrono::DateTime::parse_from_rfc3339("2049-12-31T12:34:56Z")
+            .expect("date")
+            .with_timezone(&chrono::Utc);
+        let validity = super::validity_at(now).expect("validity");
+
+        assert!(matches!(validity.not_before, Time::UtcTime(_)));
+        assert!(matches!(validity.not_after, Time::GeneralTime(_)));
+
+        let encoded = validity.to_der().expect("encode validity");
+        let decoded = Validity::from_der(&encoded).expect("decode validity");
+
+        assert_eq!(
+            chrono::DateTime::<chrono::Utc>::from(decoded.not_before.to_system_time()),
+            now - chrono::Duration::days(1)
+        );
+        assert_eq!(
+            chrono::DateTime::<chrono::Utc>::from(decoded.not_after.to_system_time()),
+            now + chrono::Duration::days(365)
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
+    fn generated_chain_preserves_issuer_signatures_and_validity() {
+        let chain = super::generate_ephemeral_chain("example.test").expect("chain");
+        let (_, ca) = x509_parser::parse_x509_certificate(&chain.ca_der).expect("CA");
+        let (_, ee) = x509_parser::parse_x509_certificate(&chain.ee_der).expect("EE");
+        let key = ed25519_dalek::VerifyingKey::from_bytes(
+            ca.public_key()
+                .subject_public_key
+                .data
+                .as_ref()
+                .try_into()
+                .expect("Ed25519 public key"),
+        )
+        .expect("public key");
+
+        for certificate in [&ca, &ee] {
+            let signature =
+                ed25519_dalek::Signature::from_slice(certificate.signature_value.data.as_ref())
+                    .expect("signature");
+
+            key.verify_strict(certificate.tbs_certificate.as_ref(), &signature)
+                .expect("issuer signature");
+
+            let now = crate::crypto::internal::time::utc_now().timestamp();
+
+            assert!(certificate.validity().not_before.timestamp() < now);
+            assert!(certificate.validity().not_after.timestamp() > now);
+        }
+
+        assert_eq!(ee.issuer(), ca.subject());
+    }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::generate_ephemeral_chain;
 
-    /// Documents why OpenSSL 3.x rejects rasn's BasicConstraints for EE certs.
-    /// rasn encodes `BasicConstraints { ca: false, path_len_constraint: None }`
-    /// as an **empty SEQUENCE** (`30 00`) because of `#[rasn(default)]` on
-    /// `ca` — the false value is treated as default and omitted. OpenSSL
+    /// Documents the explicit FALSE retained for EE certificate compatibility.
+    /// DER omits the default false value, yielding an empty SEQUENCE.
+    /// OpenSSL
     /// expects the cA BOOLEAN to be present when the extension is present,
     /// so we use minimal DER instead.
     #[test]
@@ -546,13 +643,13 @@ mod tests {
             path_len_constraint: None,
         };
 
-        let rasn_der = rasn::der::encode(&bc).expect("rasn encode BasicConstraints");
+        let encoded = bc.to_der().expect("encode BasicConstraints");
         let minimal_der: &[u8] = &[0x30, 0x03, 0x01, 0x01, 0x00]; // SEQUENCE { BOOLEAN FALSE }
 
         assert_eq!(
-            rasn_der.as_slice(),
+            encoded.as_slice(),
             &[0x30, 0x00],
-            "rasn emits empty SEQUENCE for ca=false"
+            "DER omits the default ca=false"
         );
         assert_eq!(
             minimal_der,
@@ -561,7 +658,7 @@ mod tests {
         );
 
         let decoded_minimal: BasicConstraints =
-            rasn::der::decode(minimal_der).expect("decode minimal");
+            BasicConstraints::from_der(minimal_der).expect("decode minimal");
         assert!(!decoded_minimal.ca);
         assert!(decoded_minimal.path_len_constraint.is_none());
     }

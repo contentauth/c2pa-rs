@@ -897,11 +897,13 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use chrono::{TimeZone, Utc};
+    use der::{asn1::Any, Decode, Encode};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
+    use x509_cert::der::{Decode as DecodeDer07, Encode as EncodeDer07};
 
     use super::*;
-    use crate::crypto::cert_chain_pem_to_der;
+    use crate::crypto::{cert_chain_pem_to_der, ocsp::test_responder::ocsp_time};
 
     // es256.pub is a two-certificate chain: [signing leaf, intermediate CA]
     fn leaf_and_intermediate() -> Vec<Vec<u8>> {
@@ -1232,7 +1234,7 @@ mod tests {
         };
 
         use http::{Request, Response};
-        use rasn_pkix::Certificate;
+        use x509_cert::Certificate;
 
         use crate::http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver};
 
@@ -1267,8 +1269,8 @@ mod tests {
         }
 
         let mut chain = leaf_and_intermediate();
-        let mut leaf: Certificate = rasn::der::decode(&chain[0]).unwrap();
-        let online_leaf: Certificate = rasn::der::decode(&ca_chain()[0]).unwrap();
+        let mut leaf = Certificate::from_der(&chain[0]).unwrap();
+        let online_leaf = Certificate::from_der(&ca_chain()[0]).unwrap();
         // Add a fixture AIA without changing the certificate ID matched by OCSP.
         // This isolates the fetch path; COSE certificate-chain verification is separate.
         let aia = online_leaf
@@ -1281,7 +1283,7 @@ mod tests {
             .cloned()
             .unwrap();
         leaf.tbs_certificate.extensions.as_mut().unwrap().push(aia);
-        chain[0] = rasn::der::encode(&leaf).unwrap();
+        chain[0] = leaf.to_der().unwrap();
         let sign1 = sign1_with_x5chain(&chain);
         let mut ctp = CertificateTrustPolicy::default();
         ctp.add_end_entity_credentials(include_bytes!(
@@ -2657,15 +2659,15 @@ mod tests {
     }
 
     /// The fixture's "good" response data, re-dated to be valid at the current time.
-    fn fresh_basic_response() -> rasn_ocsp::BasicOcspResponse {
+    fn fresh_basic_response() -> crate::crypto::ocsp::asn1::BasicOcspResponse {
         use crate::crypto::ocsp::test_responder::good_basic_response;
 
         let now = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
         let mut basic = good_basic_response();
-        basic.tbs_response_data.produced_at = (now - chrono::Duration::hours(1)).fixed_offset();
+        basic.tbs_response_data.produced_at = ocsp_time(now - chrono::Duration::hours(1));
         let single = &mut basic.tbs_response_data.responses[0];
-        single.this_update = (now - chrono::Duration::hours(1)).fixed_offset();
-        single.next_update = Some((now + chrono::Duration::hours(24)).fixed_offset());
+        single.this_update = ocsp_time(now - chrono::Duration::hours(1));
+        single.next_update = Some(ocsp_time(now + chrono::Duration::hours(24)));
         basic
     }
 
@@ -2690,10 +2692,10 @@ mod tests {
         let mut basic = responder.basic_response(false);
         basic.tbs_response_data.produced_at = fresh.tbs_response_data.produced_at;
         basic.tbs_response_data.responses[0].this_update =
-            fresh.tbs_response_data.responses[0].this_update;
+            fresh.tbs_response_data.responses[0].this_update.clone();
 
         basic.tbs_response_data.responses[0].next_update =
-            fresh.tbs_response_data.responses[0].next_update;
+            fresh.tbs_response_data.responses[0].next_update.clone();
 
         let der = responder.sign(basic);
         (responder, ctp, der)
@@ -2782,9 +2784,11 @@ mod tests {
                     .unwrap();
 
             let der = get_ocsp_der(&sign1).unwrap();
-            let outer: rasn_ocsp::OcspResponse = rasn::der::decode(&der).unwrap();
-            let basic: rasn_ocsp::BasicOcspResponse =
-                rasn::der::decode(&outer.bytes.unwrap().response).unwrap();
+            let outer = crate::crypto::ocsp::asn1::Response::from_der(&der).unwrap();
+            let basic = crate::crypto::ocsp::asn1::BasicOcspResponse::from_der(
+                outer.response_bytes.unwrap().response.as_bytes(),
+            )
+            .unwrap();
 
             if basic.certs.is_some() {
                 continue;
@@ -2792,10 +2796,9 @@ mod tests {
 
             issuer_signed_count += 1;
             let chain = cert_chain_from_sign1(&sign1).unwrap();
-            let issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
             assert!(matches!(
                 basic.tbs_response_data.responder_id,
-                rasn_ocsp::ResponderId::ByKey(_)
+                crate::crypto::ocsp::asn1::ResponderId::ByKey(_)
             ));
 
             let mut ctp = CertificateTrustPolicy::new();
@@ -2809,7 +2812,10 @@ mod tests {
 
             let mut timestamp = supplied_timestamp();
             timestamp.gen_time = crate::crypto::asn1::GeneralizedTime::from_der_bytes(
-                &rasn::der::encode(&basic.tbs_response_data.responses[0].this_update).unwrap(),
+                &basic.tbs_response_data.responses[0]
+                    .this_update
+                    .to_der()
+                    .unwrap(),
             )
             .unwrap();
 
@@ -2826,17 +2832,17 @@ mod tests {
             .unwrap();
 
             assert_eq!(parsed.ocsp_der, der);
-            assert_eq!(
-                parsed.ocsp_certs.as_ref().unwrap()[0],
-                rasn::der::encode(&issuer).unwrap(),
-            );
+            assert_eq!(parsed.ocsp_certs.as_ref().unwrap()[0], chain[1],);
 
             assert_eq!(
                 parsed.certificate_serial_num,
-                basic.tbs_response_data.responses[0]
-                    .cert_id
-                    .serial_number
-                    .to_string(),
+                x509_parser::num_bigint::BigInt::from_signed_bytes_be(
+                    basic.tbs_response_data.responses[0]
+                        .cert_id
+                        .serial_number
+                        .as_bytes()
+                )
+                .to_string(),
             );
 
             assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
@@ -2854,29 +2860,25 @@ mod tests {
         use ed25519_dalek::Signer;
 
         let (mut responder, _, _) = issuer_response_fixture();
-        let mut leaf: rasn_pkix::Certificate = rasn::der::decode(&responder.chain[0]).unwrap();
-        let issuer: rasn_pkix::Certificate = rasn::der::decode(&responder.chain[1]).unwrap();
-        leaf.tbs_certificate.validity.not_after = rasn_pkix::Time::General(
-            Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0)
-                .unwrap()
-                .fixed_offset(),
+        let mut leaf = x509_cert::Certificate::from_der(&responder.chain[0]).unwrap();
+        leaf.tbs_certificate.validity.not_after = x509_cert::time::Time::GeneralTime(
+            x509_cert::der::asn1::GeneralizedTime::from_system_time(
+                Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap().into(),
+            )
+            .unwrap(),
         );
 
-        leaf.signature_value = rasn::types::BitString::from_vec(
-            ed25519_dalek::SigningKey::from_bytes(&[42; 32])
-                .sign(&rasn::der::encode(&leaf.tbs_certificate).unwrap())
-                .to_bytes()
-                .to_vec(),
-        );
+        leaf.signature = x509_cert::der::asn1::BitString::from_bytes(
+            &ed25519_dalek::SigningKey::from_bytes(&[42; 32])
+                .sign(&leaf.tbs_certificate.to_der().unwrap())
+                .to_bytes(),
+        )
+        .unwrap();
 
-        responder.chain[0] = rasn::der::encode(&leaf).unwrap();
+        responder.chain[0] = leaf.to_der().unwrap();
         let mut ctp = CertificateTrustPolicy::new();
         ctp.add_trust_anchors(
-            pem::encode(&pem::Pem::new(
-                "CERTIFICATE",
-                rasn::der::encode(&issuer).unwrap(),
-            ))
-            .as_bytes(),
+            pem::encode(&pem::Pem::new("CERTIFICATE", responder.chain[1].clone())).as_bytes(),
             "https://c2pa-rs/test",
             crate::crypto::cose::TrustAnchorType::Manifest,
             None,
@@ -2928,7 +2930,7 @@ mod tests {
 
         for future in [false, true] {
             let mut chain = responder.chain.clone();
-            let mut issuer: rasn_pkix::Certificate = rasn::der::decode(&chain[1]).unwrap();
+            let mut issuer = x509_cert::Certificate::from_der(&chain[1]).unwrap();
             if future {
                 issuer.tbs_certificate.validity.not_before =
                     issuer.tbs_certificate.validity.not_after;
@@ -2937,7 +2939,7 @@ mod tests {
                     issuer.tbs_certificate.validity.not_before;
             }
 
-            chain[1] = rasn::der::encode(&issuer).unwrap();
+            chain[1] = issuer.to_der().unwrap();
             let mut log = StatusTracker::default();
             let parsed = validate_fetched_ocsp(&der, &chain, &ctp, None, &mut log);
             assert!(parsed.ocsp_der.is_empty());
@@ -2948,8 +2950,11 @@ mod tests {
     #[test]
     fn delegated_response_requires_issuing_ca_or_explicit_responder_trust() {
         let (responder, ctp, der) = issuer_response_fixture();
-        let outer: rasn_ocsp::OcspResponse = rasn::der::decode(&der).unwrap();
-        let basic = rasn::der::decode(&outer.bytes.unwrap().response).unwrap();
+        let outer = crate::crypto::ocsp::asn1::Response::from_der(&der).unwrap();
+        let basic = crate::crypto::ocsp::asn1::BasicOcspResponse::from_der(
+            outer.response_bytes.unwrap().response.as_bytes(),
+        )
+        .unwrap();
         let der = responder.delegated_response(basic);
         let mut log = StatusTracker::default();
         let parsed = validate_fetched_ocsp(&der, &responder.chain, &ctp, None, &mut log);
@@ -3048,11 +3053,12 @@ mod tests {
         let response_for = |this_update_hours: i64, next_update_hours: i64| {
             let this_update = attested + chrono::Duration::hours(this_update_hours);
             let mut basic = good_basic_response();
-            basic.tbs_response_data.produced_at = this_update.fixed_offset();
+            basic.tbs_response_data.produced_at = ocsp_time(this_update);
             let single = &mut basic.tbs_response_data.responses[0];
-            single.this_update = this_update.fixed_offset();
-            single.next_update =
-                Some((attested + chrono::Duration::hours(next_update_hours)).fixed_offset());
+            single.this_update = ocsp_time(this_update);
+            single.next_update = Some(ocsp_time(
+                attested + chrono::Duration::hours(next_update_hours),
+            ));
             responder.sign(basic)
         };
         let expired = response_for(-48, -24);
@@ -3327,22 +3333,27 @@ mod tests {
     }
 
     fn response_without_responder_extensions() -> Vec<u8> {
-        let mut outer: rasn_ocsp::OcspResponse = rasn::der::decode(include_bytes!(
+        let mut outer = crate::crypto::ocsp::asn1::Response::from_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/response_good.der"
         ))
         .unwrap();
-        let bytes = outer.bytes.as_mut().unwrap();
-        let mut basic: rasn_ocsp::BasicOcspResponse = rasn::der::decode(&bytes.response).unwrap();
+        let bytes = outer.response_bytes.as_mut().unwrap();
+        let mut basic =
+            crate::crypto::ocsp::asn1::BasicOcspResponse::from_der(bytes.response.as_bytes())
+                .unwrap();
         // The responder certificate is outside ResponseData: changing its
         // profile leaves the OCSP signature and certificate binding intact.
-        basic.certs.as_mut().unwrap()[0].tbs_certificate.extensions = None;
-        bytes.response = rasn::der::encode(&basic).unwrap().into();
-        rasn::der::encode(&outer).unwrap()
+        let cert = &mut basic.certs.as_mut().unwrap()[0];
+        let mut decoded = x509_cert::Certificate::from_der(&cert.to_der().unwrap()).unwrap();
+        decoded.tbs_certificate.extensions = None;
+        *cert = Any::from_der(&decoded.to_der().unwrap()).unwrap();
+        bytes.response = der::asn1::OctetString::new(basic.to_der().unwrap()).unwrap();
+        outer.to_der().unwrap()
     }
 
     #[test]
     fn ocsp_responder_requires_ocsp_signing_eku() {
-        use rasn::types::ObjectIdentifier;
+        use x509_cert::der::asn1::{ObjectIdentifier, OctetString};
 
         use crate::{
             crypto::ocsp::test_responder::{encode_response, good_basic_response},
@@ -3354,14 +3365,15 @@ mod tests {
         let chain = ocsp_signing_chain();
         let sign1 = sign1_with_x5chain(&chain);
         for purpose in [
-            vec![1, 3, 6, 1, 4, 1, 62558, 2, 1],
-            vec![1, 3, 6, 1, 5, 5, 7, 3, 4],
-            vec![1, 3, 6, 1, 5, 5, 7, 3, 8],
-            vec![1, 3, 6, 1, 5, 5, 7, 3, 9],
+            "1.3.6.1.4.1.62558.2.1",
+            "1.3.6.1.5.5.7.3.4",
+            "1.3.6.1.5.5.7.3.8",
+            "1.3.6.1.5.5.7.3.9",
         ] {
-            let is_ocsp = purpose.last() == Some(&9);
+            let is_ocsp = purpose == "1.3.6.1.5.5.7.3.9";
             let mut basic = good_basic_response();
-            let cert = &mut basic.certs.as_mut().unwrap()[0];
+            let cert_der = &mut basic.certs.as_mut().unwrap()[0];
+            let mut cert = x509_cert::Certificate::from_der(&cert_der.to_der().unwrap()).unwrap();
             // The response signature covers ResponseData, not this certificate.
             // Trust the edited certificate directly to isolate its role profile.
             let eku = cert
@@ -3370,17 +3382,22 @@ mod tests {
                 .as_mut()
                 .unwrap()
                 .iter_mut()
-                .find(|ext| ext.extn_id == ObjectIdentifier::new(vec![2, 5, 29, 37]).unwrap())
+                .find(|ext| ext.extn_id == ObjectIdentifier::new_unwrap("2.5.29.37"))
                 .unwrap();
-            eku.extn_value = rasn::der::encode(&vec![ObjectIdentifier::new(purpose).unwrap()])
-                .unwrap()
-                .into();
-            cert.tbs_certificate.validity.not_after =
-                rasn_pkix::Time::Utc(Utc::now() + chrono::Duration::days(1));
-            let pem = pem::encode(&pem::Pem::new(
-                "CERTIFICATE",
-                rasn::der::encode(cert).unwrap(),
-            ));
+            eku.extn_value = OctetString::new(
+                vec![ObjectIdentifier::new(purpose).unwrap()]
+                    .to_der()
+                    .unwrap(),
+            )
+            .unwrap();
+            cert.tbs_certificate.validity.not_after = x509_cert::time::Time::UtcTime(
+                x509_cert::der::asn1::UtcTime::from_system_time(
+                    (Utc::now() + chrono::Duration::days(1)).into(),
+                )
+                .unwrap(),
+            );
+            *cert_der = Any::from_der(&cert.to_der().unwrap()).unwrap();
+            let pem = pem::encode(&pem::Pem::new("CERTIFICATE", cert.to_der().unwrap()));
             let mut ctp = CertificateTrustPolicy::default();
             ctp.add_end_entity_credentials(pem.as_bytes()).unwrap();
             let der = encode_response(&basic);

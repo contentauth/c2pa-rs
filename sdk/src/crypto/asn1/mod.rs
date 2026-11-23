@@ -26,6 +26,10 @@ use chrono::{TimeZone, Timelike};
 // Use der crate for time types to avoid custom date parsing
 use der::{Decode, Encode};
 
+pub(crate) fn canonical_name_der(encoded: &[u8]) -> Result<Vec<u8>, der::Error> {
+    cms::x509_cert::name::Name::from_der(encoded)?.to_der()
+}
+
 // Common ASN.1 types shared across multiple RFCs
 
 /// Helper function to reconstruct DER encoding from primitive content

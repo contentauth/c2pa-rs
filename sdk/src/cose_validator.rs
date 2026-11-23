@@ -317,6 +317,14 @@ pub mod tests {
 
     #[c2pa_macros::c2pa_test_async]
     async fn claim_role_rejects_specialty_ekus_even_when_configured_or_privately_trusted() {
+        use x509_cert::{
+            der::{
+                asn1::{ObjectIdentifier, OctetString},
+                Decode as DecodeDer07, Encode as EncodeDer07,
+            },
+            Certificate,
+        };
+
         use crate::{
             crypto::{
                 cert_chain_pem_to_der,
@@ -331,10 +339,9 @@ pub mod tests {
                     .unwrap();
 
             // Only EKU profile/role checks are under test; the public key is unchanged.
-            let mut certificate: rasn_pkix::Certificate =
-                rasn::der::decode(&certificates[0]).unwrap();
+            let mut certificate = Certificate::from_der(&certificates[0]).unwrap();
 
-            let eku_oid = rasn::types::ObjectIdentifier::new(vec![2, 5, 29, 37]).unwrap();
+            let eku_oid = ObjectIdentifier::new_unwrap("2.5.29.37");
 
             certificate
                 .tbs_certificate
@@ -344,14 +351,14 @@ pub mod tests {
                 .iter_mut()
                 .find(|extension| extension.extn_id == eku_oid)
                 .unwrap()
-                .extn_value = rasn::der::encode(&vec![rasn::types::ObjectIdentifier::new(vec![
-                1, 3, 6, 1, 5, 5, 7, 3, purpose,
-            ])
-            .unwrap()])
-            .unwrap()
-            .into();
+                .extn_value = OctetString::new(
+                vec![ObjectIdentifier::new(&format!("1.3.6.1.5.5.7.3.{purpose}")).unwrap()]
+                    .to_der()
+                    .unwrap(),
+            )
+            .unwrap();
 
-            certificates[0] = rasn::der::encode(&certificate).unwrap();
+            certificates[0] = certificate.to_der().unwrap();
 
             let raw_signer = c2pa_raw_crypto::signer_from_private_key(
                 include_bytes!("../tests/fixtures/certs/ed25519.pem"),
