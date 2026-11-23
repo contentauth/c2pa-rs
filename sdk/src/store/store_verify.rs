@@ -27,7 +27,10 @@ use crate::{
     context::{Context, ProgressPhase},
     crypto::{
         asn1::rfc3161::TstInfo,
-        cose::{cert_chain_from_sign1, CertificateTrustPolicy},
+        cose::{
+            cert_chain_from_sign1, trusted_cawg_timestamp, trusted_cawg_timestamp_token,
+            CertificateTrustPolicy, Verifier,
+        },
         ocsp::OcspResponse,
         time_stamp::verify_time_stamp,
     },
@@ -63,8 +66,6 @@ impl Store {
         assertion_label: &str,
         validation_log: &mut StatusTracker,
     ) -> Result<Option<TstInfo>> {
-        use crate::crypto::cose::{trusted_cawg_timestamp, trusted_cawg_timestamp_token, Verifier};
-
         let Some((signed_uri, _)) = claim.assertion_hashed_uri_from_label(assertion_label) else {
             return Ok(None);
         };
@@ -700,9 +701,13 @@ impl Store {
 mod ocsp_reporting_tests {
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(feature = "openssl")]
+    use chrono::{DateTime, Duration, Utc};
     use coset::{cbor::value::Value, CoseSign1, Label, TaggedCborSerializable};
 
     use super::*;
+    #[cfg(feature = "openssl")]
+    use crate::crypto::ocsp::test_responder::{ocsp_time, TestResponder};
     use crate::{
         assertions::DataHash,
         cose_validator::{check_ocsp_status, check_ocsp_status_async, get_signing_cert_serial_num},
@@ -998,10 +1003,6 @@ mod ocsp_reporting_tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn fresh_good_reports_once_after_collection() {
-        use chrono::{DateTime, Duration, Utc};
-
-        use crate::crypto::ocsp::test_responder::{ocsp_time, TestResponder};
-
         let context = context(true);
         let responder = TestResponder::new();
         let mut basic = good_basic_response();

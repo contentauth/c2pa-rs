@@ -323,11 +323,18 @@ pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use openssl::hash::MessageDigest;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
     use crate::crypto::cose::cose_signer::tests::TestSigner;
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use crate::crypto::{
+        cose::{signing_time_from_sign1, signing_time_from_sign1_async},
+        time_stamp::verify::message_imprint_regression::{build_token, OID_SHA256},
+    };
 
     fn timestamp_value(tokens: &[&[u8]]) -> Value {
         Value::Map(vec![(
@@ -472,13 +479,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[c2pa_macros::c2pa_test_async]
     async fn locally_signed_timestamps_round_trip_both_versions_and_apis() {
-        use openssl::hash::MessageDigest;
-
-        use crate::crypto::{
-            cose::{signing_time_from_sign1, signing_time_from_sign1_async},
-            time_stamp::verify::message_imprint_regression::{build_token, OID_SHA256},
-        };
-
         let protected = ProtectedHeader::default();
         let policy = CertificateTrustPolicy::passthrough();
         for version in [

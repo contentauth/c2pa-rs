@@ -19,7 +19,9 @@ use c2pa_raw_crypto::RawSignatureValidationError;
 use chrono::{DateTime, Timelike, Utc};
 use der::{asn1::ObjectIdentifier, Decode, Encode};
 use thiserror::Error;
-use x509_parser::{certificate::X509Certificate, prelude::FromDer};
+use x509_parser::{
+    certificate::X509Certificate, prelude::FromDer, signature_algorithm::SignatureAlgorithm,
+};
 
 use crate::{
     crypto::{
@@ -407,8 +409,6 @@ fn responder_id_matches(id: &ResponderId, cert: &X509Certificate<'_>) -> bool {
 
 /// Checks direct issuance and CA authority, not path trust or validity times.
 pub(crate) fn certificate_issued_by(cert_der: &[u8], issuer_der: &[u8]) -> bool {
-    use x509_parser::{certificate::X509Certificate, prelude::FromDer};
-
     let (Ok((_, cert)), Ok((_, issuer))) = (
         X509Certificate::from_der(cert_der),
         X509Certificate::from_der(issuer_der),
@@ -434,8 +434,6 @@ pub(crate) fn certificate_issued_by(cert_der: &[u8], issuer_der: &[u8]) -> bool 
     };
 
     let hash_alg = if cert.signature_algorithm.algorithm.to_id_string() == "1.2.840.113549.1.1.10" {
-        use x509_parser::signature_algorithm::SignatureAlgorithm;
-
         let Ok(SignatureAlgorithm::RSASSA_PSS(params)) =
             SignatureAlgorithm::try_from(&cert.signature_algorithm)
         else {
@@ -624,10 +622,14 @@ mod tests {
         der::{Decode as DerDecode, Encode as DerEncode},
         Certificate,
     };
+    use x509_parser::prelude::{FromDer, X509Certificate};
 
-    use super::asn1::{BasicOcspResponse, CertStatus, ResponderId, Response};
     #[cfg(feature = "openssl")]
     use super::asn1::{CrlReason, RevokedInfo};
+    use super::{
+        asn1::{BasicOcspResponse, CertStatus, ResponderId, Response},
+        test_responder::IssuerResponder,
+    };
     use crate::{
         crypto::{
             internal::time,
@@ -1007,8 +1009,6 @@ mod tests {
 
     #[test]
     fn issuer_signed_response_without_certs_authenticates_both_responder_ids() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
 
@@ -1038,8 +1038,6 @@ mod tests {
 
     #[test]
     fn issuer_response_rejects_signed_wrong_ids_and_cert_ids_and_bad_signature() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let original = responder.basic_response(false);
         let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
@@ -1087,8 +1085,6 @@ mod tests {
 
     #[test]
     fn issuer_candidate_must_actually_issue_leaf_and_be_a_ca() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let der = responder.sign(responder.basic_response(false));
         let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
@@ -1275,8 +1271,6 @@ mod tests {
 
     #[test]
     fn issuer_response_preserves_stale_good_and_trusted_time_windows() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
 
         for has_next_update in [false, true] {
@@ -1331,8 +1325,6 @@ mod tests {
 
     #[test]
     fn issuer_signed_revoked_and_unknown_responses_preserve_status_codes() {
-        use super::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let outer = Response::from_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/response_revoked.der"
@@ -1411,9 +1403,6 @@ mod tests {
 
     #[test]
     fn cert_id_requires_serial_both_issuer_hashes_and_supported_algorithm() {
-        use der::asn1::{Int, ObjectIdentifier, OctetString};
-        use x509_parser::prelude::{FromDer, X509Certificate};
-
         let chain = signing_cert_chain();
         let original = basic_response().tbs_response_data.responses[0]
             .cert_id

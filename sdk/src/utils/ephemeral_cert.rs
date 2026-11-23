@@ -565,6 +565,12 @@ mod tests {
         time::{Time, Validity},
     };
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    use super::{
+        generate_ephemeral_chain_with_ee_skip, EXT_TAG_AUTHORITY_KEY_ID, EXT_TAG_BASIC_CONSTRAINTS,
+        EXT_TAG_EXT_KEY_USAGE, EXT_TAG_KEY_USAGE, EXT_TAG_SUBJECT_ALT_NAME, EXT_TAG_SUBJECT_KEY_ID,
+    };
+
     #[test]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
@@ -759,12 +765,6 @@ mod tests {
             eprintln!("openssl not available, skipping test_openssl_which_extension_fails");
             return;
         }
-
-        use super::{
-            generate_ephemeral_chain, generate_ephemeral_chain_with_ee_skip,
-            EXT_TAG_AUTHORITY_KEY_ID, EXT_TAG_BASIC_CONSTRAINTS, EXT_TAG_EXT_KEY_USAGE,
-            EXT_TAG_KEY_USAGE, EXT_TAG_SUBJECT_ALT_NAME, EXT_TAG_SUBJECT_KEY_ID,
-        };
 
         let extension_tags = [
             EXT_TAG_BASIC_CONSTRAINTS,

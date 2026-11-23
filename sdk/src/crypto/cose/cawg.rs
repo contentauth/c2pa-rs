@@ -366,6 +366,10 @@ impl Verifier<'_> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
+    use std::borrow::Cow;
+
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use coset::{cbor::value::Value, Label, TaggedCborSerializable};
     use der::Encode;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -379,6 +383,19 @@ mod tests {
     };
 
     use super::*;
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use crate::{
+        assertions::{DataHash, TimeStamp, UserCbor},
+        claim::Claim,
+        crypto::{
+            cose::TrustAnchorType, time_stamp::verify::message_imprint_regression::build_token_at,
+        },
+        identity::{IdentityAssertion, SignerPayload},
+        manifest::StoreOptions,
+        settings::{Settings, TrustAnchor, TrustListKind},
+        store::Store,
+        Context, Manifest,
+    };
 
     fn oid(value: &str) -> ObjectIdentifier {
         ObjectIdentifier::new(value).unwrap()
@@ -660,8 +677,6 @@ mod tests {
 
     #[c2pa_macros::c2pa_test_async]
     async fn policy_is_enforced_by_both_cawg_apis_but_not_the_shared_verifier() {
-        use std::borrow::Cow;
-
         let mut cases: Vec<_> = SMIME_POLICIES.iter().map(|policy| vec![*policy]).collect();
         cases.extend([vec!["2.23.140.1.5.1.2"], vec![]]);
 
@@ -727,10 +742,6 @@ mod tests {
 
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     fn add_timestamp(sign1: &mut CoseSign1, time: &[u8]) -> Vec<u8> {
-        use coset::{cbor::value::Value, Label};
-
-        use crate::crypto::time_stamp::verify::message_imprint_regression::build_token_at;
-
         let signature_cbor = coset::cbor::Value::Bytes(sign1.signature.clone());
         let mut bytes = Vec::new();
         coset::cbor::into_writer(&signature_cbor, &mut bytes).unwrap();
@@ -755,8 +766,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn only_a_trusted_associated_v2_timestamp_can_extend_interim_trust() {
-        use super::super::TrustAnchorType;
-
         for (time, accepted) in [
             (b"20270330000000Z".as_slice(), true),
             (b"20270331235959Z".as_slice(), true),
@@ -818,10 +827,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn manifest_timestamp_requires_the_signed_assertion_and_valid_claim_signature() {
-        use coset::TaggedCborSerializable;
-
-        use crate::{claim::Claim, store::Store};
-
         let mut claim = Claim::new("test", None, 1);
         let uri = claim
             .add_assertion(&crate::assertions::Actions::new())
@@ -867,18 +872,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[c2pa_macros::c2pa_test_async]
     async fn manifest_only_timestamp_is_used_during_cawg_identity_decoding() {
-        use coset::TaggedCborSerializable;
-
-        use crate::{
-            assertions::{DataHash, UserCbor},
-            claim::Claim,
-            identity::{IdentityAssertion, SignerPayload},
-            manifest::StoreOptions,
-            settings::{Settings, TrustAnchor, TrustListKind},
-            store::Store,
-            Context, Manifest,
-        };
-
         let mut claim = Claim::new("manifest timestamp test", None, 1);
 
         let binding = claim
@@ -1024,11 +1017,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn timestamp_assertion_is_verified_against_the_referenced_claim_not_just_its_label() {
-        use crate::{
-            assertions::TimeStamp, claim::Claim,
-            crypto::time_stamp::verify::message_imprint_regression::build_token_at, store::Store,
-        };
-
         let mut claim = Claim::new("test", None, 1);
         let uri = claim
             .add_assertion(&crate::assertions::Actions::new())
@@ -1089,8 +1077,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn malformed_timestamp_containers_are_ignored_and_legacy_does_not_shadow_v2() {
-        use coset::{cbor::value::Value, Label};
-
         let (sign1, tsa) = timestamped_sign1(b"20270331235959Z");
 
         let mut policy = CertificateTrustPolicy::default();

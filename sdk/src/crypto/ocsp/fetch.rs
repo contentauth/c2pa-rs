@@ -260,6 +260,15 @@ mod tests {
     };
 
     use http::{Request, Response};
+    use x509_cert::{
+        attr::AttributeTypeAndValue,
+        der::{
+            asn1::{Any, ObjectIdentifier, OctetString, Utf8StringRef},
+            Decode as DerDecode, Encode as DerEncode,
+        },
+        name::{RdnSequence, RelativeDistinguishedName},
+        Certificate,
+    };
 
     use super::*;
     use crate::{
@@ -353,16 +362,6 @@ mod tests {
 
     #[test]
     fn issuer_name_hash_uses_reencoded_rdn_order_not_received_bytes() {
-        use x509_cert::{
-            attr::AttributeTypeAndValue,
-            der::{
-                asn1::{Any, ObjectIdentifier, Utf8StringRef},
-                Decode as DerDecode, Encode as DerEncode,
-            },
-            name::{RdnSequence, RelativeDistinguishedName},
-            Certificate,
-        };
-
         let certs = ca_chain();
         let mut issuer = Certificate::from_der(&certs[1]).unwrap();
         let attributes: Vec<_> = ["OCSP issuer A", "OCSP issuer BBB"]
@@ -729,14 +728,6 @@ mod tests {
     }
 
     fn chain_with_two_responders() -> Vec<Vec<u8>> {
-        use x509_cert::{
-            der::{
-                asn1::{Any, OctetString},
-                Decode as DerDecode, Encode as DerEncode,
-            },
-            Certificate,
-        };
-
         let mut certs = ca_chain();
         let mut leaf = Certificate::from_der(&certs[0]).unwrap();
         let extension = leaf

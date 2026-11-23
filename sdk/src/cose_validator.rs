@@ -304,35 +304,37 @@ pub(crate) fn get_signing_info(
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod tests {
+    use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
     use coset::{cbor::value::Value, Label};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
+    use x509_cert::{
+        der::{
+            asn1::{ObjectIdentifier, OctetString},
+            Decode as DerDecode, Encode as DerEncode,
+        },
+        Certificate,
+    };
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;
     use crate::{
-        settings::Settings, status_tracker::StatusTracker, utils::test_signer::test_signer, Signer,
-        SigningAlg,
+        crypto::{
+            cert_chain_pem_to_der,
+            cose::{
+                cose_reserve_size, sign, CertificateProfileError, RawSignerCoseSigner,
+                TimeStampStorage,
+            },
+        },
+        settings::Settings,
+        status_tracker::StatusTracker,
+        utils::test_signer::test_signer,
+        validation_status::{SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED},
+        Signer, SigningAlg,
     };
 
     #[c2pa_macros::c2pa_test_async]
     async fn claim_role_rejects_specialty_ekus_even_when_configured_or_privately_trusted() {
-        use x509_cert::{
-            der::{
-                asn1::{ObjectIdentifier, OctetString},
-                Decode as DerDecode, Encode as DerEncode,
-            },
-            Certificate,
-        };
-
-        use crate::{
-            crypto::{
-                cert_chain_pem_to_der,
-                cose::{sign, CertificateProfileError, RawSignerCoseSigner, TimeStampStorage},
-            },
-            validation_status::{SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED},
-        };
-
         for purpose in [8, 9] {
             let mut certificates =
                 cert_chain_pem_to_der(include_bytes!("../tests/fixtures/certs/ed25519.pub"))
@@ -571,10 +573,6 @@ pub mod tests {
     }
     #[test]
     fn test_stapled_ocsp() {
-        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
-
-        use crate::crypto::{cert_chain_pem_to_der, cose::cose_reserve_size};
-
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
 

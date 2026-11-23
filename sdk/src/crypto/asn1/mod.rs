@@ -497,9 +497,13 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
-    use bcder::{decode::Constructed, encode::Values, Mode, Oid};
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use super::*;
+    use bcder::{decode::Constructed, encode::Values, Mode, Oid};
+    use chrono::{Datelike, TimeZone, Timelike, Utc};
+
+    use super::{rfc5652::Time, *};
 
     // Helper to load test certificate
     fn load_test_cert_pem(name: &str) -> Vec<u8> {
@@ -717,8 +721,6 @@ mod tests {
 
     #[test]
     fn test_generalized_time_from_chrono() {
-        use chrono::{Datelike, TimeZone, Timelike, Utc};
-
         // Create a known timestamp: 2023-01-15 12:30:45 UTC
         let dt = Utc.with_ymd_and_hms(2023, 1, 15, 12, 30, 45).unwrap();
 
@@ -750,7 +752,6 @@ mod tests {
         assert!(!cert_der.is_empty(), "Certificate DER should not be empty");
 
         // Create a GeneralizedTime from a known timestamp and test roundtrip
-        use chrono::{Datelike, TimeZone, Utc};
         let test_time = Utc.with_ymd_and_hms(2022, 6, 10, 18, 46, 40).unwrap();
         let gt = GeneralizedTime::try_from(test_time).unwrap();
 
@@ -772,7 +773,6 @@ mod tests {
     fn test_generalized_time_with_multiple_cert_types() {
         // Test that we can load and parse certificates with different algorithms
         // This verifies the der/bcder integration works across all supported cert types
-        use chrono::{TimeZone, Utc};
 
         let cert_types = vec![
             "es256.pub",
@@ -965,8 +965,6 @@ mod tests {
 
     #[test]
     fn test_generalized_time_encode_decode_roundtrip() {
-        use chrono::{TimeZone, Utc};
-
         let original_dt = Utc.with_ymd_and_hms(2025, 10, 29, 14, 30, 0).unwrap();
         let gt1 = GeneralizedTime::try_from(original_dt).unwrap();
 
@@ -993,8 +991,6 @@ mod tests {
     #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     #[test]
     fn test_generalized_time_from_system_time() {
-        use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
         // Create a SystemTime 1 day after epoch
         let system_time = UNIX_EPOCH + Duration::from_secs(86400);
 
@@ -1015,8 +1011,6 @@ mod tests {
 
     #[test]
     fn test_generalized_time_try_from_out_of_range() {
-        use chrono::TimeZone;
-
         // der's GeneralizedTime only supports 1970-9999. Dates outside that range
         // (e.g. a pre-1970 signing time attacker-supplied in a timestamp token) must
         // return an error rather than panic. Regression test for the DoS where an
@@ -1062,8 +1056,6 @@ mod tests {
     /// The IMPLICIT variant simply replaces the outer SEQUENCE tag (0x30) with [1] (0xA1).
     #[test]
     fn test_extensions_implicit_tagging() {
-        use bcder::decode::Constructed;
-
         // Extensions ::= SEQUENCE SIZE (1..MAX) OF Extension
         // One Extension with OID 1.2.3.4 and NULL extnValue
         //
@@ -1155,8 +1147,6 @@ mod tests {
     /// ```
     #[test]
     fn test_general_name_in_tstinfo_context() {
-        use bcder::decode::Constructed;
-
         // GeneralName with dNSName [2] IMPLICIT IA5String
         // Wrapped in [0] EXPLICIT as used in RFC 3161 TstInfo
         //
@@ -1228,10 +1218,6 @@ mod tests {
     /// Example: "20240115120000Z" = January 15, 2024, 12:00:00 UTC
     #[test]
     fn test_generalized_time_from_primitive_no_fractional() {
-        use bcder::decode::Constructed;
-
-        use super::rfc5652::Time;
-
         // GeneralizedTime in DER format (tag + length + content)
         // Tag: 0x18 (GENERALIZED_TIME)
         // Length: 0x0f (15 bytes)
@@ -1410,8 +1396,6 @@ mod tests {
 
     #[test]
     fn rfc3161_preserves_component_boundaries_and_original_fractional_bytes() {
-        use chrono::TimeZone;
-
         for (value, date, nanos) in [
             ("19700101000000.000000001Z", (1970, 1, 1, 0, 0, 0), 1),
             (

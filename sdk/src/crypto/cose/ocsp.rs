@@ -23,7 +23,7 @@ use crate::{
         asn1::rfc3161::TstInfo,
         cose::{
             cert_chain_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
-            CertificateTrustError, CertificateTrustPolicy, CoseError,
+            CertificateTrustError, CertificateTrustPolicy, CoseError, TrustAnchorType,
         },
         ocsp::OcspResponse,
     },
@@ -582,8 +582,6 @@ fn delegated_response_authorized(
     ctp: &CertificateTrustPolicy,
     signing_time: Option<DateTime<Utc>>,
 ) -> bool {
-    use crate::crypto::cose::TrustAnchorType;
-
     let Some(responder) = responder_chain.first() else {
         return false;
     };
@@ -896,14 +894,59 @@ pub fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use std::{
+        io::{Cursor, Read},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
+    use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
     use der::{asn1::Any, Decode, Encode};
+    use ed25519_dalek::Signer;
+    use http::{Request, Response};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
-    use x509_cert::der::{Decode as DerDecode, Encode as DerEncode};
+    use x509_cert::{
+        der::{
+            asn1::{ObjectIdentifier, OctetString},
+            Decode as DerDecode, Encode as DerEncode,
+        },
+        Certificate,
+    };
 
-    use super::*;
-    use crate::crypto::{cert_chain_pem_to_der, ocsp::test_responder::ocsp_time};
+    #[cfg(not(target_arch = "wasm32"))]
+    use super::check_ocsp_status_async;
+    use super::{check_ocsp_status, ocsp_signing_chain, OcspFetchPolicy, *};
+    #[cfg(feature = "openssl")]
+    use crate::crypto::ocsp::test_responder::TestResponder;
+    use crate::{
+        context::Context,
+        crypto::{
+            asn1::{rfc3161::MessageImprint, AlgorithmIdentifier, GeneralizedTime},
+            cert_chain_pem_to_der,
+            cose::{parse_cose_sign1, CertificateTrustPolicy, TrustAnchorType},
+            ocsp::{
+                test_responder::{
+                    encode_response, good_basic_response, ocsp_time, IssuerResponder,
+                },
+                OcspResponse,
+            },
+        },
+        http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
+        settings::Settings,
+        status_tracker::StatusTracker,
+        store::Store,
+        validation_status::{
+            SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_NOT_REVOKED,
+            SIGNING_CREDENTIAL_OCSP_INACCESSIBLE, SIGNING_CREDENTIAL_REVOKED,
+        },
+        Reader, ValidationState,
+    };
 
     // es256.pub is a two-certificate chain: [signing leaf, intermediate CA]
     fn leaf_and_intermediate() -> Vec<Vec<u8>> {
@@ -911,7 +954,7 @@ mod tests {
         cert_chain_pem_to_der(pem).unwrap()
     }
 
-    fn ocsp_signing_chain() -> Vec<Vec<u8>> {
+    fn ocsp_signing_chain_fixture() -> Vec<Vec<u8>> {
         let pem = include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem");
         cert_chain_pem_to_der(pem).unwrap()
     }
@@ -927,9 +970,6 @@ mod tests {
 
     #[test]
     fn ocsp_signing_chain_resolves_issuer_from_anchor() {
-        use super::ocsp_signing_chain;
-        use crate::crypto::cose::{CertificateTrustPolicy, TrustAnchorType};
-
         let chain = leaf_and_intermediate(); // [leaf, issuing CA]
         let leaf = vec![chain[0].clone()];
 
@@ -982,18 +1022,6 @@ mod tests {
     // issuer is resolved from the anchor.
     #[test]
     fn revoked_lone_leaf_detected_after_issuer_resolved() {
-        use chrono::{TimeZone, Utc};
-
-        use super::ocsp_signing_chain;
-        use crate::{
-            crypto::{
-                cose::{CertificateTrustPolicy, TrustAnchorType},
-                ocsp::OcspResponse,
-            },
-            status_tracker::StatusTracker,
-            validation_status::SIGNING_CREDENTIAL_REVOKED,
-        };
-
         let full_chain = cert_chain_pem_to_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
         ))
@@ -1046,7 +1074,7 @@ mod tests {
         // (does not chain to a trust anchor with the OCSP-signing EKU) is
         // discarded, so no revocation is asserted from it (RFC 6960 section 3.2).
         let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
-        let chain = ocsp_signing_chain();
+        let chain = ocsp_signing_chain_fixture();
         let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
 
         let mut log = StatusTracker::default();
@@ -1072,7 +1100,7 @@ mod tests {
         // validity at current time while still evaluating `revocationTime`
         // against `signing_time`.
         let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
-        let chain = ocsp_signing_chain();
+        let chain = ocsp_signing_chain_fixture();
         let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
 
         let mut ctp = CertificateTrustPolicy::new();
@@ -1094,7 +1122,7 @@ mod tests {
         // carry the claim signature box URI (the caller's current URI), not
         // the "OCSP_RESPONSE" placeholder.
         let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
-        let chain = ocsp_signing_chain();
+        let chain = ocsp_signing_chain_fixture();
         let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
         let signature_uri = "self#jumbf=/c2pa/urn:c2pa:test/c2pa.signature";
 
@@ -1119,7 +1147,7 @@ mod tests {
     #[test]
     fn validate_fetched_ocsp_ignores_unusable_response() {
         // An undecodable response yields no cert data and no status.
-        let chain = ocsp_signing_chain();
+        let chain = ocsp_signing_chain_fixture();
         let mut log = StatusTracker::default();
         let resp = validate_fetched_ocsp(
             &[0xde, 0xad, 0xbe, 0xef],
@@ -1154,9 +1182,7 @@ mod tests {
 
     #[test]
     fn process_ocsp_responses_skips_expired_good_response() {
-        use crate::crypto::asn1::{rfc3161::MessageImprint, AlgorithmIdentifier, GeneralizedTime};
-
-        let chain = ocsp_signing_chain();
+        let chain = ocsp_signing_chain_fixture();
         let sign1 = sign1_with_x5chain(&chain);
         let good = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der").to_vec();
         let revoked =
@@ -1225,19 +1251,6 @@ mod tests {
 
     #[c2pa_macros::c2pa_test_async]
     async fn fetched_leaf_revocation_returns_trust_error() {
-        use std::{
-            io::{Cursor, Read},
-            sync::{
-                atomic::{AtomicUsize, Ordering},
-                Arc,
-            },
-        };
-
-        use http::{Request, Response};
-        use x509_cert::Certificate;
-
-        use crate::http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver};
-
         struct RevokedResolver(Arc<AtomicUsize>);
 
         impl SyncHttpResolver for RevokedResolver {
@@ -1341,15 +1354,6 @@ mod tests {
     // against its own AIA responder and the responses are processed.
     #[test]
     fn fetch_and_check_queries_leaf_and_ca() {
-        use std::io::{Cursor, Read};
-
-        use http::{Request, Response};
-
-        use crate::{
-            context::Context,
-            http::{HttpResolverError, SyncHttpResolver},
-        };
-
         struct OcspResolver;
         impl SyncHttpResolver for OcspResolver {
             fn http_resolve(
@@ -1384,16 +1388,6 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn fetch_and_check_queries_leaf_and_ca_async() {
-        use std::io::{Cursor, Read};
-
-        use async_trait::async_trait;
-        use http::{Request, Response};
-
-        use crate::{
-            context::Context,
-            http::{AsyncHttpResolver, HttpResolverError},
-        };
-
         struct OcspResolver;
         #[async_trait]
         impl AsyncHttpResolver for OcspResolver {
@@ -1426,15 +1420,6 @@ mod tests {
     // continues) and the leaf is reported inaccessible.
     #[test]
     fn fetch_and_check_handles_unreachable_responders() {
-        use std::io::Read;
-
-        use http::{Request, Response};
-
-        use crate::{
-            context::Context,
-            http::{HttpResolverError, SyncHttpResolver},
-        };
-
         struct FailingResolver;
         impl SyncHttpResolver for FailingResolver {
             fn http_resolve(
@@ -1464,15 +1449,6 @@ mod tests {
     // from the anchor, proving `ocsp_signing_chain` is wired at the call site.
     #[test]
     fn check_ocsp_status_stapled_revoked_lone_leaf() {
-        use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
-
-        use super::{check_ocsp_status, OcspFetchPolicy};
-        use crate::{
-            context::Context,
-            crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
-            status_tracker::StatusTracker,
-        };
-
         let full_chain = cert_chain_pem_to_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
         ))
@@ -1560,20 +1536,6 @@ mod tests {
     // the OCSP request be built, so the lone leaf is queried rather than skipped.
     #[test]
     fn check_ocsp_status_fetch_resolves_issuer_for_lone_leaf() {
-        use std::io::{Cursor, Read};
-
-        use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
-        use http::{Request, Response};
-
-        use super::{check_ocsp_status, OcspFetchPolicy};
-        use crate::{
-            context::Context,
-            crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
-            http::{HttpResolverError, SyncHttpResolver},
-            status_tracker::StatusTracker,
-            validation_status::SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
-        };
-
         let full_chain = cert_chain_pem_to_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
         ))
@@ -1652,30 +1614,6 @@ mod tests {
 
     #[test]
     fn check_ocsp_status_fetch_override_bypasses_staple_and_falls_back_on_failure() {
-        use std::{
-            io::{Cursor, Read},
-            sync::{
-                atomic::{AtomicUsize, Ordering},
-                Arc,
-            },
-        };
-
-        use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
-        use http::{Request, Response};
-
-        use super::{check_ocsp_status, OcspFetchPolicy};
-        use crate::{
-            context::Context,
-            crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
-            http::{HttpResolverError, SyncHttpResolver},
-            settings::Settings,
-            status_tracker::StatusTracker,
-            validation_status::{
-                SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
-                SIGNING_CREDENTIAL_REVOKED,
-            },
-        };
-
         fn sign1_with_staple(ocsp: Option<Vec<u8>>) -> CoseSign1 {
             let full_chain = cert_chain_pem_to_der(include_bytes!(
                 "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
@@ -1938,28 +1876,6 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn check_ocsp_status_fetch_override_async() {
-        use std::{
-            io::{Cursor, Read},
-            sync::{
-                atomic::{AtomicUsize, Ordering},
-                Arc,
-            },
-        };
-
-        use async_trait::async_trait;
-        use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
-        use http::{Request, Response};
-
-        use super::{check_ocsp_status_async, OcspFetchPolicy};
-        use crate::{
-            context::Context,
-            crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
-            http::{AsyncHttpResolver, HttpResolverError},
-            settings::Settings,
-            status_tracker::StatusTracker,
-            validation_status::{SIGNING_CREDENTIAL_OCSP_INACCESSIBLE, SIGNING_CREDENTIAL_REVOKED},
-        };
-
         let full_chain = cert_chain_pem_to_der(include_bytes!(
             "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
         ))
@@ -2100,27 +2016,6 @@ mod tests {
 
     #[test]
     fn reader_ocsp_fetch_should_override_implies_ocsp_fetch_and_falls_back() {
-        use std::{
-            io::{Cursor, Read},
-            sync::{
-                atomic::{AtomicUsize, Ordering},
-                Arc,
-            },
-        };
-
-        use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
-        use http::{Request, Response};
-
-        use crate::{
-            context::Context,
-            crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
-            http::{HttpResolverError, SyncHttpResolver},
-            settings::Settings,
-            status_tracker::StatusTracker,
-            validation_status::{SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_REVOKED},
-            Reader, ValidationState,
-        };
-
         #[derive(Clone)]
         struct CountingSyncResolver {
             counter: Arc<AtomicUsize>,
@@ -2416,7 +2311,7 @@ mod tests {
         let stale = STALE_GOOD.to_vec();
         let revoked =
             include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der").to_vec();
-        let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain_fixture());
         let mut supplied = vec![];
         let mut override_status = false;
         let mut fetch = OcspFetchPolicy::DoNotFetch;
@@ -2660,8 +2555,6 @@ mod tests {
 
     /// The fixture's "good" response data, re-dated to be valid at the current time.
     fn fresh_basic_response() -> crate::crypto::ocsp::asn1::BasicOcspResponse {
-        use crate::crypto::ocsp::test_responder::good_basic_response;
-
         let now = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
         let mut basic = good_basic_response();
         basic.tbs_response_data.produced_at = ocsp_time(now - chrono::Duration::hours(1));
@@ -2676,8 +2569,6 @@ mod tests {
         CertificateTrustPolicy,
         Vec<u8>,
     ) {
-        use crate::crypto::ocsp::test_responder::IssuerResponder;
-
         let responder = IssuerResponder::new();
         let mut ctp = CertificateTrustPolicy::new();
         ctp.add_trust_anchors(
@@ -2759,10 +2650,6 @@ mod tests {
 
     #[test]
     fn issuer_signed_ocsp_jpg_ingredient_staple_is_accepted() {
-        use std::io::Cursor;
-
-        use crate::{crypto::cose::parse_cose_sign1, store::Store};
-
         let context = Context::new();
         let (manifest, _) = Store::load_jumbf_from_stream(
             "image/jpeg",
@@ -2857,8 +2744,6 @@ mod tests {
 
     #[test]
     fn fetched_issuer_response_keeps_historical_leaf_validation_time() {
-        use ed25519_dalek::Signer;
-
         let (mut responder, _, _) = issuer_response_fixture();
         let mut leaf = x509_cert::Certificate::from_der(&responder.chain[0]).unwrap();
         leaf.tbs_certificate.validity.not_after = x509_cert::time::Time::GeneralTime(
@@ -2962,7 +2847,7 @@ mod tests {
         assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
         let responder_chain =
             extend_ocsp_cert_chain(parsed.ocsp_certs.as_ref().unwrap(), &responder.chain);
-        let wrong_chain = ocsp_signing_chain();
+        let wrong_chain = ocsp_signing_chain_fixture();
         assert!(!super::delegated_response_authorized(
             &responder_chain,
             &wrong_chain,
@@ -3009,8 +2894,6 @@ mod tests {
     /// cannot establish "not revoked" without a trusted time-stamp.
     #[cfg(feature = "openssl")]
     fn trusted_fresh_good_response(ctp: &mut CertificateTrustPolicy) -> Vec<u8> {
-        use crate::crypto::ocsp::test_responder::TestResponder;
-
         let responder = TestResponder::new();
         ctp.add_end_entity_credentials(&responder.cert_pem())
             .unwrap();
@@ -3022,8 +2905,6 @@ mod tests {
     /// both signed by that responder.
     #[cfg(feature = "openssl")]
     fn stale_and_fresh_good_responses() -> (CertificateTrustPolicy, Vec<u8>, Vec<u8>) {
-        use crate::crypto::ocsp::test_responder::{good_basic_response, TestResponder};
-
         let responder = TestResponder::new();
         let mut policy = CertificateTrustPolicy::new();
         policy
@@ -3042,8 +2923,6 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn out_of_window_response_with_timestamp_is_inconclusive() {
-        use crate::crypto::ocsp::test_responder::{good_basic_response, TestResponder};
-
         let timestamp = supplied_timestamp();
         let attested: DateTime<Utc> = timestamp.gen_time.clone().into();
         let responder = TestResponder::new();
@@ -3067,7 +2946,7 @@ mod tests {
         let supplied = vec![expired.clone(), valid.clone()];
         let mut log = StatusTracker::default();
         let response = check_ocsp_status(
-            &sign1_with_x5chain(&ocsp_signing_chain()),
+            &sign1_with_x5chain(&ocsp_signing_chain_fixture()),
             b"payload",
             OcspFetchPolicy::DoNotFetch,
             &ctp,
@@ -3081,7 +2960,7 @@ mod tests {
         assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
         assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
 
-        let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain_fixture());
         staple(&mut sign1, rvals(vec![Value::Bytes(expired)]));
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let context = Context::new().with_resolver(RecordingResolver {
@@ -3110,7 +2989,7 @@ mod tests {
     #[test]
     fn stale_good_response_does_not_hide_fresh_good_response() {
         let (ctp, stale, fresh) = stale_and_fresh_good_responses();
-        let sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        let sign1 = sign1_with_x5chain(&ocsp_signing_chain_fixture());
 
         for override_status in [false, true] {
             for supplied in [
@@ -3147,7 +3026,7 @@ mod tests {
     #[tokio::test]
     async fn stale_good_response_does_not_hide_fresh_good_response_async() {
         let (ctp, stale, fresh) = stale_and_fresh_good_responses();
-        let sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        let sign1 = sign1_with_x5chain(&ocsp_signing_chain_fixture());
         let supplied = vec![stale, fresh.clone()];
         let context = Context::new()
             .with_settings_value("builder.certificate_status_should_override", true)
@@ -3173,8 +3052,6 @@ mod tests {
     }
 
     fn supplied_timestamp() -> TstInfo {
-        use crate::crypto::asn1::{rfc3161::MessageImprint, AlgorithmIdentifier, GeneralizedTime};
-
         TstInfo {
             version: bcder::Integer::from(1u8),
             policy: "1.2.3.4".parse().unwrap(),
@@ -3196,7 +3073,7 @@ mod tests {
 
     #[test]
     fn supplied_timestamp_bypasses_missing_cose_timestamp_for_stapled_and_fetched_paths() {
-        let sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        let sign1 = sign1_with_x5chain(&ocsp_signing_chain_fixture());
         let timestamp = supplied_timestamp();
         let ctp = trusted_responder();
         let context = Context::new();
@@ -3236,7 +3113,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn supplied_timestamp_async_and_bad_signing_chain() {
-        let sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        let sign1 = sign1_with_x5chain(&ocsp_signing_chain_fixture());
         let timestamp = supplied_timestamp();
         let ctp = trusted_responder();
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -3353,16 +3230,9 @@ mod tests {
 
     #[test]
     fn ocsp_responder_requires_ocsp_signing_eku() {
-        use x509_cert::der::asn1::{ObjectIdentifier, OctetString};
-
-        use crate::{
-            crypto::ocsp::test_responder::{encode_response, good_basic_response},
-            validation_status::SIGNING_CREDENTIAL_INVALID,
-        };
-
         let timestamp = supplied_timestamp();
         let context = Context::new();
-        let chain = ocsp_signing_chain();
+        let chain = ocsp_signing_chain_fixture();
         let sign1 = sign1_with_x5chain(&chain);
         for purpose in [
             "1.3.6.1.4.1.62558.2.1",
@@ -3436,7 +3306,7 @@ mod tests {
 
     #[test]
     fn invalid_responder_profile_and_untrusted_responder_do_not_assert_good_status() {
-        let sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        let sign1 = sign1_with_x5chain(&ocsp_signing_chain_fixture());
         let der = response_without_responder_extensions();
         let context = Context::new();
         let ctp = trusted_responder();
@@ -3463,7 +3333,8 @@ mod tests {
             ),
         ] {
             let mut log = StatusTracker::default();
-            let response = validate_fetched_ocsp(der, &ocsp_signing_chain(), &ctp, None, &mut log);
+            let response =
+                validate_fetched_ocsp(der, &ocsp_signing_chain_fixture(), &ctp, None, &mut log);
             assert!(response.ocsp_der.is_empty());
             assert!(log.logged_items().is_empty());
         }
@@ -3474,7 +3345,7 @@ mod tests {
     async fn invalid_stapled_responder_profile_async() {
         let mut log = StatusTracker::default();
         let response = check_stapled_ocsp_response_async(
-            &sign1_with_x5chain(&ocsp_signing_chain()),
+            &sign1_with_x5chain(&ocsp_signing_chain_fixture()),
             &response_without_responder_extensions(),
             b"payload",
             &trusted_responder(),
@@ -3519,7 +3390,7 @@ mod tests {
     }
 
     fn chain_with_revoked_issuer_slot() -> CoseSign1 {
-        let chain = ocsp_signing_chain();
+        let chain = ocsp_signing_chain_fixture();
         // Isolate this function's CA-status policy, not certificate path
         // validation: put the fixture's revoked subject in the CA slot so its
         // existing signed response identifies certs[1] using certs[2] as issuer.

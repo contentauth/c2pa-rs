@@ -766,6 +766,7 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use bcder::decode::Constructed;
     use der::{Decode, Encode};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -776,7 +777,9 @@ mod tests {
         },
         Certificate,
     };
-    use x509_parser::{num_bigint::BigInt, pem::Pem, prelude::FromDer};
+    use x509_parser::{
+        extensions::ParsedExtension, num_bigint::BigInt, pem::Pem, prelude::FromDer,
+    };
 
     use super::is_valid_rsa_public_exponent;
     use crate::{
@@ -1592,7 +1595,6 @@ mod tests {
     }
 
     fn timestamp_at(seconds: i64) -> crate::crypto::asn1::rfc3161::TstInfo {
-        use bcder::decode::Constructed;
         #[derive(der::Sequence)]
         struct Imprint {
             algorithm: spki::AlgorithmIdentifierOwned,
@@ -1715,7 +1717,6 @@ mod tests {
 
     #[test]
     fn recognized_critical_extensions_do_not_look_like_unknown_extensions() {
-        use x509_parser::extensions::ParsedExtension;
         let fixtures = [
             (
                 vec![2, 5, 29, 33],

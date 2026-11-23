@@ -161,6 +161,21 @@ pub fn find_conforming_product_for_cert<'a>(
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use ed25519_dalek::{Signer as _, SigningKey};
+    use x509_cert::{
+        attr::AttributeTypeAndValue,
+        der::{
+            asn1::{
+                Any, BitString, GeneralizedTime, ObjectIdentifier, PrintableStringRef, SetOfVec,
+            },
+            Decode, Encode,
+        },
+        name::{RdnSequence, RelativeDistinguishedName},
+        spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned},
+        time::{Time, Validity},
+        Certificate, TbsCertificate, Version,
+    };
+
     use super::*;
 
     // ---------------------------------------------------------------------------
@@ -173,21 +188,6 @@ mod tests {
     ///
     /// `ou` and `c` may be empty — if so they are omitted from the subject.
     fn make_test_cert_der(cn: &str, o: &str, ou: &str, c: &str) -> Vec<u8> {
-        use ed25519_dalek::{Signer as _, SigningKey};
-        use x509_cert::{
-            attr::AttributeTypeAndValue,
-            der::{
-                asn1::{
-                    Any, BitString, GeneralizedTime, ObjectIdentifier, PrintableStringRef, SetOfVec,
-                },
-                Decode, Encode,
-            },
-            name::{RdnSequence, RelativeDistinguishedName},
-            spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned},
-            time::{Time, Validity},
-            Certificate, TbsCertificate, Version,
-        };
-
         // Deterministic key so tests are reproducible.
         let key = SigningKey::from_bytes(&[42u8; 32]);
         let vk = key.verifying_key();

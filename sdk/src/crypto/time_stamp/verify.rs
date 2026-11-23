@@ -22,7 +22,7 @@ use der::{
     Decode, Encode, Reader, SliceReader, Tag, TagNumber, Tagged,
 };
 use sha1::Sha1;
-use sha2::{Sha256, Sha384, Sha512};
+use sha2::{Digest, Sha256, Sha384, Sha512};
 use x509_parser::prelude::FromDer;
 
 use crate::{
@@ -1016,19 +1016,15 @@ impl Hasher {
     fn update(&mut self, data: &[u8]) {
         match self {
             Hasher::Sha1(h) => {
-                use sha1::Digest;
                 h.update(data);
             }
             Hasher::Sha256(h) => {
-                use sha2::Digest;
                 h.update(data);
             }
             Hasher::Sha384(h) => {
-                use sha2::Digest;
                 h.update(data);
             }
             Hasher::Sha512(h) => {
-                use sha2::Digest;
                 h.update(data);
             }
         }
@@ -1036,22 +1032,10 @@ impl Hasher {
 
     fn finish(self) -> HasherOutput {
         match self {
-            Hasher::Sha1(h) => {
-                use sha1::Digest;
-                HasherOutput(h.finalize().to_vec())
-            }
-            Hasher::Sha256(h) => {
-                use sha2::Digest;
-                HasherOutput(h.finalize().to_vec())
-            }
-            Hasher::Sha384(h) => {
-                use sha2::Digest;
-                HasherOutput(h.finalize().to_vec())
-            }
-            Hasher::Sha512(h) => {
-                use sha2::Digest;
-                HasherOutput(h.finalize().to_vec())
-            }
+            Hasher::Sha1(h) => HasherOutput(h.finalize().to_vec()),
+            Hasher::Sha256(h) => HasherOutput(h.finalize().to_vec()),
+            Hasher::Sha384(h) => HasherOutput(h.finalize().to_vec()),
+            Hasher::Sha512(h) => HasherOutput(h.finalize().to_vec()),
         }
     }
 }
@@ -1184,7 +1168,10 @@ mod rsa_pss_ski_regression;
 mod tests {
     use std::str::FromStr;
 
-    use super::DigestAlgorithm;
+    use bcder::{decode::Constructed, Mode};
+
+    use super::{integer_to_i64, tst_accuracy_seconds, Accuracy, DigestAlgorithm, *};
+    use crate::crypto::asn1::rfc5652::Time;
 
     fn oid(s: &str) -> bcder::Oid {
         bcder::Oid::from_str(s).expect("valid OID")
@@ -1238,7 +1225,6 @@ mod tests {
 
     #[test]
     fn accuracy_rounds_up_subseconds_and_saturates() {
-        use super::{integer_to_i64, tst_accuracy_seconds, Accuracy};
         assert_eq!(tst_accuracy_seconds(None), 0);
         let mut accuracy = Accuracy {
             seconds: None,
@@ -1260,10 +1246,6 @@ mod tests {
 
     #[test]
     fn timestamp_conversions_preserve_utc_and_generalized_dates() {
-        use bcder::{decode::Constructed, Mode};
-
-        use crate::crypto::asn1::rfc5652::Time;
-
         let expected = chrono::DateTime::from_timestamp(1_577_836_800, 0).expect("valid date");
         for encoded in [
             b"\x17\x0d200101000000Z".as_slice(),
@@ -1278,7 +1260,6 @@ mod tests {
 
     #[test]
     fn malformed_tokens_are_reported_and_empty_chains_are_rejected() {
-        use super::*;
         let mut log = StatusTracker::default();
         assert!(matches!(
             verify_time_stamp(
@@ -1310,7 +1291,11 @@ mod tests {
 #[cfg(all(test, feature = "openssl", not(target_arch = "wasm32")))]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 pub(crate) mod message_imprint_regression {
-    use der::{Decode, Encode};
+    use std::io::Cursor;
+
+    use bcder::{decode::Constructed, encode::Values, Mode};
+    use coset::{cbor::value::Value, Label, SignatureContext, TaggedCborSerializable};
+    use der::{asn1::ObjectIdentifier, Any, Decode, Encode};
     use openssl::{
         asn1::Asn1Time,
         bn::BigNum,
@@ -1319,20 +1304,41 @@ pub(crate) mod message_imprint_regression {
         nid::Nid,
         pkey::PKey,
         sign::Signer,
-        x509::{extension::ExtendedKeyUsage, X509Builder, X509NameBuilder},
+        x509::{
+            extension::{AuthorityKeyIdentifier, ExtendedKeyUsage, KeyUsage, SubjectKeyIdentifier},
+            X509Builder, X509NameBuilder, X509,
+        },
     };
+    use x509_cert::{der::Decode as DerDecode, time::Time, Certificate};
 
-    use super::{generalized_time_to_datetime, verify_time_stamp, SignedData};
+    use super::{
+        generalized_time_to_datetime, tsa_signer_cert_der_from_token, verify_time_stamp, SignedData,
+    };
     use crate::{
         crypto::{
-            cose::CertificateTrustPolicy,
+            asn1::rfc5652::{
+                ContentInfo, SignedData as LegacySignedData, SignerInfo as LegacySignerInfo,
+            },
+            cose::{
+                parse_cose_sign1, sign, trusted_cawg_timestamp, CertificateTrustPolicy,
+                RawSignerCoseSigner, TimeStampStorage, TrustAnchorType,
+            },
             time_stamp::{
                 response::{SignerIdentifier, SignerInfos},
                 TimeStampError,
             },
         },
         status_tracker::StatusTracker,
-        validation_status::{TIMESTAMP_TRUSTED, TIMESTAMP_UNTRUSTED, TIMESTAMP_VALIDATED},
+        utils::{
+            test::{create_test_store, create_test_streams},
+            test_signer::test_signer,
+        },
+        validation_status::{
+            CLAIM_SIGNATURE_MISMATCH, SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID,
+            TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY, TIMESTAMP_TRUSTED,
+            TIMESTAMP_UNTRUSTED, TIMESTAMP_VALIDATED,
+        },
+        Context, Reader, SigningAlg, ValidationState,
     };
 
     const OID_MD5: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05];
@@ -1460,9 +1466,6 @@ pub(crate) mod message_imprint_regression {
         }
 
         if profile_extensions {
-            use openssl::x509::extension::{
-                AuthorityKeyIdentifier, KeyUsage, SubjectKeyIdentifier,
-            };
             cb.append_extension(
                 KeyUsage::new()
                     .critical()
@@ -1628,8 +1631,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn certificates_with_utc_and_generalized_time_validity_are_accepted() {
-        use x509_cert::{der::Decode as DerDecode, time::Time, Certificate};
-
         for (not_after, generalized) in [(2_524_607_999, false), (2_524_608_000, true)] {
             for signed_attrs in [false, true] {
                 let token = build_token_with(
@@ -1806,11 +1807,6 @@ pub(crate) mod message_imprint_regression {
     /// the signer certificate's expiry.
     #[test]
     fn private_credential_store_is_not_a_timestamp_authority() {
-        use openssl::x509::X509;
-
-        use super::tsa_signer_cert_der_from_token;
-        use crate::crypto::cose::TrustAnchorType;
-
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),
@@ -1865,11 +1861,6 @@ pub(crate) mod message_imprint_regression {
     /// manifest (signer) trust anchor must not be reported trusted.
     #[test]
     fn manifest_trust_anchor_is_not_a_timestamp_authority() {
-        use openssl::x509::X509;
-
-        use super::tsa_signer_cert_der_from_token;
-        use crate::crypto::cose::TrustAnchorType;
-
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),
@@ -2025,9 +2016,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn signed_message_digest_failures_have_distinct_statuses() {
-        use der::{asn1::ObjectIdentifier, Any};
-
-        use crate::validation_status::{TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH};
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),
@@ -2102,7 +2090,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn token_structure_and_signature_failures_are_not_trusted() {
-        use crate::validation_status::TIMESTAMP_MALFORMED;
         let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
         let sd = decode_token(&token);
         let mut missing = sd.clone();
@@ -2155,7 +2142,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn certificate_validity_and_accuracy_boundaries() {
-        use crate::validation_status::TIMESTAMP_OUTSIDE_VALIDITY;
         for time in [b"20170101000000Z".as_slice(), b"20310101000000Z".as_slice()] {
             let token = build_token_with(
                 OID_SHA256,
@@ -2241,7 +2227,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn signer_lookup_matches_issuer_serial_and_decoded_ski() {
-        use x509_cert::der::Decode as DerDecode;
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),
@@ -2307,8 +2292,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn timestamp_trust_requires_timestamp_signing_eku() {
-        use crate::{crypto::cose::TrustAnchorType, validation_status::SIGNING_CREDENTIAL_INVALID};
-
         for purpose in [
             Some("1.3.6.1.4.1.62558.2.1"),
             Some("1.3.6.1.5.5.7.3.1"),
@@ -2371,25 +2354,6 @@ pub(crate) mod message_imprint_regression {
 
     #[c2pa_macros::c2pa_test_async]
     async fn rejected_tsa_does_not_invalidate_trusted_manifest() {
-        use std::io::Cursor;
-
-        use coset::{cbor::value::Value, Label, SignatureContext, TaggedCborSerializable};
-
-        use crate::{
-            crypto::cose::{
-                parse_cose_sign1, sign, trusted_cawg_timestamp, RawSignerCoseSigner,
-                TimeStampStorage, TrustAnchorType,
-            },
-            utils::{
-                test::{create_test_store, create_test_streams},
-                test_signer::test_signer,
-            },
-            validation_status::{
-                CLAIM_SIGNATURE_MISMATCH, SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID,
-            },
-            Context, Reader, SigningAlg, ValidationState,
-        };
-
         let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
         let mut store = create_test_store().unwrap();
         store
@@ -2668,8 +2632,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn timestamp_trust_respects_tsa_anchor_list() {
-        use crate::crypto::cose::TrustAnchorType;
-
         let token = build_token_with(
             OID_SHA256,
             MessageDigest::sha256(),
@@ -2741,7 +2703,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn trust_is_separate_from_signature_and_profile_validation() {
-        use crate::crypto::cose::TrustAnchorType;
         for valid_profile in [false, true] {
             let token = build_token_with(
                 OID_SHA256,
@@ -2787,9 +2748,6 @@ pub(crate) mod message_imprint_regression {
 
     #[test]
     fn legacy_cms_decoder_preserves_signed_attribute_signature_input() {
-        use bcder::{decode::Constructed, encode::Values, Mode};
-
-        use crate::crypto::asn1::rfc5652::{ContentInfo, SignedData, SignerInfo};
         for signed_attrs in [false, true] {
             let token = build_token_with(
                 OID_SHA256,
@@ -2804,9 +2762,12 @@ pub(crate) mod message_imprint_regression {
                 Constructed::decode(token.as_slice(), Mode::Der, ContentInfo::take_opt_from)
                     .unwrap()
                     .unwrap();
-            let legacy =
-                Constructed::decode(content.content.as_slice(), Mode::Der, SignedData::take_from)
-                    .unwrap();
+            let legacy = Constructed::decode(
+                content.content.as_slice(),
+                Mode::Der,
+                LegacySignedData::take_from,
+            )
+            .unwrap();
             let current = decode_token(&token);
             assert_eq!(legacy.signer_infos.len(), 1);
             assert_eq!(legacy.digest_algorithms.len(), 1);
@@ -2837,8 +2798,11 @@ pub(crate) mod message_imprint_regression {
                 .encode_ref()
                 .write_encoded(Mode::Der, &mut encoded)
                 .unwrap();
-            let roundtrip =
-                Constructed::decode(encoded.as_slice(), Mode::Der, SignerInfo::take_opt_from);
+            let roundtrip = Constructed::decode(
+                encoded.as_slice(),
+                Mode::Der,
+                LegacySignerInfo::take_opt_from,
+            );
             if signed_attrs {
                 assert!(roundtrip.is_err());
                 continue;
@@ -3001,6 +2965,11 @@ pub(crate) mod message_imprint_regression {
 mod signed_attrs_tests {
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use openssl::{hash::MessageDigest, pkey::PKey, sign::Signer};
+    use sha2::Digest;
+    use x509_parser::extensions::ParsedExtension;
+
     use super::*;
 
     const DATA: &[u8] = b"some sample content to sign";
@@ -3111,8 +3080,6 @@ mod signed_attrs_tests {
     // Change the imprint and the second signer's messageDigest without access
     // to the TSA key. Both SignerInfos retain the genuine signature bytes.
     fn forged_token(token: &[u8], keep_original: bool, original_first: bool) -> Vec<u8> {
-        use sha2::Digest;
-
         let sd = signed_data_from_time_stamp_response(token)
             .unwrap()
             .unwrap();
@@ -3209,8 +3176,6 @@ mod signed_attrs_tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn rejects_duplicate_signatures_in_der_sorted_token() {
-        use openssl::{hash::MessageDigest, pkey::PKey, sign::Signer};
-
         let sd = signed_data_from_time_stamp_response(TOKEN)
             .unwrap()
             .unwrap();
@@ -3261,8 +3226,6 @@ mod signed_attrs_tests {
     // primitive [0] that precedes the constructed [0] signedAttrs.
     #[test]
     fn locates_unsorted_attributes_with_subject_key_identifier() {
-        use x509_parser::extensions::ParsedExtension;
-
         let (_, pem) = x509_parser::pem::parse_x509_pem(include_bytes!(
             "../../../tests/fixtures/crypto/raw_signature/es256.pub"
         ))

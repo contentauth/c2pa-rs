@@ -107,8 +107,6 @@ impl std::ops::Deref for TimeStampResponse {
 impl TimeStampResponse {
     /// Return `true` if the request was successful.
     pub(crate) fn is_success(&self) -> bool {
-        use crate::crypto::asn1::rfc3161::PkiStatus;
-
         matches!(
             self.0.status.status,
             PkiStatus::Granted | PkiStatus::GrantedWithMods
@@ -253,8 +251,12 @@ pub(crate) mod tests {
     #![allow(clippy::unwrap_used)]
 
     use der::Encode;
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use openssl::hash::MessageDigest;
 
     use super::*;
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use crate::crypto::time_stamp::verify::message_imprint_regression::{build_token, OID_SHA256};
 
     pub(crate) fn response_der(status: u8, token: Option<&[u8]>) -> Vec<u8> {
         #[derive(der::Sequence)]
@@ -306,12 +308,6 @@ pub(crate) mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn token_and_response_decoding_agree_and_reject_malformed_content() {
-        use openssl::hash::MessageDigest;
-
-        use crate::crypto::time_stamp::verify::message_imprint_regression::{
-            build_token, OID_SHA256,
-        };
-
         let token = build_token(OID_SHA256, MessageDigest::sha256(), b"data");
         let response = decode(&response_der(0, Some(&token)));
         let signed_data = response.signed_data().unwrap().unwrap();
