@@ -2,6 +2,12 @@
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
+## Version 0.93.0
+
+### C2PA v1 claims no longer supported
+
+Support for signing v1 claims has been removed. Setting the `Builder` manifest definition `claim_version` field to `1` now returns an error. See the [migration guide](c2pa-v1-signing-migration.md).
+
 ## Version 0.92.0
 
 ### Removal of deprecated APIs
@@ -119,4 +125,4 @@ Additionally:
 - The first `action` must be `c2pa.created` or `c2pa.opened` (which requires an ingredient).
 
 > [!WARNING]
-> Implementations should not generate deprecated v1 claims. If needed, though, you can generate v1 claims by setting the `Builder` manifest definition `claim_version` field to `1`.
+> Implementations should not generate deprecated v1 claims. Signing v1 claims was removed in 0.93.0; setting the `Builder` manifest definition `claim_version` field to `1` now returns an error. See the [migration guide](c2pa-v1-signing-migration.md).
