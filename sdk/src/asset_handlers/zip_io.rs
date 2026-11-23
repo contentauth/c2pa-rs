@@ -401,7 +401,7 @@ pub(crate) mod opc {
 
     use quick_xml::{
         events::{BytesStart, Event},
-        Reader, Writer,
+        Reader, Writer, XmlVersion,
     };
     use zip::ZipArchive;
 
@@ -546,9 +546,10 @@ pub(crate) mod opc {
         for attribute in element.attributes() {
             let attribute = attribute.map_err(|err| Error::InvalidAsset(err.to_string()))?;
             if attribute.key.local_name().as_ref() == name {
-                let value = String::from_utf8(attribute.value.into_owned())
+                let value = attribute
+                    .normalized_value(XmlVersion::Implicit1_0)
                     .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-                return Ok(Some(value));
+                return Ok(Some(value.into_owned()));
             }
         }
 
@@ -730,6 +731,30 @@ pub(crate) mod opc {
                 </Types>
             "#;
             assert!(add_c2pa_content_type_string(by_override).is_none());
+
+            let escaped = r#"
+                <Types>
+                    <Override
+                        PartName="/META-INF/content&#95;credential.c2pa"
+                        ContentType="application&#x2F;c2pa"/>
+                </Types>
+            "#;
+            assert!(add_c2pa_content_type_string(escaped).is_none());
+        }
+
+        #[test]
+        fn test_declare_c2pa_content_type_unknown_entity() {
+            let xml = r#"
+                <Types>
+                    <Override
+                        PartName="/META-INF/content_credential.c2pa"
+                        ContentType="&unknown;"/>
+                </Types>
+            "#;
+            assert!(matches!(
+                add_c2pa_content_type(xml.as_bytes(), Vec::new()),
+                Err(Error::InvalidAsset(_))
+            ));
         }
 
         #[test]
