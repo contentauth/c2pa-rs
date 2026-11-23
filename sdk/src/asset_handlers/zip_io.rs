@@ -77,8 +77,14 @@ impl C2paReader for ZipIO {
             .index_for_path(Path::new(MANIFEST_PATH))
             .ok_or(Error::JumbfNotFound)?;
         let mut file = reader
-            .by_index(index)
+            .by_index_raw(index)
             .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
+
+        if file.compression() != CompressionMethod::Stored || file.encrypted() {
+            return Err(Error::InvalidAsset(
+                "the C2PA manifest in the ZIP is compressed or encrypted".to_string(),
+            ));
+        }
 
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
@@ -958,6 +964,26 @@ mod tests {
 
         assert!(matches!(
             zip_io.read_c2pa(&mut not_a_zip),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_read_rejects_compressed_manifest() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                MANIFEST_PATH,
+                SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Deflated),
+            )
+            .unwrap();
+        writer.write_all(&vec![0; 64 * 1024 * 1024]).unwrap();
+
+        let zip = writer.finish().unwrap().into_inner();
+        assert!(zip.len() < 1024 * 1024);
+
+        assert!(matches!(
+            ZipIO {}.read_c2pa(&mut Cursor::new(zip)),
             Err(Error::InvalidAsset(_))
         ));
     }
