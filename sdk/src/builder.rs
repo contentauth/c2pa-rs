@@ -1354,6 +1354,19 @@ impl Builder {
     /// * Returns an [`Error`] if the archive cannot be read.
     fn old_from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
         let mut zip = ZipArchive::new(stream).map_err(|e| Error::OtherError(Box::new(e)))?;
+
+        // entries aren't stored compressed, so avoid decompressing anything that can exhaust memory
+        for index in 0..zip.len() {
+            let file = zip
+                .by_index_raw(index)
+                .map_err(|err| Error::OtherError(Box::new(err)))?;
+            if file.compression() != zip::CompressionMethod::Stored {
+                return Err(Error::BadParam(
+                    "builder archive entries must be stored, not compressed".to_string(),
+                ));
+            }
+        }
+
         // First read the manifest.json file.
         let mut manifest_file = zip
             .by_name("manifest.json")
@@ -4153,6 +4166,27 @@ mod tests {
             assertion["data"].clone(),
             detailed["manifests"][active]["assertion_store"][label].clone(),
         )
+    }
+
+    #[test]
+    fn test_old_archive_rejects_compressed_entries() {
+        let mut archive = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(&mut archive);
+        writer
+            .start_file(
+                "manifest.json",
+                zip::write::SimpleFileOptions::DEFAULT
+                    .compression_method(zip::CompressionMethod::Deflated),
+            )
+            .unwrap();
+        io::Write::write_all(&mut writer, b"{}").unwrap();
+        writer.finish().unwrap();
+        archive.rewind().unwrap();
+
+        assert!(matches!(
+            Builder::old_from_archive(archive),
+            Err(Error::BadParam(_))
+        ));
     }
 
     #[test]
