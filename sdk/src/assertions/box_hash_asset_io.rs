@@ -20,7 +20,8 @@ use super::{BoxHash, BoxMap};
 use crate::{
     assertion::{Assertion, AssertionBase},
     assertions::asset_binding::{
-        asset_io_error, AssetBinding, BindingKind, HashSpan, MaybeBinding, PlannedAsset,
+        asset_io_error, is_computed, AssetBinding, BindingKind, HashSpan, MaybeBinding,
+        PlannedAsset, SuppliedBinding,
     },
     asset_handlers::asset_io_adapter::box_map_from_structure,
     asset_io::C2PA_BOXHASH,
@@ -136,10 +137,19 @@ impl BoxHash {
 
 fn from_claim(claim: &Claim) -> MaybeBinding {
     let assertions = claim.box_hash_assertions();
-    Ok(match assertions.first() {
-        Some(assertion) => Some(Box::new(BoxHash::from_assertion(assertion.assertion())?)),
-        None => None,
-    })
+    let Some(assertion) = assertions.first() else {
+        return Ok(None);
+    };
+    let hash = BoxHash::from_assertion(assertion.assertion())?;
+    // As in `save_to_stream`, a box hash the caller already computed is signed as
+    // given. One without hashes only requests a binding.
+    if hash.boxes.iter().any(|entry| is_computed(&entry.hash)) {
+        return Ok(Some(Box::new(SuppliedBinding::new(
+            assertion.assertion().clone(),
+            false,
+        ))));
+    }
+    Ok(Some(Box::new(hash)))
 }
 
 /// The default for a container made entirely of named boxes, except ISO BMFF,

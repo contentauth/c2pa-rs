@@ -20,8 +20,8 @@ use super::DataHash;
 use crate::{
     assertion::{Assertion, AssertionBase},
     assertions::asset_binding::{
-        asset_io_error, normalize_ranges, AssetBinding, BindingKind, HashSpan, MaybeBinding,
-        PlannedAsset,
+        asset_io_error, is_computed, normalize_ranges, AssetBinding, BindingKind, HashSpan,
+        MaybeBinding, PlannedAsset, SuppliedBinding,
     },
     claim::Claim,
     context::Context,
@@ -69,6 +69,14 @@ fn from_claim(claim: &Claim) -> MaybeBinding {
     let mut hash = DataHash::from_assertion(assertion.assertion())?;
     if hash.is_remote_hash() {
         return Err(Error::NotImplemented("remote data hash".into()));
+    }
+    // As in `save_to_stream`, a data hash the caller already computed is signed
+    // as given. One without a hash only requests a binding.
+    if is_computed(&hash.hash) {
+        return Ok(Some(Box::new(SuppliedBinding::new(
+            assertion.assertion().clone(),
+            true,
+        ))));
     }
     if hash.pad.is_empty() && hash.pad2.is_none() {
         hash.add_padding(vec![0; SLACK]);

@@ -3299,13 +3299,23 @@ impl Builder {
         let mut store = self.to_store_with_claim(claim)?;
 
         // sign and write our store to to the output image file
-        if _sync {
+        #[cfg(feature = "unstable_asset_io")]
+        let saved = if _sync {
+            store.sign_with_asset_io(&format, source, dest, signer, &self.context)
+        } else {
+            store
+                .sign_with_asset_io_async(&format, source, dest, signer, &self.context)
+                .await
+        };
+        #[cfg(not(feature = "unstable_asset_io"))]
+        let saved = if _sync {
             store.save_to_stream(&format, source, dest, signer, &self.context)
         } else {
             store
                 .save_to_stream_async(&format, source, dest, signer, &self.context)
                 .await
-        }
+        };
+        saved
     }
 
     /// Save a signed manifest to a stream using the signer from this builder's context.

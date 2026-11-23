@@ -33,6 +33,7 @@ use crate::{
     claim::Claim,
     context::{Context, ProgressPhase},
     error::{Error, Result},
+    maybe_send_sync::MaybeSend,
     utils::hash_utils::Hasher,
 };
 
@@ -118,8 +119,9 @@ impl<'p, 'a> PlannedAsset<'p, 'a> {
     }
 }
 
-/// A hard-binding assertion that can bind an asset-io planned output.
-pub(crate) trait AssetBinding {
+/// A hard-binding assertion that can bind an asset-io planned output. It is
+/// held across the async signing await, so it must be `Send` where futures are.
+pub(crate) trait AssetBinding: MaybeSend {
     /// The assertion as it now stands.
     fn assertion(&self) -> Result<Assertion>;
 
@@ -155,6 +157,52 @@ pub(crate) trait AssetBinding {
     fn depends_on_store_size(&self) -> bool {
         true
     }
+}
+
+/// A hard binding the caller already computed, signed unchanged as
+/// `save_to_stream` signs it: nothing is hashed for it.
+pub(crate) struct SuppliedBinding {
+    assertion: Assertion,
+    depends_on_store_size: bool,
+}
+
+impl SuppliedBinding {
+    pub fn new(assertion: Assertion, depends_on_store_size: bool) -> Self {
+        Self {
+            assertion,
+            depends_on_store_size,
+        }
+    }
+}
+
+impl AssetBinding for SuppliedBinding {
+    fn assertion(&self) -> Result<Assertion> {
+        Ok(self.assertion.clone())
+    }
+
+    fn check_structure(&self, _structure: &Structure) -> Result<()> {
+        Ok(())
+    }
+
+    fn plan_hashes(
+        &mut self,
+        _asset: &mut PlannedAsset<'_, '_>,
+        _default_alg: &str,
+    ) -> Result<Vec<HashSpan>> {
+        Ok(Vec::new())
+    }
+
+    fn set_hashes(&mut self, _digests: Vec<Vec<u8>>) {}
+
+    fn depends_on_store_size(&self) -> bool {
+        self.depends_on_store_size
+    }
+}
+
+/// Whether `hash` holds a computed hash rather than a placeholder (empty or all
+/// zeros), so its binding is signed as given.
+pub(crate) fn is_computed(hash: &[u8]) -> bool {
+    hash.iter().any(|&b| b != 0)
 }
 
 /// A binding, if one applies.

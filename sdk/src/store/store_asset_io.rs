@@ -1,4 +1,7 @@
-use std::{io::Write, sync::Arc};
+use std::{
+    io::{SeekFrom, Write},
+    sync::Arc,
+};
 
 use ::asset_io::{
     container_api::{
@@ -7,21 +10,22 @@ use ::asset_io::{
     },
     ItemKind, NullSink, SegmentId, Sink, Structure, Updates,
 };
+use async_generic::async_generic;
 
 use crate::{
     assertions::asset_binding::{
         asset_io_error, binding_from_claim, default_binding, AssetBinding, BuiltAssertion,
         PlannedAsset, ProgressSink, SpanHasher,
     },
-    asset_handlers::asset_io_adapter::{store_err, MANIFEST_PLACEHOLDER},
+    asset_handlers::asset_io_adapter::MANIFEST_PLACEHOLDER,
     asset_io::{ReadSeek, ReadWriteSeek},
     claim::{ClaimAssetData, RemoteManifest},
     context::{Context, ProgressPhase},
-    dynamic_assertion::{DynamicAssertion, PartialClaim},
+    dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion, PartialClaim},
     error::{Error, Result},
     store::Store,
     utils::xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
-    Signer,
+    AsyncSigner, Signer,
 };
 
 /// Unregistered fallback for assets that can only be copied to a sidecar output.
@@ -156,16 +160,14 @@ fn write_plan<S: Sink>(
     Ok(sink)
 }
 
-/// Fill the placeholder store of `written`, already in `output`, with `store`.
+/// Fill the placeholder store of `written`, already in `output`, with the whole
+/// `store`. A container that holds the store in parts (a PDF's revisions) patches
+/// only its active part.
 fn patch_store(written: &Structure, output: &mut dyn ReadWriteSeek, store: &[u8]) -> Result<()> {
     output.rewind()?;
     let mut output = output;
-    let item = written
-        .c2pa_item()
-        .map_err(store_err)?
-        .ok_or(Error::EmbeddingError)?;
     written
-        .patch_exact(&mut output, item, store)
+        .patch_c2pa_store(&mut output, store)
         .map_err(asset_io_error)?;
     output.flush()?;
     output.rewind()?;
@@ -173,6 +175,23 @@ fn patch_store(written: &Structure, output: &mut dyn ReadWriteSeek, store: &[u8]
 }
 
 impl Store {
+    /// [`sign_with_asset_io`](Self::sign_with_asset_io) with the context's signer.
+    #[async_generic]
+    pub(crate) fn save_to_stream_asset_io(
+        &mut self,
+        format: &str,
+        input: &mut dyn ReadSeek,
+        output: &mut dyn ReadWriteSeek,
+        context: &Context,
+    ) -> Result<Vec<u8>> {
+        if _sync {
+            self.sign_with_asset_io(format, input, output, context.signer()?, context)
+        } else {
+            self.sign_with_asset_io_async(format, input, output, context.async_signer()?, context)
+                .await
+        }
+    }
+
     /// Writes and hashes the asset into an empty output in one pass, then signs
     /// with `signer`. Only embedded stores are patched; detached manifest bytes
     /// are returned for the caller to persist or upload. Optional post-sign
@@ -183,24 +202,42 @@ impl Store {
     /// directly. While legacy handlers remain, a format served by one is saved
     /// through it with [`save_to_stream`](Self::save_to_stream). A format with no
     /// handler is copied unchanged and its manifest returned for a sidecar.
-    pub(crate) fn save_to_stream_asset_io(
+    #[async_generic(async_signature(
         &mut self,
         format: &str,
         input: &mut dyn ReadSeek,
         output: &mut dyn ReadWriteSeek,
+        signer: &dyn AsyncSigner,
+        context: &Context,
+    ))]
+    pub(crate) fn sign_with_asset_io(
+        &mut self,
+        format: &str,
+        input: &mut dyn ReadSeek,
+        output: &mut dyn ReadWriteSeek,
+        signer: &dyn Signer,
         context: &Context,
     ) -> Result<Vec<u8>> {
-        let signer = context.signer()?;
         let io = context.io();
         let handler = io.container_handler(format);
         if handler.is_none() && io.handler(format).is_some() {
-            return self.save_to_stream(format, input, output, signer, context);
+            return if _sync {
+                self.save_to_stream(format, input, output, signer, context)
+            } else {
+                self.save_to_stream_async(format, input, output, signer, context)
+                    .await
+            };
         }
 
         // Reserve the signer's dynamic assertions before anything is sized; they
         // are written just before signing.
         let dynamic_assertions = signer.dynamic_assertions();
-        self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+        if _sync {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+        } else {
+            self.add_dynamic_assertion_placeholders_async(&dynamic_assertions)
+                .await?;
+        }
 
         let claim = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let (embed, remote_url) = match claim.remote_manifest() {
@@ -236,7 +273,12 @@ impl Store {
         // once. A container that keeps the original store apart (ISO BMFF) leaves
         // it in place and adds only the update.
         if update {
-            let signed = self.sign_for_save(signer, &dynamic_assertions, context, None)?;
+            let signed = if _sync {
+                self.sign_for_save(signer, &dynamic_assertions, context, None)?
+            } else {
+                self.sign_for_save_async(signer, &dynamic_assertions, context, None)
+                    .await?
+            };
             let mut updates = updates_with(embed.then(|| signed.clone()));
             if embed {
                 updates = updates.as_update();
@@ -254,7 +296,12 @@ impl Store {
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
             }
             self.embedded = embed;
-            self.verify_after_save(output, format, context)?;
+            if _sync {
+                self.verify_after_save(output, format, context)?;
+            } else {
+                self.verify_after_save_async(output, format, context)
+                    .await?;
+            }
             return Ok(signed);
         }
 
@@ -283,15 +330,19 @@ impl Store {
         // Fix the binding's and an embedded store's sizes from the binding's ranges
         // with the smallest store. Like the legacy save, the binding carries
         // padding for its final ranges' CBOR to grow into.
+        //
+        // The first plan's store is built from the claim, not a generic placeholder,
+        // because a PDF only takes a store that extends the manifests already in it.
         let mut store = embed.then(|| MANIFEST_PLACEHOLDER.to_vec());
         let mut sizes = None;
         if embed && !write_after_signing {
-            let updates = updates_with(store.take());
+            self.put_binding(binding.as_ref(), existing)?;
+            let updates = updates_with(Some(self.to_jumbf_internal(reserve_size)?));
             {
                 let plan = plan_write(&structure, input, &updates)?;
                 binding.plan_hashes(&mut PlannedAsset::new(&plan, &mut *input)?, &alg)?;
             }
-            self.put_binding(binding.as_ref(), existing)?;
+            self.put_binding(binding.as_ref(), true)?;
             let binding_len = binding.assertion()?.data().len();
             let sized = self.to_jumbf_internal(reserve_size)?;
             sizes = Some((binding_len, sized.len()));
@@ -329,7 +380,12 @@ impl Store {
                 return Err(Error::JumbfCreationError);
             }
         }
-        let signed = self.sign_for_save(signer, &dynamic_assertions, context, store_len)?;
+        let signed = if _sync {
+            self.sign_for_save(signer, &dynamic_assertions, context, store_len)?
+        } else {
+            self.sign_for_save_async(signer, &dynamic_assertions, context, store_len)
+                .await?
+        };
         if write_after_signing {
             let updates = updates_with(Some(signed.clone()));
             let plan = plan_write(&structure, input, &updates)?;
@@ -348,13 +404,25 @@ impl Store {
             context.check_progress(ProgressPhase::Embedding, 1, 1)?;
         }
         self.embedded = embed;
-        self.verify_after_save(output, format, context)?;
+        if _sync {
+            self.verify_after_save(output, format, context)?;
+        } else {
+            self.verify_after_save_async(output, format, context)
+                .await?;
+        }
         Ok(signed)
     }
 
     /// Write the signer's dynamic assertions into the slots reserved for them,
     /// sign the provenance claim and return the store. With `target_len`, the
     /// store is padded to that length and may not exceed it.
+    #[async_generic(async_signature(
+        &mut self,
+        signer: &dyn AsyncSigner,
+        dynamic_assertions: &[Box<dyn AsyncDynamicAssertion>],
+        context: &Context,
+        target_len: Option<usize>,
+    ))]
     fn sign_for_save(
         &mut self,
         signer: &dyn Signer,
@@ -369,11 +437,21 @@ impl Store {
             for assertion in claim.assertions() {
                 preliminary_claim.add_assertion(assertion);
             }
-            self.write_dynamic_assertions(dynamic_assertions, &mut preliminary_claim)?;
+            if _sync {
+                self.write_dynamic_assertions(dynamic_assertions, &mut preliminary_claim)?;
+            } else {
+                self.write_dynamic_assertions_async(dynamic_assertions, &mut preliminary_claim)
+                    .await?;
+            }
         }
         let claim = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let reserve_size = signer.reserve_size();
-        let signature = self.sign_claim(claim, signer, reserve_size, context)?;
+        let signature = if _sync {
+            self.sign_claim(claim, signer, reserve_size, context)?
+        } else {
+            self.sign_claim_async(claim, signer, reserve_size, context)
+                .await?
+        };
         self.provenance_claim_mut()
             .ok_or(Error::ClaimEncoding)?
             .set_signature_val(signature);
@@ -405,19 +483,29 @@ impl Store {
     }
 
     /// Verify the saved store against `output` if the settings ask for it.
+    #[async_generic]
     fn verify_after_save(
         &mut self,
         output: &mut dyn ReadWriteSeek,
         format: &str,
         context: &Context,
     ) -> Result<()> {
-        output.rewind()?;
         let verify = &context.settings().verify;
         if verify.verify_after_sign {
-            let mut asset = verify
-                .verify_after_sign_hash
+            // An output that keeps nothing (a detached save into `io::empty()`)
+            // has no asset to check the hashes against, as in `save_to_stream`.
+            let has_output = output.seek(SeekFrom::End(0))? > 0;
+            output.rewind()?;
+            let mut asset = (verify.verify_after_sign_hash && has_output)
                 .then_some(ClaimAssetData::Stream(output, format));
-            self.verify_store_strict(asset.as_mut(), context)?;
+            if _sync {
+                self.verify_store_strict(asset.as_mut(), context)?;
+            } else {
+                self.verify_store_strict_async(asset.as_mut(), context)
+                    .await?;
+            }
+            output.rewind()?;
+        } else {
             output.rewind()?;
         }
         Ok(())
@@ -622,6 +710,75 @@ mod tests {
             let structure = handler.parse(&mut output.stream).unwrap();
             assert_forward_write(&output, &structure, true);
             assert_valid_manifest(format, &manifest, &mut output.stream);
+        }
+    }
+
+    /// A hard binding the caller already computed is signed as given, as
+    /// `save_to_stream` signs it, so a wrong one fails verification after signing
+    /// instead of being recomputed.
+    #[test]
+    fn direct_asset_io_signs_supplied_bindings_unchanged() {
+        use crate::assertions::BoxMap;
+
+        let bmff = bmff_fixture();
+        let (jpeg, jpeg_source) = FIXTURES[0];
+        let mut data_hash = DataHash::new("supplied", "sha256");
+        data_hash.set_hash(vec![1; 32]);
+        let mut bmff_hash = BmffHash::new("supplied", "sha256", None);
+        bmff_hash.set_default_exclusions();
+        bmff_hash.set_hash(vec![1; 32]);
+        let box_hash = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec!["SOI".to_string()],
+                alg: Some("sha256".to_string()),
+                hash: vec![1; 32].into(),
+                excluded: None,
+                exclusions: None,
+                pad: Vec::new().into(),
+                range_start: 0,
+                range_len: 0,
+            }],
+        };
+        type AddBinding = Box<dyn Fn(&mut Claim)>;
+        let cases: [(&str, &[u8], AddBinding); 3] = [
+            (
+                jpeg,
+                jpeg_source,
+                Box::new(move |claim| {
+                    claim.add_assertion(&data_hash).unwrap();
+                }),
+            ),
+            (
+                jpeg,
+                jpeg_source,
+                Box::new(move |claim| {
+                    claim.add_assertion(&box_hash).unwrap();
+                }),
+            ),
+            (
+                "video/mp4",
+                bmff.as_slice(),
+                Box::new(move |claim| {
+                    claim.add_assertion(&bmff_hash).unwrap();
+                }),
+            ),
+        ];
+        for (format, source, add_binding) in cases {
+            let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
+            let mut store = unsigned_store(&context);
+            add_binding(store.provenance_claim_mut().unwrap());
+            let error = store
+                .save_to_stream_asset_io(
+                    format,
+                    &mut Cursor::new(source),
+                    &mut Cursor::new(Vec::new()),
+                    &context,
+                )
+                .unwrap_err();
+            assert!(
+                matches!(error, Error::InvalidManifest(_) | Error::HashMismatch(_)),
+                "{format}: {error:?}"
+            );
         }
     }
 
@@ -847,18 +1004,19 @@ mod tests {
                 &mut output,
                 &context,
             );
+            // With the `pdf` feature the PDF is saved; this fixture has nothing that
+            // stops a PDF revision from being added.
+            if kind == "pdf" && cfg!(feature = "pdf") {
+                result.map_err(|error| format!("{kind}: {error}")).unwrap();
+                continue;
+            }
             assert!(result.is_err(), "{kind}: expected an error");
             let error = result.err().unwrap();
             match kind {
                 "unknown_embed" => {
                     assert!(matches!(error, Error::UnsupportedType), "{kind}: {error}")
                 }
-                // With the `pdf` feature, asset-io embeds in PDFs it can register the
-                // store in and declines this one for its structure. Without it, the
-                // context has no PDF handler. Either way, before anything is written.
-                "pdf" if cfg!(feature = "pdf") => {
-                    assert!(matches!(error, Error::NotImplemented(_)), "{kind}: {error}")
-                }
+                // Without the `pdf` feature the context has no PDF handler.
                 "pdf" => assert!(matches!(error, Error::UnsupportedType), "{kind}: {error}"),
                 "unknown_remote" => assert!(matches!(error, Error::XmpNotSupported), "{error}"),
                 "multiple" => assert!(matches!(error, Error::BadParam(_)), "{error}"),
@@ -1217,6 +1375,121 @@ mod tests {
         }
     }
 
+    /// The async save signs with the context's async signer and writes its async
+    /// dynamic assertions, embedded or detached, with a data hash or a box hash.
+    #[c2pa_macros::c2pa_test_async]
+    async fn direct_asset_io_signs_with_an_async_signer() {
+        use async_trait::async_trait;
+
+        use crate::{
+            dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertionContent, PartialClaim},
+            utils::test_signer::async_test_signer,
+            AsyncSigner, BoxedAsyncSigner,
+        };
+
+        struct Tag;
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncDynamicAssertion for Tag {
+            fn label(&self) -> String {
+                "com.example.dynamic".to_string()
+            }
+
+            fn reserve_size(&self) -> crate::Result<usize> {
+                Ok(c2pa_cbor::to_vec(&"dynamic content placeholder")?.len())
+            }
+
+            async fn content(
+                &self,
+                _label: &str,
+                _size: Option<usize>,
+                _claim: &PartialClaim,
+            ) -> crate::Result<DynamicAssertionContent> {
+                Ok(DynamicAssertionContent::Cbor(
+                    c2pa_cbor::to_vec(&"dynamic content").unwrap(),
+                ))
+            }
+        }
+
+        struct DynamicSigner(BoxedAsyncSigner);
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncSigner for DynamicSigner {
+            async fn sign(&self, data: Vec<u8>) -> crate::Result<Vec<u8>> {
+                self.0.sign(data).await
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.0.alg()
+            }
+
+            fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+                self.0.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
+                vec![Box::new(Tag)]
+            }
+        }
+
+        let (format, source) = FIXTURES[0];
+        for prefer_box_hash in [true, false] {
+            for embed in [true, false] {
+                let context = test_context()
+                    .with_settings(
+                        format!(r#"{{"builder":{{"prefer_box_hash":{prefer_box_hash}}}}}"#)
+                            .as_str(),
+                    )
+                    .unwrap()
+                    .with_async_signer(DynamicSigner(async_test_signer(SigningAlg::Ed25519)));
+                let mut store = unsigned_store(&context);
+                if !embed {
+                    store
+                        .provenance_claim_mut()
+                        .unwrap()
+                        .set_external_manifest();
+                }
+                let mut output = Cursor::new(Vec::new());
+                let manifest = store
+                    .save_to_stream_asset_io_async(
+                        format,
+                        &mut Cursor::new(source),
+                        &mut output,
+                        &context,
+                    )
+                    .await
+                    .unwrap();
+                output.rewind().unwrap();
+                let reader = Reader::from_context(test_context())
+                    .with_manifest_data_and_stream(&manifest, format, &mut output)
+                    .unwrap();
+                assert_ne!(
+                    reader.validation_state(),
+                    ValidationState::Invalid,
+                    "box hash {prefer_box_hash}, embed {embed}: {:?}",
+                    reader.validation_status()
+                );
+                let read = Store::from_jumbf_with_context(
+                    &manifest,
+                    &mut StatusTracker::default(),
+                    &test_context(),
+                )
+                .unwrap();
+                assert!(read
+                    .provenance_claim()
+                    .unwrap()
+                    .assertion_hashed_uri_from_label("com.example.dynamic")
+                    .is_some());
+            }
+        }
+    }
+
     #[test]
     fn direct_asset_io_preserves_unrelated_jumbf() {
         let context = test_context().with_signer(test_signer(SigningAlg::Ed25519));
@@ -1472,7 +1745,10 @@ mod tests {
             first.provenance_claim().unwrap().box_hash_assertions()[0].assertion(),
         )
         .unwrap();
+        // Hashes already computed would be signed as given, so clear them to
+        // request the binding again with these algorithms.
         for entry in &mut hash.boxes {
+            entry.hash = Vec::new().into();
             if entry.names != ["C2PA"] {
                 entry.alg = Some("sha512".into());
             }

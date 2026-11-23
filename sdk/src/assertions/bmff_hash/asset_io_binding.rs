@@ -19,7 +19,10 @@ use ::asset_io::{ByteRange, Structure};
 use super::BmffHash;
 use crate::{
     assertion::{Assertion, AssertionBase},
-    assertions::asset_binding::{AssetBinding, BindingKind, HashSpan, MaybeBinding, PlannedAsset},
+    assertions::asset_binding::{
+        is_computed, AssetBinding, BindingKind, HashSpan, MaybeBinding, PlannedAsset,
+        SuppliedBinding,
+    },
     claim::Claim,
     context::Context,
     error::{Error, Result},
@@ -51,6 +54,14 @@ fn from_claim(claim: &Claim) -> MaybeBinding {
         return Err(Error::NotImplemented(
             "remote or Merkle BMFF binding".into(),
         ));
+    }
+    // As in `save_to_stream`, a BMFF hash the caller already computed is signed
+    // as given. One without a hash only requests a binding.
+    if hash.hash().is_some_and(|hash| is_computed(hash)) {
+        return Ok(Some(Box::new(SuppliedBinding::new(
+            assertion.assertion().clone(),
+            true,
+        ))));
     }
     Ok(Some(Box::new(hash)))
 }
