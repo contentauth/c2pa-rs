@@ -281,7 +281,7 @@ where
     let range = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
         Some(index) => {
             let file = reader
-                .by_index(index)
+                .by_index_raw(index)
                 .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
             let crc_start = file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET;
             vec![
@@ -359,19 +359,18 @@ fn zip_uri_entries<R>(stream: &mut R) -> Result<Vec<ZipUriEntry>>
 where
     R: Read + Seek + ?Sized,
 {
-    let mut reader = ZipArchive::new(&mut *stream)
-        .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
-    let file_names = reader
-        .file_names()
-        .map(|name| name.map(|name| name.into_owned()))
-        .collect::<ZipResult<Vec<_>>>()
-        .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
+    let mut reader =
+        ZipArchive::new(&mut *stream).map_err(|err| Error::InvalidAsset(err.to_string()))?;
 
     let mut entries = Vec::new();
-    for file_name in file_names {
+    for index in 0..reader.len() {
         let file = reader
-            .by_name(&file_name)
-            .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
+            .by_index_raw(index)
+            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+        let file_name = file
+            .name()
+            .map_err(|err| Error::InvalidAsset(err.to_string()))?
+            .into_owned();
 
         let path = match file.enclosed_name() {
             Some(path) => path,
