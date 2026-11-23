@@ -2,6 +2,12 @@
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
+## Version 0.93.0
+
+### C2PA v1 claims no longer supported
+
+Support for signing v1 claims has been removed. Setting the `Builder` manifest definition `claim_version` field to `1` now returns an error. See the [migration guide](c2pa-v1-signing-migration.md).
+
 ## Version 0.92.0
 
 ### Removal of deprecated APIs
