@@ -6,7 +6,7 @@
 Run from any directory:
   python3 sdk/tests/fixtures/crypto/compare_asn1.py --output /absolute/empty/directory
 
-Requires Python 3, Git, and Rust 1.96.0 with the host's normal OpenSSL build tools.
+Requires Python 3.12+, Git, and Rust 1.96.0 with normal OpenSSL build tools.
 No live TSA/OCSP service is used. Sources are exported with git archive, never
 checked out over the caller's worktree. The same inline probes are injected into
 both exports. Only the clock, ephemeral RNG, and test-only visibility are patched;
@@ -349,20 +349,21 @@ def damaged_inputs(corpus):
                 shutil.copyfile(sidecar, target.with_suffix(".chain"))
 
 
-def expected_century_fix(case, label, old, new):
+def expected_century_fix(case, label, old, new, current):
     if (label not in ("new-openssl", "new-native")
             or case.split("/")[1] not in ("pre-epoch.tst", "trailing-pre-epoch.tst")):
         return False
-    expected_result = "Err(InvalidData)" if case.endswith("/wrong") else "Ok(TstInfo {"
+    producer, _, scenario = case.split("/")
+    canonical = current[f"{producer}/sha256-attrs-true.tst/{scenario}"]
     return (
-        old["result"] == "Err(ExpiredCertificate)"
-        and new["result"].startswith(expected_result)
-        and old["signer"] == new["signer"]
-        and [item["code"] for item in old["log"]] == ["timeStamp.outsideValidity"]
-        and [item["code"] for item in new["log"]] == (
-            ["timeStamp.mismatch"] if case.endswith("/wrong")
-            else ["timeStamp.validated", "timeStamp.trusted"]
-        )
+        old == {
+            "result": "Err(ExpiredCertificate)", "signer": new["signer"],
+            "log": [{
+                "kind": "Informational", "code": "timeStamp.outsideValidity",
+                "description": "timestamp signer outside of certificate validity", "error": None,
+            }],
+        }
+        and new == {**canonical, "signer": old["signer"]}
     )
 
 
@@ -375,7 +376,7 @@ def compare(reports):
             if reference.get(key) != current.get(key):
                 differences.append({"consumer": label, "case": key,
                                     "expected_century_fix": expected_century_fix(
-                                        key, label, reference.get(key), current.get(key)),
+                                        key, label, reference.get(key), current.get(key), current),
                                     "old_openssl": reference.get(key), "observed": current.get(key)})
     return differences
 
