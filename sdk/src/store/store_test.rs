@@ -4143,9 +4143,10 @@ fn external_manifest_test(file_name: &str) {
 
         // load the jumbf back into a store
         let mut asset_reader = std::fs::File::open(&setup.output_path).unwrap();
-        let ext_ref = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
+        let ext_ref = crate::utils::xmp_inmemory_utils::XmpInfo::from_source_with_context(
             &mut asset_reader,
             setup.extension(),
+            &context,
         )
         .provenance
         .unwrap();
@@ -4225,10 +4226,13 @@ fn test_user_guid_external_manifest_embedded() {
     let output_data = output_stream.get_ref().clone();
     let mut output_reader = Cursor::new(output_data);
 
-    let ext_ref =
-        crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut output_reader, format)
-            .provenance
-            .unwrap();
+    let ext_ref = crate::utils::xmp_inmemory_utils::XmpInfo::from_source_with_context(
+        &mut output_reader,
+        format,
+        &context,
+    )
+    .provenance
+    .unwrap();
 
     assert_eq!(ext_ref, url_string);
 

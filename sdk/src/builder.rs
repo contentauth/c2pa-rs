@@ -3272,7 +3272,9 @@ impl Builder {
         let mut claim = self.to_claim()?;
         claim.format = Some(format.clone());
 
-        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
+        if let Some(instance_id) =
+            XmpInfo::from_source_with_context(source, &format, &self.context).instance_id
+        {
             claim.instance_id = instance_id;
         }
 
