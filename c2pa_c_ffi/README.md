@@ -37,17 +37,6 @@ Rust releases that allocation when the response body reader is dropped.
 See the [API reference](https://docs.rs/c2pa-c-ffi/latest/c2pa_c/) for
 function-specific ownership requirements.
 
-### Rust HTTP response conversion
-
-Rust callers must replace `Response::try_from(response)` or `response.try_into()`
-for a `C2paHttpResponse` with `unsafe { response.into_http_response() }`. The
-previous safe conversion could not enforce the raw body's ownership contract.
-The caller must guarantee a compatible `malloc` allocation, initialized bytes
-for the reported length, and exclusive ownership. Ownership transfers even if
-conversion fails; the previous owner must not access or free the body afterward.
-A null body is treated as empty. This changes the Rust conversion API, not the
-C declarations or callback ownership contract.
-
 ## Building locally
 
 Pre-requisite: You must have the Rust toolchain (cargo) installed.
