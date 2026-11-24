@@ -3614,6 +3614,10 @@ impl Builder {
     /// this builder when their ids are not already present, so thumbnails and similar assertions
     /// can resolve when signing.
     ///
+    /// The ingredient's manifest store is revalidated using this builder's context,
+    /// including its trust and OCSP fetch settings. Archived asset-binding results
+    /// are preserved because the original asset bytes are not available.
+    ///
     /// For other `application/c2pa` stores, use [`Self::add_ingredient_from_reader`] or
     /// [`Self::add_ingredient_from_stream`].
     #[async_generic]
@@ -3680,6 +3684,11 @@ impl Builder {
         };
 
         let mut ingredient = reader.to_ingredient()?;
+        if _sync {
+            ingredient.revalidate_manifest(&self.context)?;
+        } else {
+            ingredient.revalidate_manifest_async(&self.context).await?;
+        }
         if let Some(id) = ingredient_id {
             ingredient.set_label(id);
         }
@@ -11299,6 +11308,201 @@ mod tests {
             values.contains(&1) && values.contains(&2),
             "expected both v=1 and v=2 to survive archive round-trip, got {values:?}",
         );
+        Ok(())
+    }
+
+    fn stale_ingredient_archive(nested: bool) -> Result<Vec<u8>> {
+        fn clear_failures(ingredient: &Ingredient) -> Result<Ingredient> {
+            let mut results = serde_json::to_value(ingredient.validation_results())?;
+            results["activeManifest"]["failure"] = json!([]);
+            results["ingredientDeltas"] = json!([]);
+            let mut stale = Ingredient::from_json(
+                &json!({
+                    "title": "Stale ingredient",
+                    "format": "image/jpeg",
+                    "label": "stale",
+                    "instance_id": ingredient.instance_id(),
+                    "active_manifest": ingredient.active_manifest(),
+                    "validation_results": results,
+                })
+                .to_string(),
+            )?;
+            stale.set_manifest_data(
+                ingredient
+                    .manifest_data()
+                    .expect("manifest bytes")
+                    .into_owned(),
+            )?;
+            Ok(stale)
+        }
+
+        let mut context = test_context();
+        context.settings_mut().builder.generate_c2pa_archive = Some(true);
+        context.settings_mut().verify.verify_after_sign = false;
+        let context = context.into_shared();
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source_builder =
+            Builder::from_shared_context(&context).with_definition(simple_manifest_json())?;
+        source_builder.add_assertion(
+            "c2pa.soft-binding",
+            &json!({
+                "alg": "com.example.watermark.1",
+                "blocks": [{"scope": {}, "value": 42}],
+            }),
+        )?;
+        assert!(matches!(
+            soft_binding_block_value(
+                &source_builder
+                    .definition
+                    .assertions
+                    .iter()
+                    .find(|assertion| assertion.label == "c2pa.soft-binding")
+                    .expect("soft binding assertion")
+                    .data
+            ),
+            c2pa_cbor::Value::Integer(_)
+        ));
+        let claim = source_builder.to_claim()?;
+        assert!(
+            crate::assertions::SoftBinding::from_assertion(
+                claim.soft_binding_assertions()[0].assertion()
+            )
+            .is_err(),
+            "fixture must fail soft-binding decoding"
+        );
+        let mut source = Cursor::new(Vec::new());
+        source_builder.sign(
+            signer.as_ref(),
+            "image/jpeg",
+            &mut Cursor::new(TEST_IMAGE_CLEAN),
+            &mut source,
+        )?;
+
+        let mut archive_builder = Builder::from_shared_context(&context);
+        let ingredient = archive_builder.add_ingredient_from_stream(
+            r#"{"label":"stale"}"#,
+            "image/jpeg",
+            &mut source,
+        )?;
+        assert!(ingredient
+            .validation_status()
+            .expect("malformed soft binding")
+            .iter()
+            .any(|status| status.code() == crate::validation_status::CLAIM_MALFORMED));
+        let stale = clear_failures(ingredient)?;
+        archive_builder.definition.ingredients[0] = stale;
+
+        if nested {
+            let mut intermediate = Cursor::new(Vec::new());
+            archive_builder.sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut intermediate,
+            )?;
+            archive_builder = Builder::from_shared_context(&context);
+            let ingredient = archive_builder.add_ingredient_from_stream(
+                r#"{"label":"stale"}"#,
+                "image/jpeg",
+                &mut intermediate,
+            )?;
+            let stale = clear_failures(ingredient)?;
+            archive_builder.definition.ingredients[0] = stale;
+        }
+
+        let mut archive = Cursor::new(Vec::new());
+        archive_builder.write_ingredient_archive("stale", &mut archive)?;
+        Ok(archive.into_inner())
+    }
+
+    #[test]
+    fn test_archive_revalidates_stale_ingredient_results() -> Result<()> {
+        use crate::validation_status::{ASSERTION_DATAHASH_MATCH, CLAIM_MALFORMED};
+
+        let context = test_context().into_shared();
+        assert!(context.settings().verify.verify_after_sign);
+        let signer = test_signer(SigningAlg::Ps256);
+        for nested in [false, true] {
+            let archive = stale_ingredient_archive(nested)?;
+            for format in [None, Some("c2pa"), Some("application/c2pa")] {
+                let mut builder = Builder::from_shared_context(&context);
+                let mut stream = Cursor::new(&archive);
+                let ingredient = match format {
+                    None => builder.add_ingredient_from_archive(&mut stream)?,
+                    Some(format) => {
+                        builder.add_ingredient_from_stream("{}", format, &mut stream)?
+                    }
+                };
+                let results = ingredient.validation_results().expect("refreshed results");
+                let active = results.active_manifest().expect("active results");
+                assert!(active
+                    .success()
+                    .iter()
+                    .any(|status| status.code() == ASSERTION_DATAHASH_MATCH));
+                if nested {
+                    assert!(results
+                        .ingredient_deltas()
+                        .expect("nested validation deltas")
+                        .iter()
+                        .any(|delta| delta
+                            .validation_deltas()
+                            .failure()
+                            .iter()
+                            .any(|status| status.code() == CLAIM_MALFORMED)));
+                } else {
+                    assert!(active
+                        .failure()
+                        .iter()
+                        .any(|status| status.code() == CLAIM_MALFORMED));
+                }
+                assert!(ingredient
+                    .validation_status()
+                    .expect("legacy errors refreshed")
+                    .iter()
+                    .any(|status| status.code() == CLAIM_MALFORMED));
+
+                let mut output = Cursor::new(Vec::new());
+                builder.sign(
+                    signer.as_ref(),
+                    "image/jpeg",
+                    &mut Cursor::new(TEST_IMAGE_CLEAN),
+                    &mut output,
+                )?;
+                output.rewind()?;
+                let reader =
+                    Reader::from_shared_context(&context).with_stream("image/jpeg", &mut output)?;
+                assert_eq!(
+                    reader
+                        .validation_results()
+                        .expect("signed validation results")
+                        .validation_errors(),
+                    None,
+                    "ingredient failures should be attested, nested={nested}, format={format:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[c2pa_test_async]
+    async fn test_archive_revalidates_stale_ingredient_results_async() -> Result<()> {
+        let archive = stale_ingredient_archive(true)?;
+        let context = test_context().into_shared();
+        let mut builder = Builder::from_shared_context(&context);
+        let ingredient = builder
+            .add_ingredient_from_archive_async(&mut Cursor::new(archive))
+            .await?;
+        assert!(ingredient
+            .validation_results()
+            .expect("refreshed results")
+            .ingredient_deltas()
+            .expect("nested deltas")
+            .iter()
+            .any(|delta| delta
+                .validation_deltas()
+                .failure()
+                .iter()
+                .any(|status| status.code() == crate::validation_status::CLAIM_MALFORMED)));
         Ok(())
     }
 

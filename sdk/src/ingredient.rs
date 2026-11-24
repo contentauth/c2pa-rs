@@ -746,6 +746,42 @@ impl Ingredient {
         }
     }
 
+    #[async_generic]
+    pub(crate) fn revalidate_manifest(&mut self, context: &Context) -> Result<()> {
+        let Some(label) = self.active_manifest() else {
+            return Ok(());
+        };
+        let data_ref = self
+            .manifest_data
+            .as_ref()
+            .ok_or(Error::IngredientNotFound)?;
+        let data = self.resources.get(&data_ref.identifier)?;
+        let mut validation_log = StatusTracker::default();
+        let store = Store::from_jumbf_with_context(&data, &mut validation_log, context)?;
+        if _sync {
+            Store::verify_store(&store, None, &mut validation_log, context)?;
+        } else {
+            Store::verify_store_async(&store, None, &mut validation_log, context).await?;
+        }
+        let mut results = ValidationResults::from_store(&store, &validation_log);
+        if let Some(archived) = &self.validation_results {
+            results.preserve_asset_binding_results(archived, label);
+        } else if let Some(statuses) = &self.validation_status {
+            let mut archived = ValidationResults::default();
+            for status in statuses {
+                archived.add_status(
+                    status
+                        .clone()
+                        .set_kind(validation_status::log_kind(status.code())),
+                );
+            }
+            results.preserve_asset_binding_results(&archived, label);
+        }
+        self.validation_status = results.validation_errors();
+        self.validation_results = Some(results);
+        Ok(())
+    }
+
     // Internal utility function to get thumbnail from an assertion.
     fn thumbnail_from_assertion(assertion: &Assertion) -> (&str, &[u8]) {
         (assertion.content_type(), assertion.data())

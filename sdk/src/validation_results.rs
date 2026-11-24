@@ -365,6 +365,64 @@ impl ValidationResults {
         results
     }
 
+    pub(crate) fn preserve_asset_binding_results(&mut self, archived: &Self, label: &str) {
+        let groups = archived
+            .active_manifest()
+            .into_iter()
+            .map(|codes| (None, codes))
+            .chain(
+                archived
+                    .ingredient_deltas()
+                    .into_iter()
+                    .flatten()
+                    .map(|delta| {
+                        (
+                            Some(delta.ingredient_assertion_uri()),
+                            delta.validation_deltas(),
+                        )
+                    }),
+            );
+        let mut current = self.validation_status();
+        for (ingredient_uri, codes) in groups {
+            for status in codes
+                .success()
+                .iter()
+                .chain(codes.informational())
+                .chain(codes.failure())
+            {
+                if ![
+                    "assertion.dataHash.",
+                    "assertion.bmffHash.",
+                    "assertion.boxesHash.",
+                    "assertion.collectionHash.",
+                ]
+                .iter()
+                .any(|prefix| status.code().starts_with(prefix))
+                    && !matches!(
+                        status.code(),
+                        validation_status::HARD_BINDINGS_MISSING
+                            | validation_status::HARD_BINDINGS_MULTIPLE
+                    )
+                {
+                    continue;
+                }
+
+                // Kind and ingredient scope do not survive status serialization.
+                let mut status = status.clone().set_kind(log_kind(status.code()));
+                status.make_absolute(label);
+                if let Some(uri) = ingredient_uri {
+                    status = status.set_ingredient_uri(labels::to_absolute_uri(label, uri));
+                }
+                if !current.iter().any(|existing| {
+                    existing == &status && existing.ingredient_uri() == status.ingredient_uri()
+                }) {
+                    current.push(status.clone());
+                    self.add_status(status);
+                }
+            }
+        }
+    }
+
     /// Returns the [ValidationState] of the manifest store based on the validation results.
     ///
     /// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_validation_states).
@@ -1506,6 +1564,58 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    #[test]
+    fn preserve_archived_asset_binding_results_after_roundtrip() {
+        use validation_status::*;
+
+        let mut archived = ValidationResults::default();
+        archived.add_status(ValidationStatus::new(ASSERTION_DATAHASH_MATCH));
+        archived.add_status(ValidationStatus::new_failure(CLAIM_MALFORMED));
+        archived = archived.add_ingredient_delta(IngredientDeltaValidationResult::new(
+            "self#jumbf=c2pa.assertions/c2pa.ingredient.v3",
+            StatusCodes::default()
+                .add_failure_val(
+                    ValidationStatus::new_failure(ASSERTION_BMFFHASH_MISMATCH)
+                        .set_url("self#jumbf=/c2pa/nested/c2pa.assertions/c2pa.hash.bmff"),
+                )
+                .add_informational_val(ValidationStatus::new(
+                    ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS,
+                ))
+                .add_failure_val(ValidationStatus::new_failure(SIGNING_CREDENTIAL_EXPIRED)),
+        ));
+        let archived: ValidationResults =
+            serde_json::from_value(serde_json::to_value(archived).unwrap()).unwrap();
+
+        let mut current = ValidationResults::default();
+        current.add_status(ValidationStatus::new(ASSERTION_DATAHASH_MATCH));
+        current.preserve_asset_binding_results(&archived, "active");
+
+        let active = current.active_manifest().unwrap();
+        assert_eq!(
+            active.success().len(),
+            1,
+            "do not duplicate binding results"
+        );
+        assert!(active.failure().is_empty(), "drop stale manifest failures");
+        let deltas = current.ingredient_deltas().unwrap();
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(
+            deltas[0].ingredient_assertion_uri(),
+            "self#jumbf=/c2pa/active/c2pa.assertions/c2pa.ingredient.v3"
+        );
+        let codes = deltas[0].validation_deltas();
+        assert_eq!(codes.failure().len(), 1);
+        assert_eq!(codes.failure()[0].code(), ASSERTION_BMFFHASH_MISMATCH);
+        assert_eq!(codes.failure()[0].kind(), &LogKind::Failure);
+        assert_eq!(codes.informational().len(), 1);
+        assert_eq!(
+            codes.informational()[0].code(),
+            ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS
+        );
+        assert!(codes.success().is_empty());
+    }
+
     use crate::{
         assertions,
         claim::Claim,
