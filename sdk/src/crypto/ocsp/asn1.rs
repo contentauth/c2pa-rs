@@ -114,7 +114,7 @@ pub(crate) struct BasicOcspResponse {
 impl BasicOcspResponse {
     pub(crate) fn decode_with_signed_data(encoded: &[u8]) -> der::Result<(Self, &[u8])> {
         // As with the OCSP envelope, retain acceptance of trailing bytes after
-        // a complete BasicOCSPResponse, but never include them in signed data.
+        // a complete BasicOcspResponse, but never include them in signed data.
         let response = Self::decode(&mut SliceReader::new(encoded)?)?;
         let sequence = AnyRef::decode(&mut SliceReader::new(encoded)?)?;
         let mut fields = SliceReader::new(sequence.value())?;
