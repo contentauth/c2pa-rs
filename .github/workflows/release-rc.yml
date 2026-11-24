@@ -65,7 +65,7 @@ jobs:
       # `cargo set-version` (from cargo-edit) keeps intra-workspace dependency
       # requirements in sync when it bumps a crate, which a hand edit would miss.
       - name: Install cargo-edit
-        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
+        uses: baptiste0928/cargo-install@8195d4f734a149db85385bb4102b42efcd373759 # v3.5.0
         with:
           crate: cargo-edit
           version: "0.13.6"
