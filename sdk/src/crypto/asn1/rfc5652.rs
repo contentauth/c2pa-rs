@@ -1614,7 +1614,7 @@ mod tests {
     #[test]
     fn unsupported_legacy_certificate_choices_fail_without_panicking() {
         // These legacy CMS choices have explicit unimplemented parsers;
-        // the RFC 3161 engine uses rasn_cms instead.
+        // the RFC 3161 engine uses RustCrypto CMS with opaque certificates instead.
         for tag in [0xa0, 0xa1, 0xa2, 0xa3] {
             let der = tlv(tag, &[0x30, 0]);
             assert!(Constructed::decode(

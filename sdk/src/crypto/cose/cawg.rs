@@ -366,20 +366,39 @@ impl Verifier<'_> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
-    use rasn_pkix::{Certificate, Extension};
+    use std::borrow::Cow;
+
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use coset::{cbor::value::Value, Label, TaggedCborSerializable};
+    use der::Encode;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
+    use x509_cert::{
+        der::{
+            asn1::{ObjectIdentifier, OctetString},
+            Decode as DerDecode, Encode as DerEncode,
+        },
+        ext::Extension,
+        Certificate,
+    };
 
     use super::*;
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use crate::{
+        assertions::{DataHash, TimeStamp, UserCbor},
+        claim::Claim,
+        crypto::{
+            cose::TrustAnchorType, time_stamp::verify::message_imprint_regression::build_token_at,
+        },
+        identity::{IdentityAssertion, SignerPayload},
+        manifest::StoreOptions,
+        settings::{Settings, TrustAnchor, TrustListKind},
+        store::Store,
+        Context, Manifest,
+    };
 
-    fn oid(value: &str) -> rasn::types::ObjectIdentifier {
-        rasn::types::ObjectIdentifier::new(
-            value
-                .split('.')
-                .map(|part| part.parse().unwrap())
-                .collect::<Vec<_>>(),
-        )
-        .unwrap()
+    fn oid(value: &str) -> ObjectIdentifier {
+        ObjectIdentifier::new(value).unwrap()
     }
 
     fn certificate(policies: &[&str], purposes: &[&str]) -> Certificate {
@@ -390,35 +409,40 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        let mut certificate: Certificate = rasn::der::decode(&pem.contents).unwrap();
+        let mut certificate: Certificate = DerDecode::from_der(&pem.contents).unwrap();
 
         let extensions = certificate.tbs_certificate.extensions.as_mut().unwrap();
         extensions.retain(|ext| ext.extn_id != oid("2.5.29.32") && ext.extn_id != oid("2.5.29.37"));
         extensions.push(Extension {
             extn_id: oid("2.5.29.37"),
             critical: false,
-            extn_value: rasn::der::encode(&purposes.iter().map(|s| oid(s)).collect::<Vec<_>>())
-                .unwrap()
-                .into(),
+            extn_value: OctetString::new(
+                DerEncode::to_der(&purposes.iter().map(|s| oid(s)).collect::<Vec<_>>()).unwrap(),
+            )
+            .unwrap(),
         });
 
         if !policies.is_empty() {
-            #[derive(rasn::AsnType, rasn::Encode)]
+            #[derive(der::Sequence)]
             struct Policy {
-                id: rasn::types::ObjectIdentifier,
+                id: der::asn1::ObjectIdentifier,
             }
 
             extensions.push(Extension {
                 extn_id: oid("2.5.29.32"),
                 critical: false,
-                extn_value: rasn::der::encode(
-                    &policies
-                        .iter()
-                        .map(|s| Policy { id: oid(s) })
-                        .collect::<Vec<_>>(),
+                extn_value: OctetString::new(
+                    Encode::to_der(
+                        &policies
+                            .iter()
+                            .map(|s| Policy {
+                                id: der::asn1::ObjectIdentifier::new(s).unwrap(),
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap(),
                 )
-                .unwrap()
-                .into(),
+                .unwrap(),
             });
         }
 
@@ -430,32 +454,32 @@ mod tests {
     }
 
     fn timestamp_at(seconds: i64) -> TstInfo {
-        #[derive(rasn::AsnType, rasn::Encode)]
+        #[derive(der::Sequence)]
         struct Imprint {
-            algorithm: rasn_pkix::AlgorithmIdentifier,
-            digest: rasn::types::OctetString,
+            algorithm: spki::AlgorithmIdentifierOwned,
+            digest: der::asn1::OctetString,
         }
-        #[derive(rasn::AsnType, rasn::Encode)]
+        #[derive(der::Sequence)]
         struct Timestamp {
-            version: rasn::types::Integer,
-            policy: rasn::types::ObjectIdentifier,
+            version: der::asn1::Uint,
+            policy: der::asn1::ObjectIdentifier,
             imprint: Imprint,
-            serial: rasn::types::Integer,
-            time: rasn::types::GeneralizedTime,
+            serial: der::asn1::Uint,
+            time: der::asn1::GeneralizedTime,
         }
 
-        let bytes = rasn::der::encode(&Timestamp {
-            version: 1.into(),
-            policy: oid("1.2.3"),
+        let bytes = Encode::to_der(&Timestamp {
+            version: der::asn1::Uint::new(&[1]).unwrap(),
+            policy: der::asn1::ObjectIdentifier::new_unwrap("1.2.3"),
             imprint: Imprint {
-                algorithm: rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid("2.16.840.1.101.3.4.2.1"),
+                algorithm: spki::AlgorithmIdentifierOwned {
+                    oid: der::asn1::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
                     parameters: None,
                 },
-                digest: vec![0; 32].into(),
+                digest: der::asn1::OctetString::new([0; 32]).unwrap(),
             },
-            serial: 1.into(),
-            time: at(seconds).into(),
+            serial: der::asn1::Uint::new(&[1]).unwrap(),
+            time: der::asn1::GeneralizedTime::from_system_time(at(seconds).into()).unwrap(),
         })
         .unwrap();
 
@@ -468,7 +492,7 @@ mod tests {
     #[test]
     fn all_six_interim_policies_are_accepted() {
         for policy in SMIME_POLICIES {
-            let der = rasn::der::encode(&certificate(&[policy], &[EMAIL])).unwrap();
+            let der = DerEncode::to_der(&certificate(&[policy], &[EMAIL])).unwrap();
             assert!(
                 interim_certificate_is_acceptable(
                     &der,
@@ -494,7 +518,7 @@ mod tests {
             vec!["2.23.140.1.5.4.1"],
             vec!["1.2.3.4"],
         ] {
-            let der = rasn::der::encode(&certificate(&policies, &[EMAIL])).unwrap();
+            let der = DerEncode::to_der(&certificate(&policies, &[EMAIL])).unwrap();
             assert!(
                 !interim_certificate_is_acceptable(
                     &der,
@@ -521,7 +545,7 @@ mod tests {
         extensions.push(extension);
 
         assert!(interim_certificate_is_acceptable(
-            &rasn::der::encode(&cert).unwrap(),
+            &DerEncode::to_der(&cert).unwrap(),
             at(INTERIM_TRUST_END - 1),
             None,
             &CertificateTrustPolicy::default(),
@@ -534,10 +558,10 @@ mod tests {
             .iter_mut()
             .find(|e| e.extn_id == oid("2.5.29.32"))
             .unwrap()
-            .extn_value = vec![0x30, 0x01, 0].into();
+            .extn_value = OctetString::new([0x30, 0x01, 0]).unwrap();
 
         assert!(interim_certificate_is_acceptable(
-            &rasn::der::encode(&cert).unwrap(),
+            &DerEncode::to_der(&cert).unwrap(),
             at(INTERIM_TRUST_END - 1),
             None,
             &CertificateTrustPolicy::default(),
@@ -547,7 +571,7 @@ mod tests {
 
     #[test]
     fn cutoff_includes_the_whole_utc_day_and_uses_only_attested_time() {
-        let der = rasn::der::encode(&certificate(&[SMIME_POLICIES[0]], &[EMAIL])).unwrap();
+        let der = DerEncode::to_der(&certificate(&[SMIME_POLICIES[0]], &[EMAIL])).unwrap();
         let policy = CertificateTrustPolicy::default();
         for now in [
             INTERIM_TRUST_END - 86_400,
@@ -580,7 +604,7 @@ mod tests {
     #[test]
     fn document_signing_is_not_an_interim_purpose_including_mixed_eku() {
         for purposes in [vec![DOCUMENT_SIGNING], vec![EMAIL, DOCUMENT_SIGNING]] {
-            let der = rasn::der::encode(&certificate(&[], &purposes)).unwrap();
+            let der = DerEncode::to_der(&certificate(&[], &purposes)).unwrap();
             assert!(interim_certificate_is_acceptable(
                 &der,
                 at(INTERIM_TRUST_END + 1),
@@ -595,7 +619,7 @@ mod tests {
             "1.3.6.1.5.5.7.3.9",
             "1.3.6.1.4.1.62558.2.1",
         ] {
-            let der = rasn::der::encode(&certificate(&[SMIME_POLICIES[0]], &[purpose])).unwrap();
+            let der = DerEncode::to_der(&certificate(&[SMIME_POLICIES[0]], &[purpose])).unwrap();
             assert!(interim_certificate_is_acceptable(
                 &der,
                 at(INTERIM_TRUST_END - 1),
@@ -605,7 +629,7 @@ mod tests {
             .unwrap());
         }
 
-        let der = rasn::der::encode(&certificate(&[], &[EMAIL, DOCUMENT_SIGNING])).unwrap();
+        let der = DerEncode::to_der(&certificate(&[], &[EMAIL, DOCUMENT_SIGNING])).unwrap();
 
         let mut policy = CertificateTrustPolicy::new();
         policy.clear_ekus();
@@ -630,7 +654,7 @@ mod tests {
     }
 
     fn signed_cose_with_certificate(certificate: &Certificate, data: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        let der = rasn::der::encode(certificate).unwrap();
+        let der = DerEncode::to_der(certificate).unwrap();
 
         let key = c2pa_raw_crypto::signer_from_private_key(
             include_bytes!("../../../tests/fixtures/certs/ed25519.pem"),
@@ -653,8 +677,6 @@ mod tests {
 
     #[c2pa_macros::c2pa_test_async]
     async fn policy_is_enforced_by_both_cawg_apis_but_not_the_shared_verifier() {
-        use std::borrow::Cow;
-
         let mut cases: Vec<_> = SMIME_POLICIES.iter().map(|policy| vec![*policy]).collect();
         cases.extend([vec!["2.23.140.1.5.1.2"], vec![]]);
 
@@ -720,10 +742,6 @@ mod tests {
 
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     fn add_timestamp(sign1: &mut CoseSign1, time: &[u8]) -> Vec<u8> {
-        use coset::{cbor::value::Value, Label};
-
-        use crate::crypto::time_stamp::verify::message_imprint_regression::build_token_at;
-
         let signature_cbor = coset::cbor::Value::Bytes(sign1.signature.clone());
         let mut bytes = Vec::new();
         coset::cbor::into_writer(&signature_cbor, &mut bytes).unwrap();
@@ -748,8 +766,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn only_a_trusted_associated_v2_timestamp_can_extend_interim_trust() {
-        use super::super::TrustAnchorType;
-
         for (time, accepted) in [
             (b"20270330000000Z".as_slice(), true),
             (b"20270331235959Z".as_slice(), true),
@@ -811,10 +827,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn manifest_timestamp_requires_the_signed_assertion_and_valid_claim_signature() {
-        use coset::TaggedCborSerializable;
-
-        use crate::{claim::Claim, store::Store};
-
         let mut claim = Claim::new("test", None, 1);
         let uri = claim
             .add_assertion(&crate::assertions::Actions::new())
@@ -860,18 +872,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[c2pa_macros::c2pa_test_async]
     async fn manifest_only_timestamp_is_used_during_cawg_identity_decoding() {
-        use coset::TaggedCborSerializable;
-
-        use crate::{
-            assertions::{DataHash, UserCbor},
-            claim::Claim,
-            identity::{IdentityAssertion, SignerPayload},
-            manifest::StoreOptions,
-            settings::{Settings, TrustAnchor, TrustListKind},
-            store::Store,
-            Context, Manifest,
-        };
-
         let mut claim = Claim::new("manifest timestamp test", None, 1);
 
         let binding = claim
@@ -891,9 +891,15 @@ mod tests {
 
         // Expired at validation time, but valid at the manifest's attested time.
         identity_certificate.tbs_certificate.validity.not_before =
-            rasn_pkix::Time::General(at(1_735_689_600).into());
+            x509_cert::time::Time::GeneralTime(
+                x509_cert::der::asn1::GeneralizedTime::from_system_time(at(1_735_689_600).into())
+                    .unwrap(),
+            );
         identity_certificate.tbs_certificate.validity.not_after =
-            rasn_pkix::Time::General(at(1_767_312_000).into());
+            x509_cert::time::Time::GeneralTime(
+                x509_cert::der::asn1::GeneralizedTime::from_system_time(at(1_767_312_000).into())
+                    .unwrap(),
+            );
 
         let (identity_signature, identity_pem) =
             signed_cose_with_certificate(&identity_certificate, &payload_bytes);
@@ -1011,11 +1017,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn timestamp_assertion_is_verified_against_the_referenced_claim_not_just_its_label() {
-        use crate::{
-            assertions::TimeStamp, claim::Claim,
-            crypto::time_stamp::verify::message_imprint_regression::build_token_at, store::Store,
-        };
-
         let mut claim = Claim::new("test", None, 1);
         let uri = claim
             .add_assertion(&crate::assertions::Actions::new())
@@ -1076,8 +1077,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
     fn malformed_timestamp_containers_are_ignored_and_legacy_does_not_shadow_v2() {
-        use coset::{cbor::value::Value, Label};
-
         let (sign1, tsa) = timestamped_sign1(b"20270331235959Z");
 
         let mut policy = CertificateTrustPolicy::default();
