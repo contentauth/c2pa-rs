@@ -27,7 +27,6 @@ use c2pa::{
     Builder, Error, Reader, Relationship, Signer, SigningAlg,
 };
 use memchr::memmem;
-use nom::AsBytes;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -561,31 +560,22 @@ impl MakeTestImages {
         let dst_path = self.make_path(recipe.output.as_str());
         println!("Creating {dst_path:?}");
 
-        let (search_bytes, replace_bytes) = match op {
+        let (search_bytes, replace_bytes): (&[u8], &[u8]) = match op {
             // modify the XMP (change xmp magic id value) - this should cause a data hash mismatch (OTGP)
-            "dat" => (
-                b"W5M0MpCehiHzreSzNTczkc9d".as_bytes(),
-                b"W5M0MpCehiHzreSzdeadbeef".as_bytes(),
-            ),
+            "dat" => (b"W5M0MpCehiHzreSzNTczkc9d", b"W5M0MpCehiHzreSzdeadbeef"),
             // modify the claim_generator value inside the claim, the claim hash will no longer match the signature
-            "sig" => (
-                b"make_test_images".as_bytes(),
-                b"make_test_xxxxxx".as_bytes(),
-            ),
+            "sig" => (b"make_test_images", b"make_test_xxxxxx"),
             // modify a value inside an actions assertion, the assertion hash will fail
-            "uri" => (
-                b"brightnesscontrast".as_bytes(),
-                b"brightnessdeadbeef".as_bytes(),
-            ),
+            "uri" => (b"brightnesscontrast", b"brightnessdeadbeef"),
             // modify a uri to a manifest so the manifest cannot be found (missing manifest)
             "clm" => (
-                b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth".as_bytes(),
-                b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentbeef".as_bytes(),
+                b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth",
+                b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentbeef",
             ),
             // modify the provenance uri so that is references a non-existing manifest
             "prv" => (
-                b"dcterms:provenance=\"self#jumbf=/c2pa/contentauth".as_bytes(),
-                b"dcterms:provenance=\"self#jumbf=/c2pa/contentbeef".as_bytes(),
+                b"dcterms:provenance=\"self#jumbf=/c2pa/contentauth",
+                b"dcterms:provenance=\"self#jumbf=/c2pa/contentbeef",
             ),
             _ => panic!("bad parameter"),
         };

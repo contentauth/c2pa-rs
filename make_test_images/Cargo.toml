@@ -26,7 +26,6 @@ image = { version = "0.25.10", default-features = false, features = [
 	"png",
 ] }
 memchr = "2.8.1"
-nom = "7.1.3"
 regex = "1.12.3"
 serde = "1.0.228"
 serde_json = { version = "1.0.150", features = ["preserve_order"] }
