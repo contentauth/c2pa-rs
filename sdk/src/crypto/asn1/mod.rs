@@ -24,6 +24,7 @@ use bcder::{
 };
 // Use der crate for time types to avoid custom date parsing
 use der::{Decode, Encode};
+use time::OffsetDateTime;
 
 pub(crate) fn canonical_name_der(encoded: &[u8]) -> Result<Vec<u8>, der::Error> {
     cms::x509_cert::name::Name::from_der(encoded)?.to_der()
@@ -444,11 +445,11 @@ impl GeneralizedTime {
     }
 }
 
-impl From<GeneralizedTime> for time::OffsetDateTime {
+impl From<GeneralizedTime> for OffsetDateTime {
     fn from(gt: GeneralizedTime) -> Self {
         // Use der's conversion to SystemTime, then to OffsetDateTime.
         let system_time = gt.der_time.to_system_time();
-        let mut dt: time::OffsetDateTime = system_time.into();
+        let mut dt: OffsetDateTime = system_time.into();
 
         // Add the fractional seconds that were parsed but not stored in der_time
         // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280)
@@ -468,10 +469,10 @@ impl From<GeneralizedTime> for time::OffsetDateTime {
 // Fallible: der's GeneralizedTime only supports 1970-9999, so a DateTime outside
 // that range (e.g. a pre-1970 signing time attacker-supplied in a timestamp token)
 // must return an error rather than panic.
-impl TryFrom<time::OffsetDateTime> for GeneralizedTime {
+impl TryFrom<OffsetDateTime> for GeneralizedTime {
     type Error = der::Error;
 
-    fn try_from(dt: time::OffsetDateTime) -> Result<Self, Self::Error> {
+    fn try_from(dt: OffsetDateTime) -> Result<Self, Self::Error> {
         // Convert to SystemTime, then to der's GeneralizedTime.
         let system_time: std::time::SystemTime = dt.into();
 
@@ -732,7 +733,7 @@ mod tests {
         assert!(time_str.contains("123045"));
 
         // Convert back to OffsetDateTime and verify
-        let dt_back: time::OffsetDateTime = gt.into();
+        let dt_back: OffsetDateTime = gt.into();
         assert_eq!(dt_back.year(), 2023);
         assert_eq!(dt_back.month(), time::Month::January);
         assert_eq!(dt_back.day(), 15);
@@ -762,7 +763,7 @@ mod tests {
         assert_eq!(gt, gt_parsed);
 
         // Convert back to DateTime
-        let dt_back: time::OffsetDateTime = gt_parsed.into();
+        let dt_back: OffsetDateTime = gt_parsed.into();
         assert_eq!(dt_back.year(), 2022);
         assert_eq!(dt_back.month(), time::Month::June);
         assert_eq!(dt_back.day(), 10);
@@ -977,7 +978,7 @@ mod tests {
         assert_eq!(gt1, decoded);
 
         // Also verify conversion back to OffsetDateTime works
-        let dt_back: time::OffsetDateTime = decoded.into();
+        let dt_back: OffsetDateTime = decoded.into();
         // Times should be close (within 1 second due to potential precision loss)
         let diff = if original_dt > dt_back {
             original_dt - dt_back
@@ -994,11 +995,11 @@ mod tests {
         let system_time = UNIX_EPOCH + Duration::from_secs(86400);
 
         // Convert to OffsetDateTime, then to GeneralizedTime
-        let dt: time::OffsetDateTime = system_time.into();
+        let dt: OffsetDateTime = system_time.into();
         let gt = GeneralizedTime::try_from(dt).unwrap();
 
         // Convert back and verify
-        let dt_back: time::OffsetDateTime = gt.into();
+        let dt_back: OffsetDateTime = gt.into();
         let system_time_back: SystemTime = dt_back.into();
 
         // Should be within 1 second (due to potential precision loss)
@@ -1019,11 +1020,11 @@ mod tests {
 
         // Without large-dates, time rejects year 10000 before DER conversion.
         // If a consumer enables it, the DER adapter must still reject the date.
-        if let Ok(post_9999) = time::OffsetDateTime::from_unix_timestamp(253_402_300_800) {
+        if let Ok(post_9999) = OffsetDateTime::from_unix_timestamp(253_402_300_800) {
             assert!(GeneralizedTime::try_from(post_9999).is_err());
         }
 
-        let last_second = time::OffsetDateTime::from_unix_timestamp(253_402_300_799).unwrap();
+        let last_second = OffsetDateTime::from_unix_timestamp(253_402_300_799).unwrap();
         assert!(GeneralizedTime::try_from(last_second).is_ok());
 
         // A valid in-range date still succeeds.
@@ -1243,7 +1244,7 @@ mod tests {
         };
 
         // Verify the time value
-        let dt: time::OffsetDateTime = gen_time.into();
+        let dt: OffsetDateTime = gen_time.into();
         assert_eq!(
             dt.format(time::macros::format_description!(
                 "[year]-[month]-[day] [hour]:[minute]:[second]"
@@ -1294,7 +1295,7 @@ mod tests {
         assert_eq!(gen_time.as_der_bytes(), TIME_DER_FRACTIONAL);
 
         // Convert to OffsetDateTime
-        let dt: time::OffsetDateTime = gen_time.into();
+        let dt: OffsetDateTime = gen_time.into();
 
         // Verify the parsed time
         assert_eq!(
@@ -1335,7 +1336,7 @@ mod tests {
         assert_eq!(gen_time_strict, gen_time_rfc3161);
 
         // Convert to DateTime and verify
-        let dt: time::OffsetDateTime = gen_time_rfc3161.into();
+        let dt: OffsetDateTime = gen_time_rfc3161.into();
         assert_eq!(
             dt.format(time::macros::format_description!(
                 "[year]-[month]-[day] [hour]:[minute]:[second]"
@@ -1368,7 +1369,7 @@ mod tests {
             let gen_time = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
                 .unwrap_or_else(|_| panic!("Failed to parse: {desc}"));
 
-            let dt: time::OffsetDateTime = gen_time.into();
+            let dt: OffsetDateTime = gen_time.into();
             assert_eq!(dt.nanosecond(), expected_nanos, "Mismatch for: {desc}");
         }
     }
@@ -1425,7 +1426,7 @@ mod tests {
 
             assert_eq!(parsed.as_der_bytes(), encoded, "{value}");
 
-            let actual: time::OffsetDateTime = parsed.into();
+            let actual: OffsetDateTime = parsed.into();
             let expected = time::Date::from_calendar_date(
                 date.0,
                 time::Month::try_from(date.1).unwrap(),
