@@ -13,7 +13,11 @@
 
 use async_generic::async_generic;
 use async_trait::async_trait;
-use base64::{prelude::BASE64_URL_SAFE, Engine};
+use base64::{
+    alphabet::URL_SAFE,
+    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
+    Engine,
+};
 use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
@@ -42,6 +46,13 @@ use crate::{
     },
     HashedUri,
 };
+
+/// The `did:jwk` method-specific identifier is the JWK in base64url without
+/// padding (did:jwk §2). Accept padding too, as earlier c2pa-rs did.
+const DID_JWK_BASE64: GeneralPurpose = GeneralPurpose::new(
+    &URL_SAFE,
+    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 
 /// An implementation of [`SignatureVerifier`] that supports Identity Claims
 /// Aggregation Credentials (a specific grammar of W3C Verifiable Credentials)
@@ -482,7 +493,7 @@ impl<'a> IcaSignatureVerifier<'a> {
             "jwk" => {
                 let jwk = primary_did.method_specific_id();
 
-                let jwk = BASE64_URL_SAFE.decode(jwk).map_err(|e| {
+                let jwk = DID_JWK_BASE64.decode(jwk).map_err(|e| {
                     ValidationError::SignatureError(IcaValidationError::InvalidDidDocument(
                         e.to_string(),
                     ))
@@ -911,5 +922,28 @@ impl<'a> IcaSignatureVerifier<'a> {
         }
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// did:jwk identifiers are unpadded base64url; a JWK whose JSON length isn't
+    /// a multiple of 3 needs padding in standard base64url.
+    #[test]
+    fn did_jwk_identifier_decodes_with_or_without_padding() {
+        const JWK: &str =
+            r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#;
+        const UNPADDED: &str = "eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjExcVlBWUt4Q3JmVlNfN1R5V1FIT2c3aGN2UGFwaU1scndJYWFQY0hVUm8ifQ";
+        const PADDED: &str = "eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjExcVlBWUt4Q3JmVlNfN1R5V1FIT2c3aGN2UGFwaU1scndJYWFQY0hVUm8ifQ==";
+
+        for id in [UNPADDED, PADDED] {
+            let jwk = DID_JWK_BASE64.decode(id).unwrap();
+            assert_eq!(jwk, JWK.as_bytes());
+            let _: Jwk = serde_json::from_slice(&jwk).unwrap();
+        }
     }
 }
