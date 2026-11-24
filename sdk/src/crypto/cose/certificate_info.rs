@@ -13,7 +13,7 @@
 
 //! Signature validation info.
 
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 use x509_parser::num_bigint::BigUint;
 
 use crate::SigningAlg;
@@ -26,7 +26,7 @@ pub struct CertificateInfo {
     pub alg: Option<SigningAlg>,
 
     /// Date the signature was created
-    pub date: Option<DateTime<Utc>>,
+    pub date: Option<OffsetDateTime>,
 
     /// Certificate serial number
     pub cert_serial_number: Option<BigUint>,

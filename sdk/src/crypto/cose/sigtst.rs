@@ -11,12 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use asn1_rs::nom::AsBytes;
 use async_generic::async_generic;
 use bcder::decode::Constructed;
 use coset::{
     cbor::value::Value, sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext,
 };
+use der::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -25,8 +25,7 @@ use crate::{
         asn1::rfc3161::{TimeStampResp, TstInfo},
         cose::{AsyncCoseSigner, CertificateTrustPolicy, CoseError, CoseSigner, TimeStampStorage},
         time_stamp::{
-            verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
-            TimeStampResponse,
+            verify_time_stamp, verify_time_stamp_async, TimeStampError, TimeStampResponse,
         },
     },
     log_item,
@@ -307,23 +306,15 @@ pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
         .time_stamp_token
         .ok_or_else(|| CoseError::InternalError("invalid timestamp token".to_string()))?;
 
-    let a = tst
-        .content_type
-        .iter()
-        .map(|v| {
-            v.to_u32()
-                .ok_or(CoseError::InternalError("invalid component".to_string()))
-        })
-        .collect::<Result<Vec<u32>, CoseError>>()?;
-
-    let ci = ContentInfo {
-        content_type: rasn::types::ObjectIdentifier::new(a).ok_or(CoseError::InternalError(
-            "invalid object identifier for timestamp response".to_string(),
-        ))?,
-        content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
+    let token = cms::content_info::ContentInfo {
+        content_type: der::asn1::ObjectIdentifier::new(&tst.content_type.to_string()).map_err(
+            |err| CoseError::InternalError(format!("invalid timestamp content type: {err}")),
+        )?,
+        content: der::asn1::Any::from_der(tst.content.as_ref())
+            .map_err(|err| CoseError::InternalError(format!("invalid timestamp content: {err}")))?,
     };
 
-    Ok(rasn::der::encode(&ci).map_err(|err| {
+    Ok(token.to_der().map_err(|err| {
         CoseError::InternalError(format!("failed to encode timestamp token: {err:?}"))
     })?)
 }
@@ -332,11 +323,18 @@ pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use openssl::hash::MessageDigest;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
     use crate::crypto::cose::cose_signer::tests::TestSigner;
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    use crate::crypto::{
+        cose::{signing_time_from_sign1, signing_time_from_sign1_async},
+        time_stamp::verify::message_imprint_regression::{build_token, OID_SHA256},
+    };
 
     fn timestamp_value(tokens: &[&[u8]]) -> Value {
         Value::Map(vec![(
@@ -481,13 +479,6 @@ mod tests {
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[c2pa_macros::c2pa_test_async]
     async fn locally_signed_timestamps_round_trip_both_versions_and_apis() {
-        use openssl::hash::MessageDigest;
-
-        use crate::crypto::{
-            cose::{signing_time_from_sign1, signing_time_from_sign1_async},
-            time_stamp::verify::message_imprint_regression::{build_token, OID_SHA256},
-        };
-
         let protected = ProtectedHeader::default();
         let policy = CertificateTrustPolicy::passthrough();
         for version in [
@@ -570,15 +561,9 @@ mod tests {
             )
             .await
             .unwrap();
-            let expected = chrono::DateTime::<chrono::Utc>::from_timestamp(1577836800, 0).unwrap();
-            assert_eq!(
-                chrono::DateTime::<chrono::Utc>::from(sync.gen_time),
-                expected
-            );
-            assert_eq!(
-                chrono::DateTime::<chrono::Utc>::from(asynchronous.gen_time),
-                expected
-            );
+            let expected = time::OffsetDateTime::from_unix_timestamp(1577836800).unwrap();
+            assert_eq!(time::OffsetDateTime::from(sync.gen_time), expected);
+            assert_eq!(time::OffsetDateTime::from(asynchronous.gen_time), expected);
             assert_eq!(
                 signing_time_from_sign1(&sign1, b"payload", false),
                 Some(expected)

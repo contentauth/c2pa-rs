@@ -14,9 +14,11 @@
 use std::io::{self, Read};
 
 use async_generic::async_generic;
+use der::{
+    asn1::{Any, Int, ObjectIdentifier, OctetString},
+    Encode,
+};
 use http::header;
-use rasn::prelude::*;
-use rasn_pkix::Certificate;
 use x509_parser::{
     der_parser::{oid, Oid},
     extensions::ParsedExtension,
@@ -25,7 +27,10 @@ use x509_parser::{
 
 use crate::{
     context::{Context, ProgressPhase},
-    crypto::base64,
+    crypto::{
+        base64,
+        ocsp::asn1::{CertId, OcspRequest, Request, TbsRequest},
+    },
     http::HttpResolverError,
 };
 
@@ -103,57 +108,54 @@ fn build_ocsp_request(
     issuer_der: &[u8],
     responder_url: &str,
 ) -> Option<OcspRequestData> {
-    let subject: Certificate = rasn::der::decode(subject_der).ok()?;
-    let issuer: Certificate = rasn::der::decode(issuer_der).ok()?;
+    let (subject_remaining, subject) = X509Certificate::from_der(subject_der).ok()?;
+    let (issuer_remaining, issuer) = X509Certificate::from_der(issuer_der).ok()?;
+    if !subject_remaining.is_empty() || !issuer_remaining.is_empty() {
+        return None;
+    }
 
-    let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
-    let issuer_key_raw = &issuer
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .as_raw_slice();
+    let issuer_name_raw =
+        crate::crypto::asn1::canonical_name_der(issuer.subject().as_raw()).ok()?;
+    let issuer_key_raw = &issuer.public_key().subject_public_key.data;
 
-    let issuer_name_hash = OctetString::from(crate::crypto::hash::sha1(&issuer_name_raw));
-    let issuer_key_hash = OctetString::from(crate::crypto::hash::sha1(issuer_key_raw));
-    let serial_number = subject.tbs_certificate.serial_number;
+    let issuer_name_hash = OctetString::new(crate::crypto::hash::sha1(&issuer_name_raw)).ok()?;
+    let issuer_key_hash = OctetString::new(crate::crypto::hash::sha1(issuer_key_raw)).ok()?;
+    let serial_number = Int::new(subject.raw_serial()).ok()?;
 
     // Build request structures
-    let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?;
-    let alg = rasn::types::ObjectIdentifier::from(sha1_oid);
-
-    let sha1_ai = rasn_pkix::AlgorithmIdentifier {
-        algorithm: alg,
-        parameters: Some(Any::new(rasn::der::encode(&()).ok()?)),
+    let sha1_ai = spki::AlgorithmIdentifierOwned {
+        oid: ObjectIdentifier::new_unwrap("1.3.14.3.2.26"),
+        parameters: Some(Any::null()),
         // Many OCSP responders expect this to be NULL not None.
     };
 
-    let req_cert = rasn_ocsp::CertId {
+    let req_cert = CertId {
         hash_algorithm: sha1_ai,
         issuer_name_hash,
         issuer_key_hash,
         serial_number,
     };
 
-    let ocsp_req = rasn_ocsp::Request {
+    let ocsp_req = Request {
         req_cert,
         single_request_extensions: None,
     };
 
     let request_list = vec![ocsp_req];
 
-    let tbs_request = rasn_ocsp::TbsRequest {
-        version: rasn_ocsp::Version::from(0u8),
+    let tbs_request = TbsRequest {
+        version: None,
         requestor_name: None,
         request_list,
         request_extensions: None,
     };
 
-    let ocsp_request = rasn_ocsp::OcspRequest {
+    let ocsp_request = OcspRequest {
         tbs_request,
         optional_signature: None,
     };
 
-    let request_der = rasn::der::encode(&ocsp_request).ok()?;
+    let request_der = ocsp_request.to_der().ok()?;
     let request_str = base64::encode(&request_der);
     let url = url::Url::parse(responder_url).ok()?;
 
@@ -258,6 +260,15 @@ mod tests {
     };
 
     use http::{Request, Response};
+    use x509_cert::{
+        attr::AttributeTypeAndValue,
+        der::{
+            asn1::{Any, ObjectIdentifier, OctetString, Utf8StringRef},
+            Decode as DerDecode, Encode as DerEncode,
+        },
+        name::{RdnSequence, RelativeDistinguishedName},
+        Certificate,
+    };
 
     use super::*;
     use crate::{
@@ -300,16 +311,21 @@ mod tests {
         for index in [0, 1] {
             let requests = process_ocsp_responders(&certs, index).unwrap();
             let der = base64::decode(&requests[0].request_str).unwrap();
-            let request: rasn_ocsp::OcspRequest = rasn::der::decode(&der).unwrap();
+            let request = <OcspRequest as der::Decode>::from_der(&der).unwrap();
             assert!(request.optional_signature.is_none());
             let tbs = request.tbs_request;
             assert!(tbs.requestor_name.is_none());
             assert!(tbs.request_extensions.is_none());
             assert_eq!(tbs.request_list.len(), 1);
             let id = &tbs.request_list[0].req_cert;
-            assert_eq!(id.hash_algorithm.algorithm.to_string(), "1.3.14.3.2.26");
+            assert_eq!(id.hash_algorithm.oid.to_string(), "1.3.14.3.2.26");
             assert_eq!(
-                id.hash_algorithm.parameters.as_ref().unwrap().as_bytes(),
+                id.hash_algorithm
+                    .parameters
+                    .as_ref()
+                    .unwrap()
+                    .to_der()
+                    .unwrap(),
                 &[0x05, 0x00]
             );
             assert!(super::super::cert_id_matches_signer(id, &certs[index..]));
@@ -342,6 +358,57 @@ mod tests {
 
             assert_eq!(hex::encode(actual), expected, "certificate {index}");
         }
+    }
+
+    #[test]
+    fn issuer_name_hash_uses_reencoded_rdn_order_not_received_bytes() {
+        let certs = ca_chain();
+        let mut issuer = Certificate::from_der(&certs[1]).unwrap();
+        let attributes: Vec<_> = ["OCSP issuer A", "OCSP issuer BBB"]
+            .into_iter()
+            .map(|name| AttributeTypeAndValue {
+                oid: ObjectIdentifier::new_unwrap("2.5.4.3"),
+                value: Any::encode_from(&Utf8StringRef::new(name).unwrap()).unwrap(),
+            })
+            .collect();
+        let rdn = RelativeDistinguishedName::try_from(attributes).unwrap();
+        let reversed = rdn
+            .0
+            .iter()
+            .map(|attribute| attribute.to_der().unwrap())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .flatten()
+            .collect::<Vec<_>>();
+        issuer.tbs_certificate.subject = RdnSequence(vec![rdn]);
+
+        let canonical_name = issuer.tbs_certificate.subject.to_der().unwrap();
+        let reversed_set = crate::crypto::asn1::reconstruct_der_bytes(0x31, &reversed).unwrap();
+        let received_name =
+            crate::crypto::asn1::reconstruct_der_bytes(0x30, &reversed_set).unwrap();
+        assert_ne!(canonical_name, received_name);
+
+        let canonical_issuer = issuer.to_der().unwrap();
+        let mut received_issuer = canonical_issuer.clone();
+        let name_offset = received_issuer
+            .windows(canonical_name.len())
+            .position(|window| window == canonical_name)
+            .unwrap();
+        received_issuer[name_offset..name_offset + canonical_name.len()]
+            .copy_from_slice(&received_name);
+
+        let canonical =
+            build_ocsp_request(&certs[0], &canonical_issuer, "http://ocsp.test").unwrap();
+        let received = build_ocsp_request(&certs[0], &received_issuer, "http://ocsp.test").unwrap();
+        assert_eq!(received.request_str, canonical.request_str);
+
+        let encoded = base64::decode(&received.request_str).unwrap();
+        let request = <OcspRequest as der::Decode>::from_der(&encoded).unwrap();
+        assert!(super::super::cert_id_matches_signer(
+            &request.tbs_request.request_list[0].req_cert,
+            &[certs[0].clone(), received_issuer],
+        ));
     }
 
     #[test]
@@ -662,7 +729,7 @@ mod tests {
 
     fn chain_with_two_responders() -> Vec<Vec<u8>> {
         let mut certs = ca_chain();
-        let mut leaf: Certificate = rasn::der::decode(&certs[0]).unwrap();
+        let mut leaf = Certificate::from_der(&certs[0]).unwrap();
         let extension = leaf
             .tbs_certificate
             .extensions
@@ -673,10 +740,10 @@ mod tests {
             .unwrap();
 
         // Fetching parses AIA without checking the certificate's signature.
-        let mut responders: Vec<Any> = rasn::der::decode(&extension.extn_value).unwrap();
+        let mut responders = Vec::<Any>::from_der(extension.extn_value.as_bytes()).unwrap();
         responders.push(responders[0].clone());
-        extension.extn_value = rasn::der::encode(&responders).unwrap().into();
-        certs[0] = rasn::der::encode(&leaf).unwrap();
+        extension.extn_value = OctetString::new(responders.to_der().unwrap()).unwrap();
+        certs[0] = leaf.to_der().unwrap();
         assert_eq!(process_ocsp_responders(&certs, 0).unwrap().len(), 2);
         certs
     }

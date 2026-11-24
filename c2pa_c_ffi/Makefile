@@ -206,6 +206,8 @@ release-android-x86_64:
 
 release-emscripten:
 	rustup toolchain install $(EMSCRIPTEN_TOOLCHAIN) --profile minimal --component rust-src --target wasm32-unknown-emscripten
+	# Prebuild side-module support so cache INFO output is not a linker warning.
+	embuilder --pic build crtbegin-mt libclang_rt.builtins-mt
 	EMCC_CFLAGS="-fwasm-exceptions -pthread" \
 	RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals" \
 	C2PA_HEADER_DIR="$(abspath $(TARGET_DIR)/wasm32-unknown-emscripten/release)" \

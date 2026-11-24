@@ -992,7 +992,8 @@ pub mod tests {
         assert!(restored.metadata.is_some());
         let metadata = restored.metadata.unwrap();
         let date_time = metadata.date_time().unwrap();
-        let date_time_parsed = chrono::DateTime::parse_from_rfc3339(date_time);
+        let date_time_parsed =
+            time::OffsetDateTime::parse(date_time, &time::format_description::well_known::Rfc3339);
 
         assert!(metadata.reviews().is_some());
         assert!(date_time_parsed.is_ok());

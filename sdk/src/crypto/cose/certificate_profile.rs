@@ -14,7 +14,6 @@
 use std::borrow::Cow;
 
 use asn1_rs::{Any, Class, FromDer, Header, Tag};
-use chrono::{DateTime, Utc};
 use thiserror::Error;
 use web_time::SystemTime;
 use x509_parser::{
@@ -233,9 +232,9 @@ pub fn check_certificate_profile(
     if let Some(tst_info) = _tst_info_opt {
         // A valid time stamp was associated with this signature: Ensure that the
         // timestamp was valid at that time.
-        let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
+        let signing_time: time::OffsetDateTime = tst_info.gen_time.clone().into();
         if !signcert.validity().is_valid_at(
-            x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
+            x509_parser::time::ASN1Time::from_timestamp(signing_time.unix_timestamp())
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
         ) {
             log_item!("", "certificate expired", "check_certificate_profile")
@@ -766,11 +765,20 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use rasn::{types::Any, Decoder, Encoder};
-    use rasn_pkix::Certificate;
+    use bcder::decode::Constructed;
+    use der::{Decode, Encode};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
-    use x509_parser::{num_bigint::BigInt, pem::Pem, prelude::FromDer};
+    use x509_cert::{
+        der::{
+            asn1::{Any, BitString, ObjectIdentifier, OctetString},
+            Decode as DerDecode, Encode as DerEncode,
+        },
+        Certificate,
+    };
+    use x509_parser::{
+        extensions::ParsedExtension, num_bigint::BigInt, pem::Pem, prelude::FromDer,
+    };
 
     use super::is_valid_rsa_public_exponent;
     use crate::{
@@ -855,7 +863,7 @@ mod tests {
         wasm_bindgen_test
     )]
     fn ed25519_algorithm_parameters_must_be_absent() {
-        let der_null = Any::new(vec![0x05, 0x00]);
+        let der_null = any(vec![0x05, 0x00]);
         let ctp = CertificateTrustPolicy::default();
 
         let chain = generate_ephemeral_chain("ed25519-profile.local").unwrap();
@@ -865,7 +873,7 @@ mod tests {
             .unwrap();
 
         let assert_rejected = |cert: &Certificate, expected_description: &str| {
-            let der = rasn::der::encode(cert).unwrap();
+            let der = DerEncode::to_der(cert).unwrap();
             let mut validation_log = StatusTracker::default();
             assert!(
                 check_end_entity_certificate_profile(&der, &ctp, &mut validation_log, None)
@@ -880,7 +888,7 @@ mod tests {
         };
 
         // Parameters in the subject public key info algorithm.
-        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        let mut cert: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         cert.tbs_certificate
             .subject_public_key_info
             .algorithm
@@ -891,7 +899,7 @@ mod tests {
         );
 
         // Parameters in both the outer and the signed (tbsCertificate) signature algorithm.
-        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        let mut cert: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         cert.signature_algorithm.parameters = Some(der_null.clone());
         cert.tbs_certificate.signature.parameters = Some(der_null.clone());
         assert_rejected(
@@ -907,7 +915,7 @@ mod tests {
         wasm_bindgen_test
     )]
     fn signature_algorithm_must_match_tbs_signature() {
-        let der_null = Any::new(vec![0x05, 0x00]);
+        let der_null = any(vec![0x05, 0x00]);
         let ctp = CertificateTrustPolicy::default();
 
         let chain = generate_ephemeral_chain("ed25519-profile.local").unwrap();
@@ -916,15 +924,15 @@ mod tests {
             "certificate signature algorithm does not match tbsCertificate signature algorithm";
 
         // Parameters only in the outer signature algorithm.
-        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        let mut cert: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         cert.signature_algorithm.parameters = Some(der_null.clone());
 
         // Parameters only in the signed (tbsCertificate) signature algorithm.
-        let mut cert_inner: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        let mut cert_inner: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         cert_inner.tbs_certificate.signature.parameters = Some(der_null);
 
         for cert in [cert, cert_inner] {
-            let der = rasn::der::encode(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             let mut validation_log = StatusTracker::default();
             assert!(
                 check_end_entity_certificate_profile(&der, &ctp, &mut validation_log, None)
@@ -1000,20 +1008,20 @@ mod tests {
     )]
     fn ocsp_signing_allows_nonrepudiation_without_digital_signature() {
         let chain = generate_ephemeral_chain("ocsp-key-usage.local").unwrap();
-        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        let mut cert: Certificate = DerDecode::from_der(&chain.ee_der).unwrap();
         // KeyUsage BIT STRING with only nonRepudiation asserted.
         extension(&mut cert, &[2, 5, 29, 15], vec![0x03, 0x02, 0x06, 0x40]);
         extension(
             &mut cert,
             &[2, 5, 29, 37],
-            rasn::der::encode(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9])]).unwrap(),
+            DerEncode::to_der(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9])]).unwrap(),
         );
 
         let ctp = CertificateTrustPolicy::default();
         let mut validation_log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(
-                &rasn::der::encode(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &ctp,
                 &mut validation_log,
                 None,
@@ -1026,12 +1034,12 @@ mod tests {
         extension(
             &mut cert,
             &[2, 5, 29, 37],
-            rasn::der::encode(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4])]).unwrap(),
+            DerEncode::to_der(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4])]).unwrap(),
         );
         let mut validation_log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(
-                &rasn::der::encode(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &ctp,
                 &mut validation_log,
                 None,
@@ -1056,14 +1064,25 @@ mod tests {
     }
 
     fn profile_cert() -> Certificate {
-        rasn::der::decode(&x509_der_from_pem(include_bytes!(
+        DerDecode::from_der(&x509_der_from_pem(include_bytes!(
             "../../../tests/fixtures/certs/ed25519.pub"
         )))
         .unwrap()
     }
 
-    fn oid(value: &[u32]) -> rasn::types::ObjectIdentifier {
-        rasn::types::ObjectIdentifier::new(value.to_vec()).unwrap()
+    fn oid(value: &[u32]) -> ObjectIdentifier {
+        ObjectIdentifier::new(
+            &value
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join("."),
+        )
+        .unwrap()
+    }
+
+    fn any(value: Vec<u8>) -> Any {
+        Any::from_der(&value).unwrap()
     }
 
     fn extension(cert: &mut Certificate, id: &[u32], value: Vec<u8>) {
@@ -1072,12 +1091,12 @@ mod tests {
             .iter_mut()
             .find(|e| e.extn_id == oid(id))
             .unwrap();
-        existing.extn_value = value.into();
+        existing.extn_value = OctetString::new(value).unwrap();
     }
 
     fn assert_profile_error(cert: &Certificate, expected: super::CertificateProfileError) {
         // These mutations test profile validation, not certificate signature verification.
-        let der = rasn::der::encode(cert).unwrap();
+        let der = DerEncode::to_der(cert).unwrap();
         let mut log = StatusTracker::default();
         let result = super::check_certificate_profile(
             &der,
@@ -1103,38 +1122,36 @@ mod tests {
         assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
 
         let mut cert = profile_cert();
-        cert.tbs_certificate.version = rasn_pkix::Version::V2;
+        cert.tbs_certificate.version = x509_cert::Version::V2;
         assert_profile_error(
             &cert,
             super::CertificateProfileError::InvalidCertificateVersion,
         );
 
         let mut cert = profile_cert();
-        cert.signature_algorithm.algorithm = oid(&[1, 2, 3, 4]);
+        cert.signature_algorithm.oid = oid(&[1, 2, 3, 4]);
         cert.tbs_certificate.signature = cert.signature_algorithm.clone();
         assert_profile_error(&cert, super::CertificateProfileError::UnsupportedAlgorithm);
 
         for issuer in [false, true] {
             let mut cert = profile_cert();
             if issuer {
-                cert.tbs_certificate.issuer_unique_id =
-                    Some(rasn::types::BitString::from_slice(&[1]));
+                cert.tbs_certificate.issuer_unique_id = Some(BitString::from_bytes(&[1]).unwrap());
             } else {
-                cert.tbs_certificate.subject_unique_id =
-                    Some(rasn::types::BitString::from_slice(&[1]));
+                cert.tbs_certificate.subject_unique_id = Some(BitString::from_bytes(&[1]).unwrap());
             }
             assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
         }
 
         for parameters in [
             None,
-            Some(Any::new(vec![5, 0])),
-            Some(Any::new(rasn::der::encode(&oid(&[1, 2, 3, 4])).unwrap())),
+            Some(any(vec![5, 0])),
+            Some(any(DerEncode::to_der(&oid(&[1, 2, 3, 4])).unwrap())),
         ] {
             let mut cert = profile_cert();
             cert.tbs_certificate.subject_public_key_info.algorithm =
-                rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid(&[1, 2, 840, 10045, 2, 1]),
+                x509_cert::spki::AlgorithmIdentifierOwned {
+                    oid: oid(&[1, 2, 840, 10045, 2, 1]),
                     parameters,
                 };
             assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
@@ -1159,7 +1176,7 @@ mod tests {
             extension(
                 &mut cert,
                 &[2, 5, 29, 37],
-                rasn::der::encode(&ekus).unwrap(),
+                DerEncode::to_der(&ekus).unwrap(),
             );
             assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
         }
@@ -1186,14 +1203,14 @@ mod tests {
                 .extensions
                 .as_mut()
                 .unwrap()
-                .push(rasn_pkix::Extension {
+                .push(x509_cert::ext::Extension {
                     extn_id: oid(&[1, 2, 3, 4]),
                     critical,
-                    extn_value: vec![5, 0].into(),
+                    extn_value: OctetString::new([5, 0]).unwrap(),
                 });
             let mut log = StatusTracker::default();
             let result = super::check_certificate_profile(
-                &rasn::der::encode(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut log,
                 None,
@@ -1211,7 +1228,7 @@ mod tests {
         let mut log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(
-                &rasn::der::encode(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &ctp,
                 &mut log,
                 None,
@@ -1232,7 +1249,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .retain(|e| e.extn_id != oid(&[2, 5, 29, 37]));
-        let der = rasn::der::encode(&cert).unwrap();
+        let der = DerEncode::to_der(&cert).unwrap();
         let mut log = StatusTracker::default();
         assert_eq!(
             check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
@@ -1268,24 +1285,24 @@ mod tests {
 
         for required in [&timestamp, &ocsp] {
             for purposes in [
-                vec![claim_signing.clone()],
-                vec![email.clone()],
-                vec![email.clone(), claim_signing.clone()],
-                vec![timestamp.clone()],
-                vec![ocsp.clone()],
+                vec![claim_signing],
+                vec![email],
+                vec![email, claim_signing],
+                vec![timestamp],
+                vec![ocsp],
             ] {
                 let mut cert = profile_cert();
 
                 extension(
                     &mut cert,
                     &[2, 5, 29, 37],
-                    rasn::der::encode(&purposes).unwrap(),
+                    DerEncode::to_der(&purposes).unwrap(),
                 );
                 let mut ctp = CertificateTrustPolicy::default();
                 ctp.add_mandatory_ekus(required.to_string().as_bytes());
                 let mut log = StatusTracker::default();
                 let result = check_end_entity_certificate_profile(
-                    &rasn::der::encode(&cert).unwrap(),
+                    &DerEncode::to_der(&cert).unwrap(),
                     &ctp,
                     &mut log,
                     None,
@@ -1317,15 +1334,15 @@ mod tests {
         let any = oid(&[2, 5, 29, 37, 0]);
 
         for purposes in [
-            vec![email.clone()],
-            vec![document.clone()],
+            vec![email],
+            vec![document],
             vec![microsoft],
-            vec![claim.clone()],
-            vec![email.clone(), claim],
-            vec![timestamp.clone()],
-            vec![ocsp.clone()],
-            vec![timestamp.clone(), email.clone()],
-            vec![timestamp.clone(), ocsp.clone()],
+            vec![claim],
+            vec![email, claim],
+            vec![timestamp],
+            vec![ocsp],
+            vec![timestamp, email],
+            vec![timestamp, ocsp],
             vec![any],
             vec![],
         ] {
@@ -1333,10 +1350,10 @@ mod tests {
             extension(
                 &mut cert,
                 &[2, 5, 29, 37],
-                rasn::der::encode(&purposes).unwrap(),
+                DerEncode::to_der(&purposes).unwrap(),
             );
 
-            let der = rasn::der::encode(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
 
             for use_defaults in [false, true] {
                 for configured in [
@@ -1441,14 +1458,14 @@ mod tests {
         ] {
             let mut cert = profile_cert();
             cert.tbs_certificate.subject_public_key_info.algorithm =
-                rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid(&[1, 2, 840, 113549, 1, 1, 1]),
-                    parameters: Some(Any::new(vec![5, 0])),
+                x509_cert::spki::AlgorithmIdentifierOwned {
+                    oid: oid(&[1, 2, 840, 113549, 1, 1, 1]),
+                    parameters: Some(any(vec![5, 0])),
                 };
             cert.tbs_certificate
                 .subject_public_key_info
-                .subject_public_key = rasn::types::BitString::from_slice(&key);
-            let der = rasn::der::encode(&cert).unwrap();
+                .subject_public_key = BitString::from_bytes(&key).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             assert_eq!(
                 super::check_certificate_profile(
                     &der,
@@ -1460,43 +1477,43 @@ mod tests {
             );
         }
 
-        #[derive(rasn::AsnType, rasn::Encode, rasn::Decode)]
+        #[derive(der::Sequence)]
         struct RsaKey {
-            modulus: rasn::types::Integer,
-            exponent: rasn::types::Integer,
+            modulus: der::asn1::Int,
+            exponent: der::asn1::Int,
         }
 
-        let mut cert: Certificate = rasn::der::decode(&x509_der_from_pem(include_bytes!(
+        let mut cert: Certificate = DerDecode::from_der(&x509_der_from_pem(include_bytes!(
             "../../../tests/fixtures/certs/ps256.pub"
         )))
         .unwrap();
-        let key: RsaKey = rasn::der::decode(
+        let key: RsaKey = Decode::from_der(
             cert.tbs_certificate
                 .subject_public_key_info
                 .subject_public_key
-                .as_raw_slice(),
+                .as_bytes()
+                .unwrap(),
         )
         .unwrap();
         let invalid = RsaKey {
             modulus: key.modulus,
-            exponent: 2.into(),
+            exponent: der::asn1::Int::new(&[2]).unwrap(),
         };
         cert.tbs_certificate
             .subject_public_key_info
-            .subject_public_key =
-            rasn::types::BitString::from_slice(&rasn::der::encode(&invalid).unwrap());
+            .subject_public_key = BitString::from_bytes(&invalid.to_der().unwrap()).unwrap();
 
         assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
     }
 
     #[test]
     fn pss_parameters_require_matching_supported_hashes() {
-        #[derive(rasn::AsnType, rasn::Encode)]
+        #[derive(der::Sequence)]
         struct PssParameters {
-            #[rasn(tag(explicit(0)))]
-            hash: rasn_pkix::AlgorithmIdentifier,
-            #[rasn(tag(explicit(1)))]
-            mask: rasn_pkix::AlgorithmIdentifier,
+            #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
+            hash: der::Any,
+            #[asn1(context_specific = "1", tag_mode = "EXPLICIT")]
+            mask: der::Any,
         }
 
         for (hash, mask_hash, valid) in [
@@ -1522,34 +1539,39 @@ mod tests {
                 false,
             ),
         ] {
-            let hash_alg = rasn_pkix::AlgorithmIdentifier {
-                algorithm: oid(&hash),
+            let hash_alg = x509_cert::spki::AlgorithmIdentifierOwned {
+                oid: oid(&hash),
                 parameters: None,
             };
 
-            let mask_alg = rasn_pkix::AlgorithmIdentifier {
-                algorithm: oid(&mask_hash),
+            let mask_alg = x509_cert::spki::AlgorithmIdentifierOwned {
+                oid: oid(&mask_hash),
                 parameters: None,
             };
 
-            let params = rasn::der::encode(&PssParameters {
-                hash: hash_alg,
-                mask: rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid(&[1, 2, 840, 113549, 1, 1, 8]),
-                    parameters: Some(Any::new(rasn::der::encode(&mask_alg).unwrap())),
-                },
+            let params = Encode::to_der(&PssParameters {
+                hash: der::Any::from_der(&hash_alg.to_der().unwrap()).unwrap(),
+                mask: der::Any::from_der(
+                    &x509_cert::spki::AlgorithmIdentifierOwned {
+                        oid: oid(&[1, 2, 840, 113549, 1, 1, 8]),
+                        parameters: Some(any(DerEncode::to_der(&mask_alg).unwrap())),
+                    }
+                    .to_der()
+                    .unwrap(),
+                )
+                .unwrap(),
             })
             .unwrap();
 
             let mut cert = profile_cert();
-            cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
-                algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
-                parameters: Some(Any::new(params)),
+            cert.signature_algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
+                oid: oid(&[1, 2, 840, 113549, 1, 1, 10]),
+                parameters: Some(any(params)),
             };
             cert.tbs_certificate.signature = cert.signature_algorithm.clone();
             let mut log = StatusTracker::default();
             let result = super::check_certificate_profile(
-                &rasn::der::encode(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut log,
                 None,
@@ -1563,8 +1585,8 @@ mod tests {
         }
 
         let mut cert = profile_cert();
-        cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
-            algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
+        cert.signature_algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
+            oid: oid(&[1, 2, 840, 113549, 1, 1, 10]),
             parameters: None,
         };
         cert.tbs_certificate.signature = cert.signature_algorithm.clone();
@@ -1572,33 +1594,37 @@ mod tests {
     }
 
     fn timestamp_at(seconds: i64) -> crate::crypto::asn1::rfc3161::TstInfo {
-        use bcder::decode::Constructed;
-        #[derive(rasn::AsnType, rasn::Encode)]
+        #[derive(der::Sequence)]
         struct Imprint {
-            algorithm: rasn_pkix::AlgorithmIdentifier,
-            digest: rasn::types::OctetString,
+            algorithm: spki::AlgorithmIdentifierOwned,
+            digest: der::asn1::OctetString,
         }
-        #[derive(rasn::AsnType, rasn::Encode)]
+        #[derive(der::Sequence)]
         struct Timestamp {
-            version: rasn::types::Integer,
-            policy: rasn::types::ObjectIdentifier,
+            version: der::asn1::Uint,
+            policy: der::asn1::ObjectIdentifier,
             imprint: Imprint,
-            serial: rasn::types::Integer,
-            time: rasn::types::GeneralizedTime,
+            serial: der::asn1::Uint,
+            time: der::asn1::GeneralizedTime,
         }
 
-        let bytes = rasn::der::encode(&Timestamp {
-            version: 1.into(),
-            policy: oid(&[1, 2, 3]),
+        let bytes = Encode::to_der(&Timestamp {
+            version: der::asn1::Uint::new(&[1]).unwrap(),
+            policy: der::asn1::ObjectIdentifier::new_unwrap("1.2.3"),
             imprint: Imprint {
-                algorithm: rasn_pkix::AlgorithmIdentifier {
-                    algorithm: oid(&[2, 16, 840, 1, 101, 3, 4, 2, 1]),
+                algorithm: spki::AlgorithmIdentifierOwned {
+                    oid: der::asn1::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
                     parameters: None,
                 },
-                digest: vec![0; 32].into(),
+                digest: der::asn1::OctetString::new([0; 32]).unwrap(),
             },
-            serial: 1.into(),
-            time: chrono::DateTime::from_timestamp(seconds, 0).unwrap().into(),
+            serial: der::asn1::Uint::new(&[1]).unwrap(),
+            time: der::asn1::GeneralizedTime::from_system_time(
+                time::OffsetDateTime::from_unix_timestamp(seconds)
+                    .unwrap()
+                    .into(),
+            )
+            .unwrap(),
         })
         .unwrap();
         Constructed::decode(
@@ -1612,7 +1638,7 @@ mod tests {
     #[test]
     fn supplied_timestamp_checks_both_validity_boundaries_inclusively() {
         let cert = profile_cert();
-        let der = rasn::der::encode(&cert).unwrap();
+        let der = DerEncode::to_der(&cert).unwrap();
         let (_, parsed) = x509_parser::prelude::X509Certificate::from_der(&der).unwrap();
         let start = parsed.validity().not_before.timestamp();
         let end = parsed.validity().not_after.timestamp();
@@ -1643,12 +1669,12 @@ mod tests {
 
     #[test]
     fn malformed_pss_parameter_structures_fail_closed() {
-        let sha256 = rasn_pkix::AlgorithmIdentifier {
-            algorithm: oid(&[2, 16, 840, 1, 101, 3, 4, 2, 1]),
+        let sha256 = x509_cert::spki::AlgorithmIdentifierOwned {
+            oid: oid(&[2, 16, 840, 1, 101, 3, 4, 2, 1]),
             parameters: None,
         };
 
-        let hash = rasn::der::encode(&sha256).unwrap();
+        let hash = DerEncode::to_der(&sha256).unwrap();
         let mut malformed = vec![
             vec![5, 0],
             vec![0x30, 0],
@@ -1672,13 +1698,13 @@ mod tests {
 
         for params in malformed {
             let mut cert = profile_cert();
-            cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
-                algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
-                parameters: Some(Any::new(params)),
+            cert.signature_algorithm = x509_cert::spki::AlgorithmIdentifierOwned {
+                oid: oid(&[1, 2, 840, 113549, 1, 1, 10]),
+                parameters: Some(any(params)),
             };
             cert.tbs_certificate.signature = cert.signature_algorithm.clone();
             let result = super::check_certificate_profile(
-                &rasn::der::encode(&cert).unwrap(),
+                &DerEncode::to_der(&cert).unwrap(),
                 &CertificateTrustPolicy::default(),
                 &mut StatusTracker::default(),
                 None,
@@ -1692,7 +1718,6 @@ mod tests {
 
     #[test]
     fn recognized_critical_extensions_do_not_look_like_unknown_extensions() {
-        use x509_parser::extensions::ParsedExtension;
         let fixtures = [
             (
                 vec![2, 5, 29, 33],
@@ -1734,12 +1759,12 @@ mod tests {
                 .extensions
                 .as_mut()
                 .unwrap()
-                .push(rasn_pkix::Extension {
-                    extn_id: id.clone(),
+                .push(x509_cert::ext::Extension {
+                    extn_id: id,
                     critical: true,
-                    extn_value: value.into(),
+                    extn_value: OctetString::new(value).unwrap(),
                 });
-            let der = rasn::der::encode(&cert).unwrap();
+            let der = DerEncode::to_der(&cert).unwrap();
             let (_, parsed) = x509_parser::prelude::X509Certificate::from_der(&der).unwrap();
             let parsed_extension = parsed
                 .extensions()

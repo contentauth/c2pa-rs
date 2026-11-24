@@ -113,9 +113,11 @@ jobs:
       - name: Select Strawberry Perl for vendored OpenSSL
         if: runner.os == 'Windows'
         shell: pwsh
-        # Git's Perl lacks modules required by OpenSSL's Configure script.
         run: |
-          "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe" >> $env:GITHUB_ENV
+          $perl = 'C:/Strawberry/perl/bin/perl.exe'
+          & $perl -MLocale::Maketext::Simple -MIPC::Cmd -e 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "OPENSSL_SRC_PERL=$perl" >> $env:GITHUB_ENV
 
       - name: Run tests
         shell: bash
@@ -217,9 +219,11 @@ jobs:
       - name: Select Strawberry Perl for vendored OpenSSL
         if: runner.os == 'Windows'
         shell: pwsh
-        # Git's Perl lacks modules required by OpenSSL's Configure script.
         run: |
-          "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe" >> $env:GITHUB_ENV
+          $perl = 'C:/Strawberry/perl/bin/perl.exe'
+          & $perl -MLocale::Maketext::Simple -MIPC::Cmd -e 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "OPENSSL_SRC_PERL=$perl" >> $env:GITHUB_ENV
 
       - name: Run tests
         shell: bash
