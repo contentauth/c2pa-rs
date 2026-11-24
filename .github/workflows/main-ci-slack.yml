@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   notify:
-    uses: contentauth/ci-workflows/.github/workflows/ci-slack.yml@d8fc3f18fb41d14da72feded31923c8e6b9f6b70
+    uses: contentauth/ci-workflows/.github/workflows/ci-slack.yml@fcd4863b7ed70981b7b0b07c5d2d5160b170cfd3
     with:
       branch: main
       workflow-names: '["*"]'
