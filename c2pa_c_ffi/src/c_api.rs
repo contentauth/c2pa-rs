@@ -400,8 +400,13 @@ struct MallocBody {
     pos: usize,
 }
 
-impl From<C2paHttpResponse> for MallocBody {
-    fn from(response: C2paHttpResponse) -> Self {
+impl MallocBody {
+    /// Adopts the response body's allocation.
+    ///
+    /// # Safety
+    /// The body must satisfy the ownership and allocation requirements of
+    /// [`C2paHttpResponse::into_http_response`].
+    unsafe fn from_raw(response: C2paHttpResponse) -> Self {
         Self {
             ptr: response.body,
             len: if response.body.is_null() {
@@ -436,21 +441,48 @@ impl Drop for MallocBody {
     }
 }
 
-/// Converts a [`C2paHttpResponse`] into an `http::Response`.
-///
-/// Retains the C allocation as a reader, calling `free()` when it is dropped,
-/// including when response construction fails.
-///
-/// # Safety
-/// `body` must have been allocated with `malloc()` (or be null).
-/// This impl is intentionally *not* marked `unsafe` because `TryFrom`
-/// does not support it; callers must uphold the `malloc` invariant.
-impl TryFrom<C2paHttpResponse> for c2pa::http::http::Response<Box<dyn std::io::Read>> {
-    type Error = c2pa::http::HttpResolverError;
-
-    fn try_from(resp: C2paHttpResponse) -> Result<Self, Self::Error> {
-        let status = resp.status;
-        let body = MallocBody::from(resp);
+impl C2paHttpResponse {
+    /// Converts this raw response into an `http::Response`.
+    ///
+    /// Retains the C allocation as a reader, calling `free()` when it is dropped,
+    /// including when response construction fails. A null body is treated as
+    /// empty regardless of `body_len`.
+    ///
+    /// # Safety
+    /// A non-null `body` must be a live allocation compatible with `libc::free`,
+    /// containing at least `body_len` initialized, readable bytes. Ownership of
+    /// the allocation must be exclusive and is transferred by this call, even
+    /// if it returns an error. The previous owner must not access or free the
+    /// allocation after calling this method.
+    ///
+    /// # Examples
+    /// Adopting a raw body requires an explicit unsafe call:
+    ///
+    /// ```compile_fail,E0133
+    /// use c2pa_c::C2paHttpResponse;
+    ///
+    /// fn convert(response: C2paHttpResponse) {
+    ///     let _ = response.into_http_response();
+    /// }
+    /// ```
+    ///
+    /// The previous safe `TryFrom` conversion is no longer available:
+    ///
+    /// ```compile_fail,E0277
+    /// use c2pa_c::C2paHttpResponse;
+    ///
+    /// fn convert(response: C2paHttpResponse) {
+    ///     let _: c2pa::http::http::Response<Box<dyn std::io::Read>> =
+    ///         response.try_into().unwrap();
+    /// }
+    /// ```
+    pub unsafe fn into_http_response(
+        self,
+    ) -> Result<c2pa::http::http::Response<Box<dyn std::io::Read>>, c2pa::http::HttpResolverError>
+    {
+        let status = self.status;
+        // SAFETY: the caller upholds this method's body ownership requirements.
+        let body = unsafe { MallocBody::from_raw(self) };
         c2pa::http::http::Response::builder()
             .status(status as u16)
             .body(Box::new(body) as Box<dyn std::io::Read>)
@@ -516,7 +548,8 @@ impl c2pa::http::SyncHttpResolver for C2paHttpResolver {
             return Err(HttpResolverError::Other(msg.into()));
         }
 
-        c_response.try_into()
+        // SAFETY: a successful callback transfers its malloc-owned body to Rust.
+        unsafe { c_response.into_http_response() }
     }
 }
 
@@ -2898,7 +2931,7 @@ mod tests {
     fn test_http_body_allocation_identity_and_partial_reads() {
         let response = malloc_http_response(200, b"hello");
         let original = response.body;
-        let mut body = MallocBody::from(response);
+        let mut body = unsafe { MallocBody::from_raw(response) };
         assert_eq!(body.ptr, original);
         assert_eq!(body.read(&mut []).unwrap(), 0);
         let mut first = [0; 2];
@@ -2926,8 +2959,7 @@ mod tests {
             },
         ];
         for response in responses {
-            let mut response =
-                c2pa::http::http::Response::<Box<dyn Read>>::try_from(response).unwrap();
+            let mut response = unsafe { response.into_http_response() }.unwrap();
             let mut bytes = Vec::new();
             assert_eq!(response.body_mut().read_to_end(&mut bytes).unwrap(), 0);
             assert!(bytes.is_empty());
@@ -3028,7 +3060,7 @@ mod tests {
     #[test]
     fn test_http_body_drop_before_eof() {
         let response = malloc_http_response(200, b"hello");
-        let mut response = c2pa::http::http::Response::<Box<dyn Read>>::try_from(response).unwrap();
+        let mut response = unsafe { response.into_http_response() }.unwrap();
         let mut byte = [0];
         assert_eq!(response.body_mut().read(&mut byte).unwrap(), 1);
         assert_eq!(&byte, b"h");
