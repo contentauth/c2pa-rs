@@ -13,7 +13,6 @@
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
-use chrono::{DateTime, Utc};
 use coset::CoseSign1;
 use x509_parser::{
     der_parser::oid,
@@ -29,6 +28,7 @@ use super::{
 use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
+        internal,
         time_stamp::{verify_time_stamp, TimeStampError},
     },
     log_item,
@@ -50,7 +50,7 @@ const SMIME_POLICIES: [&str; 6] = [
 
 fn interim_certificate_is_acceptable(
     certificate_der: &[u8],
-    now: DateTime<Utc>,
+    now: time::OffsetDateTime,
     trusted_timestamp: Option<&TstInfo>,
     policy: &CertificateTrustPolicy,
 ) -> Result<bool, CoseError> {
@@ -88,10 +88,10 @@ fn interim_certificate_is_acceptable(
         return Ok(true);
     }
 
-    if !(now.timestamp() < INTERIM_TRUST_END
+    if !(now.unix_timestamp() < INTERIM_TRUST_END
         || trusted_timestamp.is_some_and(|tst| {
-            let time: DateTime<Utc> = tst.gen_time.clone().into();
-            time.timestamp() < INTERIM_TRUST_END
+            let time: time::OffsetDateTime = tst.gen_time.clone().into();
+            time.unix_timestamp() < INTERIM_TRUST_END
         }))
     {
         return Ok(false);
@@ -329,7 +329,7 @@ impl Verifier<'_> {
 
             let acceptable = interim_certificate_is_acceptable(
                 &certificates[0],
-                Utc::now(),
+                internal::time::utc_now(),
                 timestamp,
                 &effective_policy,
             );
@@ -449,8 +449,8 @@ mod tests {
         certificate
     }
 
-    fn at(seconds: i64) -> DateTime<Utc> {
-        DateTime::from_timestamp(seconds, 0).unwrap()
+    fn at(seconds: i64) -> time::OffsetDateTime {
+        time::OffsetDateTime::from_unix_timestamp(seconds).unwrap()
     }
 
     fn timestamp_at(seconds: i64) -> TstInfo {
@@ -854,8 +854,8 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let time: DateTime<Utc> = timestamp.gen_time.into();
-        assert_eq!(time.timestamp(), INTERIM_TRUST_END - 1);
+        let time: time::OffsetDateTime = timestamp.gen_time.into();
+        assert_eq!(time.unix_timestamp(), INTERIM_TRUST_END - 1);
         assert!(store
             .trusted_cawg_timestamp_for_assertion(&claim, "cawg.identity", &mut log)
             .unwrap()

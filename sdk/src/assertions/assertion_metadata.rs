@@ -13,7 +13,6 @@
 
 use std::collections::HashMap;
 
-use chrono::{SecondsFormat, Utc};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -22,6 +21,7 @@ use serde_json::Value;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest},
+    crypto::internal,
     error::Result,
     hashed_uri::HashedUri,
     utils::cbor_types::DateT,
@@ -58,8 +58,15 @@ impl AssertionMetadata {
     pub const LABEL: &'static str = labels::ASSERTION_METADATA;
 
     pub fn new() -> Self {
-        // Get current time (platform-specific)
-        let date_time = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let now = internal::time::utc_now();
+        let date_time = format!(
+            "{}T{:02}:{:02}:{:02}.{:03}Z",
+            now.date(),
+            now.hour(),
+            now.minute(),
+            now.second(),
+            now.millisecond(),
+        );
 
         Self {
             reviews: None,

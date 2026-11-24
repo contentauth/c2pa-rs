@@ -14,7 +14,6 @@
 use std::borrow::Cow;
 
 use asn1_rs::{Any, Class, FromDer, Header, Tag};
-use chrono::{DateTime, Utc};
 use thiserror::Error;
 use web_time::SystemTime;
 use x509_parser::{
@@ -233,9 +232,9 @@ pub fn check_certificate_profile(
     if let Some(tst_info) = _tst_info_opt {
         // A valid time stamp was associated with this signature: Ensure that the
         // timestamp was valid at that time.
-        let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
+        let signing_time: time::OffsetDateTime = tst_info.gen_time.clone().into();
         if !signcert.validity().is_valid_at(
-            x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
+            x509_parser::time::ASN1Time::from_timestamp(signing_time.unix_timestamp())
                 .map_err(|_| CertificateProfileError::InvalidCertificate)?,
         ) {
             log_item!("", "certificate expired", "check_certificate_profile")
@@ -1621,7 +1620,9 @@ mod tests {
             },
             serial: der::asn1::Uint::new(&[1]).unwrap(),
             time: der::asn1::GeneralizedTime::from_system_time(
-                chrono::DateTime::from_timestamp(seconds, 0).unwrap().into(),
+                time::OffsetDateTime::from_unix_timestamp(seconds)
+                    .unwrap()
+                    .into(),
             )
             .unwrap(),
         })

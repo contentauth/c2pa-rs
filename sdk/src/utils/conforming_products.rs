@@ -177,6 +177,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::crypto::internal;
 
     // ---------------------------------------------------------------------------
     // Test cert builder
@@ -224,14 +225,13 @@ mod tests {
         }
         let subject = RdnSequence(rdns);
 
-        let now = crate::crypto::internal::time::utc_now();
+        let now = internal::time::utc_now();
         let validity = Validity {
             not_before: Time::GeneralTime(
-                GeneralizedTime::from_system_time((now - chrono::Duration::days(1)).into())
-                    .unwrap(),
+                GeneralizedTime::from_system_time((now - time::Duration::days(1)).into()).unwrap(),
             ),
             not_after: Time::GeneralTime(
-                GeneralizedTime::from_system_time((now + chrono::Duration::days(365)).into())
+                GeneralizedTime::from_system_time((now + time::Duration::days(365)).into())
                     .unwrap(),
             ),
         };

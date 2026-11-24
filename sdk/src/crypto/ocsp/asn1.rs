@@ -21,7 +21,6 @@
 //! CertId and its enclosing requests retain signed, unrestricted-length serials;
 //! the upstream RFC 5280 certificate profile instead constrains serial numbers.
 
-use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 pub(crate) use cms::x509_cert::ext::{pkix::crl::CrlReason, Extension};
 use der::{
     asn1::{Any, AnyRef, BitString, Int, OctetString},
@@ -29,6 +28,7 @@ use der::{
     Writer,
 };
 use spki::AlgorithmIdentifierOwned;
+use time::{macros::format_description, OffsetDateTime, PrimitiveDateTime};
 pub(crate) use x509_ocsp::{OcspResponse as Response, OcspResponseStatus, ResponderId};
 
 // Keep original time values for response-signature verification. Unlike der's
@@ -36,7 +36,7 @@ pub(crate) use x509_ocsp::{OcspResponse as Response, OcspResponseStatus, Respond
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OcspGeneralizedTime {
     value: Vec<u8>,
-    pub(crate) datetime: DateTime<Utc>,
+    pub(crate) datetime: OffsetDateTime,
 }
 
 impl FixedTag for OcspGeneralizedTime {
@@ -60,8 +60,11 @@ impl<'a> DecodeValue<'a> for OcspGeneralizedTime {
             return Err(Self::TAG.value_error().into());
         }
 
-        let datetime = NaiveDateTime::parse_from_str(&text[..14], "%Y%m%d%H%M%S")
-            .map_err(|_| Self::TAG.value_error())?;
+        let datetime = PrimitiveDateTime::parse(
+            &text[..14],
+            format_description!("[year][month][day][hour][minute][second]"),
+        )
+        .map_err(|_| Self::TAG.value_error())?;
         let fraction = &text[14..text.len() - 1];
         let nanoseconds = if fraction.is_empty() {
             0
@@ -79,9 +82,9 @@ impl<'a> DecodeValue<'a> for OcspGeneralizedTime {
                 * 10u32.pow(9 - digits.len() as u32)
         };
         let datetime = datetime
-            .with_nanosecond(nanoseconds)
-            .ok_or_else(|| Self::TAG.value_error())?
-            .and_utc();
+            .replace_nanosecond(nanoseconds)
+            .map_err(|_| Self::TAG.value_error())?
+            .assume_utc();
 
         Ok(Self {
             value: value.to_vec(),
@@ -199,7 +202,6 @@ pub(crate) struct RevokedInfo {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use chrono::Timelike;
     use der::{asn1::Any, Decode, Encode, Tag};
 
     use super::{BasicOcspResponse, OcspGeneralizedTime, Response};
@@ -221,7 +223,7 @@ mod tests {
         ] {
             let encoded = encoded_time(value);
             let decoded = OcspGeneralizedTime::from_der(&encoded).unwrap();
-            assert_eq!(decoded.datetime.timestamp(), seconds);
+            assert_eq!(decoded.datetime.unix_timestamp(), seconds);
             assert_eq!(decoded.datetime.nanosecond(), nanoseconds);
             assert_eq!(decoded.to_der().unwrap(), encoded);
         }

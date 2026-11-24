@@ -14,7 +14,6 @@
 use async_generic::async_generic;
 use async_trait::async_trait;
 use base64::{prelude::BASE64_URL_SAFE, Engine};
-use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
@@ -22,6 +21,7 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy},
+        internal,
     },
     identity::{
         claim_aggregation::{
@@ -773,7 +773,7 @@ impl<'a> IcaSignatureVerifier<'a> {
             ));
         };
 
-        let now = Utc::now().fixed_offset();
+        let now = internal::time::utc_now();
 
         if now < valid_from {
             return Err((
@@ -785,8 +785,7 @@ impl<'a> IcaSignatureVerifier<'a> {
         }
 
         if let Some(tst_info) = maybe_tst_info {
-            let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-            let cawg_signer_time = cawg_signer_time.fixed_offset();
+            let cawg_signer_time: time::OffsetDateTime = tst_info.gen_time.clone().into();
 
             if cawg_signer_time < valid_from {
                 return Err((
@@ -815,7 +814,7 @@ impl<'a> IcaSignatureVerifier<'a> {
             return Ok(());
         };
 
-        let now = Utc::now().fixed_offset();
+        let now = internal::time::utc_now();
 
         if now > valid_until {
             return Err((
@@ -827,8 +826,7 @@ impl<'a> IcaSignatureVerifier<'a> {
         }
 
         if let Some(tst_info) = maybe_tst_info {
-            let cawg_signer_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-            let cawg_signer_time = cawg_signer_time.fixed_offset();
+            let cawg_signer_time: time::OffsetDateTime = tst_info.gen_time.clone().into();
 
             if cawg_signer_time > valid_until {
                 return Err((

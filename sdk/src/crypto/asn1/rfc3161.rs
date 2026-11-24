@@ -469,7 +469,6 @@ mod tests {
     use std::str::FromStr;
 
     use bcder::Mode;
-    use chrono::{TimeZone, Utc};
 
     use super::*;
 
@@ -550,9 +549,7 @@ mod tests {
             policy: Oid::from_str("1.2.3.4").unwrap(),
             message_imprint: imprint(),
             serial_number: u64::MAX.into(),
-            gen_time: Utc
-                .timestamp_opt(1_577_836_800, 0)
-                .single()
+            gen_time: time::OffsetDateTime::from_unix_timestamp(1_577_836_800)
                 .unwrap()
                 .try_into()
                 .unwrap(),

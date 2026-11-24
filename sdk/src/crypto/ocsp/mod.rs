@@ -16,7 +16,6 @@
 use std::str::FromStr;
 
 use c2pa_raw_crypto::RawSignatureValidationError;
-use chrono::{DateTime, Timelike, Utc};
 use der::{asn1::ObjectIdentifier, Decode, Encode, SliceReader};
 use thiserror::Error;
 use x509_parser::{
@@ -25,7 +24,7 @@ use x509_parser::{
 
 use crate::{
     crypto::{
-        internal::time,
+        internal,
         ocsp::asn1::{
             BasicOcspResponse, CertId, CertStatus, CrlReason, OcspResponseStatus, ResponderId,
         },
@@ -42,10 +41,10 @@ pub struct OcspResponse {
     pub ocsp_der: Vec<u8>,
 
     /// Time when OCSP response should be re-checked.
-    pub next_update: DateTime<Utc>,
+    pub next_update: time::OffsetDateTime,
 
     /// Time when certificate was revoked, if applicable.
-    pub revoked_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<time::OffsetDateTime>,
 
     /// Authenticated responder certificate chain, including an issuing CA
     /// resolved from the signing chain when it signs the response directly.
@@ -59,7 +58,7 @@ impl Default for OcspResponse {
     fn default() -> Self {
         Self {
             ocsp_der: Vec::new(),
-            next_update: time::utc_now(),
+            next_update: internal::time::utc_now(),
             revoked_at: None,
             ocsp_certs: None,
             certificate_serial_num: String::new(),
@@ -87,14 +86,14 @@ impl OcspResponse {
     pub(crate) fn from_der_checked(
         der: &[u8],
         signing_cert_chain: &[Vec<u8>],
-        signing_time: Option<DateTime<Utc>>,
+        signing_time: Option<time::OffsetDateTime>,
         validation_log: &mut StatusTracker,
     ) -> Result<Self, OcspError> {
         Self::from_der_checked_at(
             der,
             signing_cert_chain,
             signing_time,
-            time::utc_now(),
+            internal::time::utc_now(),
             validation_log,
         )
     }
@@ -104,11 +103,11 @@ impl OcspResponse {
     fn from_der_checked_at(
         der: &[u8],
         signing_cert_chain: &[Vec<u8>],
-        signing_time: Option<DateTime<Utc>>,
-        now: DateTime<Utc>,
+        signing_time: Option<time::OffsetDateTime>,
+        now: time::OffsetDateTime,
         validation_log: &mut StatusTracker,
     ) -> Result<Self, OcspError> {
-        let now = now.timestamp();
+        let now = now.unix_timestamp();
         let mut output = OcspResponse {
             ocsp_der: der.to_vec(),
             ..Default::default()
@@ -247,7 +246,7 @@ impl OcspResponse {
             // C2PA only accepts a response whose thisUpdate is not in the future
             // ("The current time is no earlier than thisUpdate"). Such a response
             // says nothing about the certificate, whatever its status.
-            let this_update = status_time(&single_response.this_update)?.timestamp();
+            let this_update = status_time(&single_response.this_update)?.unix_timestamp();
             if now < this_update {
                 continue;
             }
@@ -267,16 +266,17 @@ impl OcspResponse {
                 CertStatus::Good(()) => {
                     // check cert range against signing time
                     let next_update = if let Some(nu) = &single_response.next_update {
-                        status_time(nu)?.timestamp()
+                        status_time(nu)?.unix_timestamp()
                     } else {
                         // use producedAt + 24hr when there is no nextUpdate
-                        response_data.produced_at.datetime.timestamp() + (24 * 60 * 60)
+                        response_data.produced_at.datetime.unix_timestamp() + (24 * 60 * 60)
                     };
 
                     // Was signing time within the acceptable range?
                     let in_range = if let Some(st) = signing_time {
-                        st.timestamp() < this_update
-                            || (st.timestamp() >= this_update && st.timestamp() <= next_update)
+                        st.unix_timestamp() < this_update
+                            || (st.unix_timestamp() >= this_update
+                                && st.unix_timestamp() <= next_update)
                     } else {
                         // If no signing time was provided, use current system time.
                         now >= this_update && now <= next_update
@@ -302,13 +302,13 @@ impl OcspResponse {
                     let revocation_time = &revoked_info.revocation_time;
 
                     let revoked_at_native = status_time(revocation_time)?;
-                    let revoked_at = revoked_at_native.timestamp();
+                    let revoked_at = revoked_at_native.unix_timestamp();
 
                     if let Some(reason) = revoked_info.revocation_reason {
                         if reason == CrlReason::RemoveFromCRL {
                             // Was signing time prior to revocation?
                             let in_range = if let Some(st) = signing_time {
-                                revoked_at > st.timestamp()
+                                revoked_at > st.unix_timestamp()
                             } else {
                                 // No signing time was provided; use current system time.
                                 revoked_at > now
@@ -333,7 +333,7 @@ impl OcspResponse {
 
                             // Was the cert signed before revocation?
                             let in_range = if let Some(st) = signing_time {
-                                st.timestamp() < utc_with_offset.timestamp()
+                                st.unix_timestamp() < utc_with_offset.unix_timestamp()
                             } else {
                                 false
                             };
@@ -596,7 +596,7 @@ pub(crate) enum OcspError {
     CertificateStatusUnknown,
 }
 
-fn status_time(value: &asn1::OcspGeneralizedTime) -> Result<DateTime<Utc>, OcspError> {
+fn status_time(value: &asn1::OcspGeneralizedTime) -> Result<time::OffsetDateTime, OcspError> {
     if value.datetime.nanosecond() != 0 {
         return Err(OcspError::InvalidCertificate);
     }
@@ -618,9 +618,6 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
-    use chrono::DateTime;
-    use chrono::{TimeZone, Utc};
     use der::{
         asn1::{Any, BitString, Int, ObjectIdentifier, OctetString},
         Decode, Encode,
@@ -641,7 +638,7 @@ mod tests {
     };
     use crate::{
         crypto::{
-            internal::time,
+            internal,
             ocsp::{
                 test_responder::{
                     encode_response, good_basic_response as basic_response, ocsp_time,
@@ -677,7 +674,7 @@ mod tests {
         let response = OcspResponse::from_der_checked(
             &encode_response(&basic),
             &signing_cert_chain(),
-            Some(Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap()),
+            Some(time::macros::datetime!(2023-02-01 08:00:00 UTC)),
             &mut log,
         )
         .unwrap();
@@ -694,7 +691,7 @@ mod tests {
     #[test]
     fn trailing_bytes_after_response_preserve_legacy_status() {
         let original = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
-        let signing_time = Some(Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap());
+        let signing_time = Some(time::macros::datetime!(2023-02-01 08:00:00 UTC));
 
         for suffix in [b"\0".as_slice(), b"\x30\x00".as_slice()] {
             let mut encoded = original.to_vec();
@@ -724,7 +721,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2023-02-01 08:00:00 UTC);
 
         let ocsp_data = OcspResponse::from_der_checked(
             rsp_data,
@@ -749,7 +746,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2024-02-01 08:00:00 UTC);
 
         let ocsp_data = OcspResponse::from_der_checked(
             rsp_data,
@@ -777,7 +774,7 @@ mod tests {
         let mut validation_log = StatusTracker::default();
         validation_log.push_current_uri(signature_uri);
 
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2024-02-01 08:00:00 UTC);
 
         OcspResponse::from_der_checked(
             rsp_data,
@@ -805,7 +802,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2024-02-01 08:00:00 UTC);
 
         let ocsp_data = OcspResponse::from_der_checked(
             rsp_data,
@@ -888,14 +885,14 @@ mod tests {
     fn response_from_the_future_is_ignored() {
         // response_good.der has thisUpdate 2025-03-07T14:53:24Z.
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
-        let signing_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let signing_time = time::macros::datetime!(2023-02-01 08:00:00 UTC);
 
-        let this_update = Utc.with_ymd_and_hms(2025, 3, 7, 14, 53, 24).unwrap();
+        let this_update = time::macros::datetime!(2025-03-07 14:53:24 UTC);
         for signing_time in [None, Some(signing_time)] {
             for (now, accepted) in [
-                (this_update - chrono::Duration::seconds(1), false),
+                (this_update - time::Duration::seconds(1), false),
                 (this_update, true),
-                (this_update + chrono::Duration::seconds(1), true),
+                (this_update + time::Duration::seconds(1), true),
             ] {
                 let mut validation_log = StatusTracker::default();
                 let parsed = OcspResponse::from_der_checked_at(
@@ -927,7 +924,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2026, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2026-02-01 08:00:00 UTC);
 
         let ocsp_data = OcspResponse::from_der_checked(
             rsp_data,
@@ -958,7 +955,7 @@ mod tests {
 
         let mut validation_log = StatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2023-02-01 08:00:00 UTC);
 
         // Reverse the chain so chain[0] is the root, whose serial number does
         // not match the response's certId serial number.
@@ -990,9 +987,9 @@ mod tests {
             .as_ref()
             .map(|next_update| next_update.datetime)
             .unwrap_or_else(|| {
-                basic.tbs_response_data.produced_at.datetime + chrono::Duration::hours(24)
+                basic.tbs_response_data.produced_at.datetime + time::Duration::hours(24)
             });
-        assert!(time::utc_now() > next_update);
+        assert!(internal::time::utc_now() > next_update);
 
         let mut log = StatusTracker::default();
         OcspResponse::from_der_checked(
@@ -1065,7 +1062,7 @@ mod tests {
     #[test]
     fn issuer_signed_response_without_certs_authenticates_both_responder_ids() {
         let responder = IssuerResponder::new();
-        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+        let now = time::macros::datetime!(2025-03-08 00:00:00 UTC);
 
         for by_name in [false, true] {
             for certs in [
@@ -1095,7 +1092,7 @@ mod tests {
     fn issuer_response_rejects_signed_wrong_ids_and_cert_ids_and_bad_signature() {
         let responder = IssuerResponder::new();
         let original = responder.basic_response(false);
-        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+        let now = time::macros::datetime!(2025-03-08 00:00:00 UTC);
         let mut wrong_key_id = original.clone();
         wrong_key_id.tbs_response_data.responder_id =
             ResponderId::ByKey(OctetString::new(vec![0; 20]).unwrap());
@@ -1142,7 +1139,7 @@ mod tests {
     fn issuer_candidate_must_actually_issue_leaf_and_be_a_ca() {
         let responder = IssuerResponder::new();
         let der = responder.sign(responder.basic_response(false));
-        let now = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+        let now = time::macros::datetime!(2025-03-08 00:00:00 UTC);
 
         for variant in 0..6 {
             let mut chain = responder.chain.clone();
@@ -1332,31 +1329,31 @@ mod tests {
             let mut basic = responder.basic_response(false);
             let start = basic.tbs_response_data.responses[0].this_update.datetime;
             let end = if has_next_update {
-                let end = start + chrono::Duration::hours(48);
+                let end = start + time::Duration::hours(48);
                 basic.tbs_response_data.responses[0].next_update = Some(ocsp_time(end));
                 end
             } else {
                 basic.tbs_response_data.responses[0].next_update = None;
-                basic.tbs_response_data.produced_at.datetime + chrono::Duration::hours(24)
+                basic.tbs_response_data.produced_at.datetime + time::Duration::hours(24)
             };
 
             let der = responder.sign(basic);
 
             for (now, signing_time, accepted) in [
-                (start - chrono::Duration::seconds(1), Some(start), false),
+                (start - time::Duration::seconds(1), Some(start), false),
                 (start, None, true),
                 (end, None, true),
-                (end + chrono::Duration::seconds(1), None, false),
-                (end + chrono::Duration::days(1), Some(start), true),
-                (end + chrono::Duration::days(1), Some(end), true),
+                (end + time::Duration::seconds(1), None, false),
+                (end + time::Duration::days(1), Some(start), true),
+                (end + time::Duration::days(1), Some(end), true),
                 (
-                    end + chrono::Duration::days(1),
-                    Some(start - chrono::Duration::seconds(1)),
+                    end + time::Duration::days(1),
+                    Some(start - time::Duration::seconds(1)),
                     true,
                 ),
                 (
-                    end + chrono::Duration::days(1),
-                    Some(end + chrono::Duration::seconds(1)),
+                    end + time::Duration::days(1),
+                    Some(end + time::Duration::seconds(1)),
                     false,
                 ),
             ] {
@@ -1403,7 +1400,7 @@ mod tests {
                 &responder.sign(basic),
                 &responder.chain,
                 None,
-                Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap(),
+                time::macros::datetime!(2025-03-08 00:00:00 UTC),
                 &mut log,
             )
             .unwrap();
@@ -1432,7 +1429,7 @@ mod tests {
         let parsed = OcspResponse::from_der_checked(
             &encode_response(&basic),
             &signing_cert_chain(),
-            Some(Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap()),
+            Some(time::macros::datetime!(2023-02-01 08:00:00 UTC)),
             &mut log,
         )
         .unwrap();
@@ -1539,14 +1536,14 @@ mod tests {
     fn good_time_boundaries_and_missing_next_update() {
         let mut basic = basic_response();
         let this_update = basic.tbs_response_data.responses[0].this_update.datetime;
-        let next_update = this_update + chrono::Duration::days(1);
+        let next_update = this_update + time::Duration::days(1);
         basic.tbs_response_data.responses[0].next_update = Some(ocsp_time(next_update));
         let der = sign_response(basic.clone());
         for (signing_time, accepted) in [
-            (Some(this_update - chrono::Duration::seconds(1)), true),
+            (Some(this_update - time::Duration::seconds(1)), true),
             (Some(this_update), true),
             (Some(next_update), true),
-            (Some(next_update + chrono::Duration::seconds(1)), false),
+            (Some(next_update + time::Duration::seconds(1)), false),
         ] {
             let mut log = StatusTracker::default();
             let parsed =
@@ -1573,12 +1570,11 @@ mod tests {
         let mut no_next_update = basic;
         no_next_update.tbs_response_data.responses[0].next_update = None;
         let expiry =
-            no_next_update.tbs_response_data.produced_at.datetime + chrono::Duration::hours(24);
+            no_next_update.tbs_response_data.produced_at.datetime + time::Duration::hours(24);
         let der = sign_response(no_next_update);
-        for (signing_time, accepted) in [
-            (expiry, true),
-            (expiry + chrono::Duration::seconds(1), false),
-        ] {
+        for (signing_time, accepted) in
+            [(expiry, true), (expiry + time::Duration::seconds(1), false)]
+        {
             let mut log = StatusTracker::default();
             let parsed = OcspResponse::from_der_checked(
                 &der,
@@ -1594,12 +1590,13 @@ mod tests {
         }
 
         let mut future = basic_response();
-        let tomorrow =
-            DateTime::from_timestamp((Utc::now() + chrono::Duration::days(1)).timestamp(), 0)
-                .unwrap();
+        let tomorrow = time::OffsetDateTime::from_unix_timestamp(
+            (internal::time::utc_now() + time::Duration::days(1)).unix_timestamp(),
+        )
+        .unwrap();
         future.tbs_response_data.responses[0].this_update = ocsp_time(tomorrow);
         future.tbs_response_data.responses[0].next_update =
-            Some(ocsp_time(tomorrow + chrono::Duration::days(1)));
+            Some(ocsp_time(tomorrow + time::Duration::days(1)));
         let mut log = StatusTracker::default();
         OcspResponse::from_der_checked(
             &sign_response(future),
@@ -1614,7 +1611,7 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn good_response_current_time_requires_freshness() {
-        let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+        let now = time::macros::datetime!(2026-06-01 12:00:00 UTC);
         for (this_update_hours, produced_at_hours, next_update_hours, accepted) in [
             (-48, -48, Some(-24), false),
             (-24, -12, Some(24), true),
@@ -1625,11 +1622,11 @@ mod tests {
         ] {
             let mut basic = basic_response();
             basic.tbs_response_data.produced_at =
-                ocsp_time(now + chrono::Duration::hours(produced_at_hours));
+                ocsp_time(now + time::Duration::hours(produced_at_hours));
             let response = &mut basic.tbs_response_data.responses[0];
-            response.this_update = ocsp_time(now + chrono::Duration::hours(this_update_hours));
+            response.this_update = ocsp_time(now + time::Duration::hours(this_update_hours));
             response.next_update =
-                next_update_hours.map(|hours| ocsp_time(now + chrono::Duration::hours(hours)));
+                next_update_hours.map(|hours| ocsp_time(now + time::Duration::hours(hours)));
 
             let mut log = StatusTracker::default();
             OcspResponse::from_der_checked_at(
@@ -1655,9 +1652,9 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn future_responses_are_ignored_regardless_of_certificate_status() {
-        let this_update = Utc.with_ymd_and_hms(2025, 3, 7, 14, 53, 24).unwrap();
-        let revoked_at = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
-        let signing_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let this_update = time::macros::datetime!(2025-03-07 14:53:24 UTC);
+        let revoked_at = time::macros::datetime!(2023-01-01 00:00:00 UTC);
+        let signing_time = time::macros::datetime!(2023-02-01 08:00:00 UTC);
         for status in [
             CertStatus::Good(()),
             CertStatus::Unknown(()),
@@ -1684,7 +1681,7 @@ mod tests {
                     &der,
                     &signing_cert_chain(),
                     signing_time,
-                    this_update - chrono::Duration::seconds(1),
+                    this_update - time::Duration::seconds(1),
                     &mut log,
                 )
                 .unwrap();
@@ -1705,12 +1702,13 @@ mod tests {
         ] {
             for future in [false, true] {
                 let revoked_at = if future {
-                    Utc::now() + chrono::Duration::days(365)
+                    internal::time::utc_now() + time::Duration::days(365)
                 } else {
-                    Utc.with_ymd_and_hms(2023, 2, 1, 0, 0, 0).unwrap()
+                    time::macros::datetime!(2023-02-01 00:00:00 UTC)
                 };
                 // DER GeneralizedTime rounds fractional seconds.
-                let revoked_at = DateTime::from_timestamp(revoked_at.timestamp(), 0).unwrap();
+                let revoked_at =
+                    time::OffsetDateTime::from_unix_timestamp(revoked_at.unix_timestamp()).unwrap();
                 let mut basic = basic_response();
                 basic.tbs_response_data.responses[0].cert_status =
                     CertStatus::Revoked(RevokedInfo {
@@ -1720,9 +1718,9 @@ mod tests {
                 let der = sign_response(basic);
                 for signing_time in [
                     None,
-                    Some(revoked_at - chrono::Duration::seconds(1)),
+                    Some(revoked_at - time::Duration::seconds(1)),
                     Some(revoked_at),
-                    Some(revoked_at + chrono::Duration::seconds(1)),
+                    Some(revoked_at + time::Duration::seconds(1)),
                 ] {
                     let expected_revoked = match reason {
                         None => true,
@@ -1753,7 +1751,7 @@ mod tests {
     fn matching_good_response_suppresses_earlier_unknown_diagnostics() {
         let mut basic = basic_response();
         basic.tbs_response_data.produced_at =
-            ocsp_time(time::utc_now() - chrono::Duration::hours(1));
+            ocsp_time(internal::time::utc_now() - time::Duration::hours(1));
         let good = basic.tbs_response_data.responses[0].clone();
         let mut unknown = good.clone();
         unknown.cert_status = CertStatus::Unknown(());
@@ -1776,8 +1774,8 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn fractional_ocsp_status_times_are_rejected_as_invalid_certificates() {
-        let fractional = Utc.with_ymd_and_hms(2025, 3, 7, 15, 0, 0).unwrap()
-            + chrono::Duration::milliseconds(123);
+        let fractional =
+            time::macros::datetime!(2025-03-07 15:00:00 UTC) + time::Duration::milliseconds(123);
         for field in 0..3 {
             let mut basic = basic_response();
             let single = &mut basic.tbs_response_data.responses[0];
@@ -1809,10 +1807,10 @@ mod tests {
     fn later_good_response_keeps_earlier_revoked_at_but_discards_its_diagnostic() {
         let mut basic = basic_response();
         basic.tbs_response_data.produced_at =
-            ocsp_time(time::utc_now() - chrono::Duration::hours(1));
+            ocsp_time(internal::time::utc_now() - time::Duration::hours(1));
         let good = basic.tbs_response_data.responses[0].clone();
         let mut revoked = good.clone();
-        let revoked_at = Utc.with_ymd_and_hms(2023, 2, 1, 0, 0, 0).unwrap();
+        let revoked_at = time::macros::datetime!(2023-02-01 00:00:00 UTC);
         revoked.cert_status = CertStatus::Revoked(RevokedInfo {
             revocation_time: ocsp_time(revoked_at),
             revocation_reason: None,
