@@ -17,7 +17,7 @@ use std::str::FromStr;
 
 use c2pa_raw_crypto::RawSignatureValidationError;
 use chrono::{DateTime, Timelike, Utc};
-use der::{asn1::ObjectIdentifier, Decode, Encode};
+use der::{asn1::ObjectIdentifier, Decode, Encode, SliceReader};
 use thiserror::Error;
 use x509_parser::{
     certificate::X509Certificate, prelude::FromDer, signature_algorithm::SignatureAlgorithm,
@@ -116,7 +116,11 @@ impl OcspResponse {
 
         // Per spec if we cannot interpret the OCSP data, we must treat it as if it did
         // not exist.
-        let Ok(ocsp_response) = asn1::Response::from_der(der) else {
+        let Ok(mut reader) = SliceReader::new(der) else {
+            return Ok(output);
+        };
+        // The previous decoder accepted bytes after a complete OCSP envelope.
+        let Ok(ocsp_response) = asn1::Response::decode(&mut reader) else {
             return Ok(output);
         };
 
@@ -685,6 +689,29 @@ mod tests {
             item.kind == LogKind::Informational
                 && item.description == "OCSP response ignored: invalid embedded certificate"
         }));
+    }
+
+    #[test]
+    fn trailing_bytes_after_response_preserve_legacy_status() {
+        let original = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
+        let signing_time = Some(Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap());
+
+        for suffix in [b"\0".as_slice(), b"\x30\x00".as_slice()] {
+            let mut encoded = original.to_vec();
+            encoded.extend_from_slice(suffix);
+            let mut log = StatusTracker::default();
+            let response = OcspResponse::from_der_checked(
+                &encoded,
+                &signing_cert_chain(),
+                signing_time,
+                &mut log,
+            )
+            .unwrap();
+
+            assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+            assert!(response.ocsp_certs.is_some());
+            assert_eq!(response.ocsp_der, encoded);
+        }
     }
 
     #[test]

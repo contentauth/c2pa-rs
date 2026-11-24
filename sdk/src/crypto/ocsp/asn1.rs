@@ -113,8 +113,10 @@ pub(crate) struct BasicOcspResponse {
 
 impl BasicOcspResponse {
     pub(crate) fn decode_with_signed_data(encoded: &[u8]) -> der::Result<(Self, &[u8])> {
-        let response = Self::from_der(encoded)?;
-        let sequence = AnyRef::from_der(encoded)?;
+        // As with the OCSP envelope, retain acceptance of trailing bytes after
+        // a complete BasicOCSPResponse, but never include them in signed data.
+        let response = Self::decode(&mut SliceReader::new(encoded)?)?;
+        let sequence = AnyRef::decode(&mut SliceReader::new(encoded)?)?;
         let mut fields = SliceReader::new(sequence.value())?;
         let signed_data = fields.tlv_bytes()?;
 
@@ -256,5 +258,12 @@ mod tests {
             BasicOcspResponse::decode_with_signed_data(basic_der.as_bytes()).unwrap();
         assert_eq!(basic.to_der().unwrap(), basic_der.as_bytes());
         assert_eq!(signed_data, basic.tbs_response_data.to_der().unwrap());
+
+        let mut with_trailing = basic_der.as_bytes().to_vec();
+        with_trailing.push(0);
+        let (decoded, received) =
+            BasicOcspResponse::decode_with_signed_data(&with_trailing).unwrap();
+        assert_eq!(decoded, basic);
+        assert_eq!(received, signed_data);
     }
 }
