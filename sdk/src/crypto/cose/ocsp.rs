@@ -13,7 +13,6 @@
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
-use chrono::{DateTime, Utc};
 use coset::{cbor::value::Value, CoseSign1, Label};
 use x509_parser::prelude::X509Certificate;
 
@@ -25,6 +24,7 @@ use crate::{
             cert_chain_from_sign1, validate_cose_tst_info, validate_cose_tst_info_async,
             CertificateTrustError, CertificateTrustPolicy, CoseError, TrustAnchorType,
         },
+        internal,
         ocsp::OcspResponse,
     },
     log_item,
@@ -551,8 +551,8 @@ fn check_stapled_ocsp_response(
 fn issuer_response_authorized(
     signing_chain: &[Vec<u8>],
     ctp: &CertificateTrustPolicy,
-    signing_time: Option<DateTime<Utc>>,
-    responder_time: Option<DateTime<Utc>>,
+    signing_time: Option<time::OffsetDateTime>,
+    responder_time: Option<time::OffsetDateTime>,
 ) -> bool {
     let (Some(leaf), Some(issuer_der)) = (signing_chain.first(), signing_chain.get(1)) else {
         return false;
@@ -564,15 +564,19 @@ fn issuer_response_authorized(
 
     let Ok(check_time) = x509_parser::time::ASN1Time::from_timestamp(
         responder_time
-            .unwrap_or_else(crate::crypto::internal::time::utc_now)
-            .timestamp(),
+            .unwrap_or_else(internal::time::utc_now)
+            .unix_timestamp(),
     ) else {
         return false;
     };
 
     issuer.validity().is_valid_at(check_time)
         && ctp
-            .check_certificate_trust(signing_chain, leaf, signing_time.map(|t| t.timestamp()))
+            .check_certificate_trust(
+                signing_chain,
+                leaf,
+                signing_time.map(|t| t.unix_timestamp()),
+            )
             .is_ok()
 }
 
@@ -580,7 +584,7 @@ fn delegated_response_authorized(
     responder_chain: &[Vec<u8>],
     signing_chain: &[Vec<u8>],
     ctp: &CertificateTrustPolicy,
-    signing_time: Option<DateTime<Utc>>,
+    signing_time: Option<time::OffsetDateTime>,
 ) -> bool {
     let Some(responder) = responder_chain.first() else {
         return false;
@@ -589,7 +593,7 @@ fn delegated_response_authorized(
     let Ok((trust_type, _)) = ctp.check_certificate_trust(
         responder_chain,
         responder,
-        signing_time.map(|t| t.timestamp()),
+        signing_time.map(|t| t.unix_timestamp()),
     ) else {
         return false;
     };
@@ -697,7 +701,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
     let certs = ocsp_signing_chain(&certs, ctp);
 
     // use supplied override time if provided
-    let signing_time: Option<DateTime<Utc>> = match tst_info {
+    let signing_time: Option<time::OffsetDateTime> = match tst_info {
         Some(tst_info) => Some(tst_info.gen_time.clone().into()),
         None => validate_cose_tst_info(
             sign1,
@@ -780,7 +784,7 @@ fn validate_fetched_ocsp(
     ocsp_response_der: &[u8],
     subject_chain: &[Vec<u8>],
     ctp: &CertificateTrustPolicy,
-    signing_time: Option<DateTime<Utc>>,
+    signing_time: Option<time::OffsetDateTime>,
     validation_log: &mut StatusTracker,
 ) -> OcspResponse {
     // Check the OCSP response, but only if it is well-formed.
@@ -904,7 +908,6 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     use async_trait::async_trait;
-    use chrono::{TimeZone, Utc};
     use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
     use der::{asn1::Any, Decode, Encode};
     use ed25519_dalek::Signer;
@@ -1028,7 +1031,7 @@ mod tests {
         .unwrap();
         let leaf = vec![full_chain[0].clone()];
         let revoked = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2024-02-01 08:00:00 UTC);
 
         // Without the issuer, the certId cannot be matched: revoked not applied.
         let mut log = StatusTracker::default();
@@ -1075,7 +1078,7 @@ mod tests {
         // discarded, so no revocation is asserted from it (RFC 6960 section 3.2).
         let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
         let chain = ocsp_signing_chain_fixture();
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2024-02-01 08:00:00 UTC);
 
         let mut log = StatusTracker::default();
         let resp = validate_fetched_ocsp(
@@ -1101,7 +1104,7 @@ mod tests {
         // against `signing_time`.
         let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
         let chain = ocsp_signing_chain_fixture();
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2024-02-01 08:00:00 UTC);
 
         let mut ctp = CertificateTrustPolicy::new();
         ctp.add_end_entity_credentials(include_bytes!(
@@ -1123,7 +1126,7 @@ mod tests {
         // the "OCSP_RESPONSE" placeholder.
         let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
         let chain = ocsp_signing_chain_fixture();
-        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let test_time = time::macros::datetime!(2024-02-01 08:00:00 UTC);
         let signature_uri = "self#jumbf=/c2pa/urn:c2pa:test/c2pa.signature";
 
         let mut ctp = CertificateTrustPolicy::new();
@@ -2555,12 +2558,14 @@ mod tests {
 
     /// The fixture's "good" response data, re-dated to be valid at the current time.
     fn fresh_basic_response() -> crate::crypto::ocsp::asn1::BasicOcspResponse {
-        let now = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
+        let now =
+            time::OffsetDateTime::from_unix_timestamp(internal::time::utc_now().unix_timestamp())
+                .unwrap();
         let mut basic = good_basic_response();
-        basic.tbs_response_data.produced_at = ocsp_time(now - chrono::Duration::hours(1));
+        basic.tbs_response_data.produced_at = ocsp_time(now - time::Duration::hours(1));
         let single = &mut basic.tbs_response_data.responses[0];
-        single.this_update = ocsp_time(now - chrono::Duration::hours(1));
-        single.next_update = Some(ocsp_time(now + chrono::Duration::hours(24)));
+        single.this_update = ocsp_time(now - time::Duration::hours(1));
+        single.next_update = Some(ocsp_time(now + time::Duration::hours(24)));
         basic
     }
 
@@ -2748,7 +2753,7 @@ mod tests {
         let mut leaf = x509_cert::Certificate::from_der(&responder.chain[0]).unwrap();
         leaf.tbs_certificate.validity.not_after = x509_cert::time::Time::GeneralTime(
             x509_cert::der::asn1::GeneralizedTime::from_system_time(
-                Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap().into(),
+                time::macros::datetime!(2025-06-01 00:00:00 UTC).into(),
             )
             .unwrap(),
         );
@@ -2775,7 +2780,7 @@ mod tests {
             &responder.sign(responder.basic_response(false)),
             &responder.chain,
             &ctp,
-            Some(Utc.with_ymd_and_hms(2025, 3, 7, 15, 0, 0).unwrap()),
+            Some(time::macros::datetime!(2025-03-07 15:00:00 UTC)),
             &mut log,
         );
         assert!(!parsed.ocsp_der.is_empty());
@@ -2924,19 +2929,19 @@ mod tests {
     #[test]
     fn out_of_window_response_with_timestamp_is_inconclusive() {
         let timestamp = supplied_timestamp();
-        let attested: DateTime<Utc> = timestamp.gen_time.clone().into();
+        let attested: time::OffsetDateTime = timestamp.gen_time.clone().into();
         let responder = TestResponder::new();
         let mut ctp = CertificateTrustPolicy::new();
         ctp.add_end_entity_credentials(&responder.cert_pem())
             .unwrap();
         let response_for = |this_update_hours: i64, next_update_hours: i64| {
-            let this_update = attested + chrono::Duration::hours(this_update_hours);
+            let this_update = attested + time::Duration::hours(this_update_hours);
             let mut basic = good_basic_response();
             basic.tbs_response_data.produced_at = ocsp_time(this_update);
             let single = &mut basic.tbs_response_data.responses[0];
             single.this_update = ocsp_time(this_update);
             single.next_update = Some(ocsp_time(
-                attested + chrono::Duration::hours(next_update_hours),
+                attested + time::Duration::hours(next_update_hours),
             ));
             responder.sign(basic)
         };
@@ -3262,7 +3267,7 @@ mod tests {
             .unwrap();
             cert.tbs_certificate.validity.not_after = x509_cert::time::Time::UtcTime(
                 x509_cert::der::asn1::UtcTime::from_system_time(
-                    (Utc::now() + chrono::Duration::days(1)).into(),
+                    (internal::time::utc_now() + time::Duration::days(1)).into(),
                 )
                 .unwrap(),
             );

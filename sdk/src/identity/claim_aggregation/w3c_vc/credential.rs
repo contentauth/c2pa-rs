@@ -13,12 +13,15 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, FixedOffset};
 use iref::{Iri, IriBuf, UriBuf};
 use nonempty_collections::NEVec;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
-use super::serialization::{not_null, one_or_many};
+use crate::{
+    crypto::internal,
+    identity::claim_aggregation::w3c_vc::serialization::{not_null, one_or_many},
+};
 
 pub const VERIFIABLE_CREDENTIAL_CONTEXT: &Iri =
     static_iref::iri!("https://www.w3.org/ns/credentials/v2");
@@ -52,13 +55,15 @@ where
 
     pub issuer: UriBuf,
 
-    #[serde(rename = "validFrom")]
+    /// Beginning of the validity period. Leap-second inputs (`:60`) are rejected.
+    #[serde(rename = "validFrom", with = "internal::time::rfc3339::option")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valid_from: Option<DateTime<FixedOffset>>,
+    pub valid_from: Option<OffsetDateTime>,
 
-    #[serde(rename = "validUntil")]
+    /// End of the validity period. Leap-second inputs (`:60`) are rejected.
+    #[serde(rename = "validUntil", with = "internal::time::rfc3339::option")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valid_until: Option<DateTime<FixedOffset>>,
+    pub valid_until: Option<OffsetDateTime>,
 
     #[serde(flatten)]
     pub extra_properties: BTreeMap<String, serde_json::Value>,

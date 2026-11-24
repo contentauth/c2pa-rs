@@ -37,17 +37,25 @@ use crate::crypto::ocsp::asn1::{BasicOcspResponse, ResponderId, Response};
 const GOOD_RESPONSE: &[u8] =
     include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
 
-pub(crate) fn ocsp_time(
-    datetime: chrono::DateTime<chrono::Utc>,
-) -> super::asn1::OcspGeneralizedTime {
+pub(crate) fn ocsp_time(datetime: time::OffsetDateTime) -> super::asn1::OcspGeneralizedTime {
+    let datetime = datetime.to_offset(time::UtcOffset::UTC);
+    let mut value = datetime
+        .format(time::macros::format_description!(
+            "[year][month][day][hour][minute][second]"
+        ))
+        .unwrap();
+
+    if datetime.nanosecond() != 0 {
+        value.push_str(&format!(".{:09}", datetime.nanosecond()));
+    }
+
+    value.push('Z');
+
     super::asn1::OcspGeneralizedTime::from_der(
-        &Any::new(
-            der::Tag::GeneralizedTime,
-            datetime.format("%Y%m%d%H%M%S%.fZ").to_string().as_bytes(),
-        )
-        .unwrap()
-        .to_der()
-        .unwrap(),
+        &Any::new(der::Tag::GeneralizedTime, value.as_bytes())
+            .unwrap()
+            .to_der()
+            .unwrap(),
     )
     .unwrap()
 }

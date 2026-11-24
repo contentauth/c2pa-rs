@@ -160,7 +160,7 @@ pub fn signing_time_from_sign1(
     sign1: &coset::CoseSign1,
     data: &[u8],
     verify_trust: bool,
-) -> Option<chrono::DateTime<chrono::Utc>> {
+) -> Option<time::OffsetDateTime> {
     // get timestamp info if available
 
     let mut local_log = StatusTracker::default();

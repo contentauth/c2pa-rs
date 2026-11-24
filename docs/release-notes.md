@@ -4,6 +4,23 @@ Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGE
 
 ## Version 0.93.0
 
+### Date APIs use `time` instead of `chrono`
+
+This is an intentional breaking Rust API change: date values now use
+`time::OffsetDateTime` rather than `chrono::DateTime`. Update callers of
+`signing_time_from_sign1`, `CertificateInfo::date`, `OcspResponse::next_update`
+and `revoked_at`, verifiable credential validity fields, and
+`VerifiedIdentity::verified_at`. Use `OffsetDateTime::parse` with `Rfc3339`
+instead of `DateTime::parse_from_rfc3339`, and `unix_timestamp()` instead of
+`timestamp()`.
+
+JSON timestamps retain their existing spelling: identity credentials use `Z`
+at UTC, reports use `+00:00`, and fractional seconds use 0, 3, 6, or 9 digits.
+Non-UTC offsets are preserved; sub-minute offsets round to the nearest minute,
+with ties away from zero. Leap-second inputs (`:60`) are explicitly rejected
+rather than normalized. Supported dependency configurations, including the
+optional PDF handler, no longer include `chrono`.
+
 ### C2PA v1 claims no longer supported
 
 Support for signing v1 claims has been removed. Setting the `Builder` manifest definition `claim_version` field to `1` now returns an error. See the [migration guide](c2pa-v1-signing-migration.md).

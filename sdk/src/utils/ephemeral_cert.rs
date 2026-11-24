@@ -69,7 +69,6 @@
 //! "unsupported algorithm" or "unable to get certs public key" because our
 //! certs use Ed25519. The test skips the verify assertion in that case.
 
-use chrono::{DateTime, Datelike, Utc};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use pkcs8::{EncodePrivateKey, LineEnding};
 use sha1::{Digest, Sha1};
@@ -97,7 +96,7 @@ use x509_cert::{
     Certificate,
 };
 
-use crate::{Error, Result};
+use crate::{crypto::internal, Error, Result};
 
 /// OID id-ed25519 (1.3.101.112)
 const ED25519_OID: &[u64] = &[1, 3, 101, 112];
@@ -196,11 +195,11 @@ fn subject_public_key_info(verifying_key: &VerifyingKey) -> Result<SubjectPublic
 
 /// Validity: notBefore = now - 1 day, notAfter = now + 365 days.
 fn default_validity() -> Result<Validity> {
-    validity_at(crate::crypto::internal::time::utc_now())
+    validity_at(internal::time::utc_now())
 }
 
-fn validity_at(now: DateTime<Utc>) -> Result<Validity> {
-    let encode_time = |date: DateTime<Utc>| {
+fn validity_at(now: time::OffsetDateTime) -> Result<Validity> {
+    let encode_time = |date: time::OffsetDateTime| {
         let system_time = std::time::SystemTime::from(date);
         // RFC 5280 section 4.1.2.5 requires UTCTime through 2049,
         // GeneralizedTime from 2050 onward; this is not an expiry cutoff.
@@ -213,8 +212,8 @@ fn validity_at(now: DateTime<Utc>) -> Result<Validity> {
         time.map_err(|e| Error::OtherError(Box::new(e)))
     };
 
-    let not_before = now - chrono::Duration::days(1);
-    let not_after = now + chrono::Duration::days(365);
+    let not_before = now - time::Duration::days(1);
+    let not_after = now + time::Duration::days(365);
 
     Ok(Validity {
         not_before: encode_time(not_before)?,
@@ -572,6 +571,7 @@ mod tests {
         generate_ephemeral_chain_with_ee_skip, EXT_TAG_AUTHORITY_KEY_ID, EXT_TAG_BASIC_CONSTRAINTS,
         EXT_TAG_EXT_KEY_USAGE, EXT_TAG_KEY_USAGE, EXT_TAG_SUBJECT_ALT_NAME, EXT_TAG_SUBJECT_KEY_ID,
     };
+    use crate::crypto::internal;
 
     #[test]
     #[cfg_attr(
@@ -579,9 +579,12 @@ mod tests {
         wasm_bindgen_test::wasm_bindgen_test
     )]
     fn validity_uses_utc_and_generalized_time_at_the_2050_boundary() {
-        let now = chrono::DateTime::parse_from_rfc3339("2049-12-31T12:34:56Z")
-            .expect("date")
-            .with_timezone(&chrono::Utc);
+        let now = time::OffsetDateTime::parse(
+            "2049-12-31T12:34:56Z",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .expect("date")
+        .to_offset(time::UtcOffset::UTC);
         let validity = super::validity_at(now).expect("validity");
 
         assert!(matches!(validity.not_before, Time::UtcTime(_)));
@@ -591,12 +594,12 @@ mod tests {
         let decoded = Validity::from_der(&encoded).expect("decode validity");
 
         assert_eq!(
-            chrono::DateTime::<chrono::Utc>::from(decoded.not_before.to_system_time()),
-            now - chrono::Duration::days(1)
+            time::OffsetDateTime::from(decoded.not_before.to_system_time()),
+            now - time::Duration::days(1)
         );
         assert_eq!(
-            chrono::DateTime::<chrono::Utc>::from(decoded.not_after.to_system_time()),
-            now + chrono::Duration::days(365)
+            time::OffsetDateTime::from(decoded.not_after.to_system_time()),
+            now + time::Duration::days(365)
         );
     }
 
@@ -627,7 +630,7 @@ mod tests {
             key.verify_strict(certificate.tbs_certificate.as_ref(), &signature)
                 .expect("issuer signature");
 
-            let now = crate::crypto::internal::time::utc_now().timestamp();
+            let now = internal::time::utc_now().unix_timestamp();
 
             assert!(certificate.validity().not_before.timestamp() < now);
             assert!(certificate.validity().not_after.timestamp() > now);

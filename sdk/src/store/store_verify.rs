@@ -701,11 +701,11 @@ impl Store {
 mod ocsp_reporting_tests {
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(feature = "openssl")]
-    use chrono::{DateTime, Duration, Utc};
     use coset::{cbor::value::Value, CoseSign1, Label, TaggedCborSerializable};
 
     use super::*;
+    #[cfg(feature = "openssl")]
+    use crate::crypto::internal;
     #[cfg(feature = "openssl")]
     use crate::crypto::ocsp::test_responder::{ocsp_time, TestResponder};
     use crate::{
@@ -1006,11 +1006,12 @@ mod ocsp_reporting_tests {
         let context = context(true);
         let responder = TestResponder::new();
         let mut basic = good_basic_response();
-        let now = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
-        basic.tbs_response_data.produced_at = ocsp_time(now - Duration::hours(1));
-        basic.tbs_response_data.responses[0].this_update = ocsp_time(now - Duration::hours(1));
+        let now = internal::time::utc_now().replace_nanosecond(0).unwrap();
+        basic.tbs_response_data.produced_at = ocsp_time(now - time::Duration::hours(1));
+        basic.tbs_response_data.responses[0].this_update =
+            ocsp_time(now - time::Duration::hours(1));
         basic.tbs_response_data.responses[0].next_update =
-            Some(ocsp_time(now + Duration::hours(24)));
+            Some(ocsp_time(now + time::Duration::hours(24)));
         let mut store = store(vec![responder.sign(basic)], None, &context);
         store
             .ctp
