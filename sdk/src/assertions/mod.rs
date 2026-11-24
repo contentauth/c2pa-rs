@@ -76,7 +76,10 @@ mod schema_org;
 #[allow(deprecated)]
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
 
+// Only tests still build v1 claims, which use the legacy thumbnail label format.
+#[cfg(test)]
 mod thumbnail;
+#[cfg(test)]
 pub(crate) use thumbnail::Thumbnail;
 
 mod timestamp;

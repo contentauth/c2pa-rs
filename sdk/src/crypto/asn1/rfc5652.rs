@@ -1516,6 +1516,37 @@ mod tests {
     }
 
     #[test]
+    fn cms_time_preserves_utc_century_and_generalized_time_transition() {
+        for (tag, value, expected) in [
+            (0x17, "700101000000Z", "1970-01-01T00:00:00+00:00"),
+            (0x17, "991231235959Z", "1999-12-31T23:59:59+00:00"),
+            (0x17, "000101000000Z", "2000-01-01T00:00:00+00:00"),
+            (0x17, "491231235959Z", "2049-12-31T23:59:59+00:00"),
+            (0x18, "20500101000000Z", "2050-01-01T00:00:00+00:00"),
+        ] {
+            let der = tlv(tag, value.as_bytes());
+            let decoded = Constructed::decode(der.as_slice(), Mode::Der, Time::take_from).unwrap();
+
+            match &decoded {
+                Time::UtcTime(utc) => {
+                    assert_eq!(tag, 0x17);
+
+                    let mut encoded = Vec::new();
+                    utc.write_encoded(Mode::Der, &mut encoded).unwrap();
+                    assert_eq!(encoded, der);
+                }
+                Time::GeneralizedTime(time) => {
+                    assert_eq!(tag, 0x18);
+                    assert_eq!(time.as_der_bytes(), der);
+                }
+            }
+
+            let actual: chrono::DateTime<chrono::Utc> = decoded.into();
+            assert_eq!(actual.to_rfc3339(), expected, "{value}");
+        }
+    }
+
+    #[test]
     fn cms_versions_roundtrip_and_unknown_versions_are_rejected() {
         for version in [
             CmsVersion::V0,
