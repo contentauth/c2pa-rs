@@ -1102,7 +1102,8 @@ impl Reader {
     /// Convert the Reader back into a Builder.
     /// This can be used to modify an existing manifest store.
     /// # Errors
-    /// Returns an [`Error`] if there is no active manifest.
+    /// Returns an [`Error`] if there is no active manifest, or [`Error::BadParam`] if the active
+    /// manifest is a C2PA v1 claim, which can no longer be signed.
     pub fn into_builder(mut self) -> Result<crate::Builder> {
         // Preserve the Reader's context in the new Builder
         let context = self.context;
@@ -1110,12 +1111,15 @@ impl Reader {
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();
-                if parts.is_v1 {
-                    builder.definition.claim_version = Some(1);
-                }
             }
             builder.definition.label = Some(label.to_string());
             if let Some(mut manifest) = self.manifests.remove(label) {
+                if manifest.claim_version() == Some(1) {
+                    return Err(Error::BadParam(
+                        "cannot convert a C2PA v1 manifest to a Builder: signing v1 claims was removed in 0.93.0"
+                            .to_string(),
+                    ));
+                }
                 builder.definition.claim_generator_info =
                     manifest.claim_generator_info.take().unwrap_or_default();
                 builder.definition.format = manifest.format().unwrap_or_default().to_string();
@@ -1334,6 +1338,53 @@ pub mod tests {
             ValidationState::Trusted,
             "a detached manifest's exclusion must not let unrelated content inside it pass validation"
         );
+    }
+
+    /// A read-only format (camera raw) has no writer, but validation must still
+    /// locate its embedded manifest: the data hash exclusion check fails closed.
+    #[test]
+    #[allow(deprecated)]
+    fn test_read_only_format_locates_manifest_for_data_hash() {
+        use crate::{validation_status::ASSERTION_DATAHASH_MATCH, Builder};
+
+        let context = test_context();
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(r#"{"title": "raw"}"#)
+            .unwrap();
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/TUSCANY.TIF").to_vec());
+        let mut signed = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/tiff", &mut source, &mut signed)
+            .unwrap();
+        let signed = signed.into_inner();
+
+        // ARW shares TIFF's structure but cannot be written.
+        assert!(context.io().writer("image/x-sony-arw").is_none());
+        let located = context
+            .io()
+            .object_locations("image/x-sony-arw", &mut Cursor::new(&signed))
+            .unwrap();
+        assert!(located
+            .iter()
+            .any(|o| o.htype == crate::asset_io::ObjectType::C2pa));
+
+        let reader = Reader::from_context(context)
+            .with_stream("image/x-sony-arw", Cursor::new(signed))
+            .unwrap();
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "{:?}",
+            reader.validation_results()
+        );
+        let results = reader.validation_results().unwrap();
+        assert!(results
+            .active_manifest()
+            .unwrap()
+            .success()
+            .iter()
+            .any(|s| s.code() == ASSERTION_DATAHASH_MATCH));
     }
 
     #[test]

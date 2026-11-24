@@ -17,33 +17,41 @@ use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 use lazy_static::lazy_static;
 
-#[cfg(feature = "pdf")]
+#[cfg(all(feature = "pdf", not(feature = "unstable_asset_io")))]
 use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "unstable_plain_text")]
 use crate::asset_handlers::plain_text_io::PlainTextIO;
 #[cfg(feature = "unstable_structured_text")]
 use crate::asset_handlers::structured_text_io::StructuredTextIO;
+#[cfg(not(feature = "unstable_asset_io"))]
+use crate::asset_handlers::tiff_io::TiffIO;
+#[cfg(not(feature = "unstable_asset_io"))]
+use crate::asset_handlers::{
+    bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
+    mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
+};
 use crate::{
-    asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
-        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
-        tiff_io::TiffIO, zip_io::ZipIO,
-    },
+    asset_handlers::{jpegxl_io::JpegXlIO, zip_io::ZipIO},
     asset_io::{AssetIO, C2paReader, C2paWriter, HandlerRegistry, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
     utils::mime::normalize_format,
 };
 
-// One prototype instance per handler family. All three lookup maps are derived from
-// this single list so handlers only need to be enumerated here.
-lazy_static! {
-    static ref HANDLER_PROTOTYPES: Vec<Box<dyn AssetIO>> = vec![
+/// One prototype instance per handler family. All three lookup maps are derived from
+/// this single list so handlers only need to be enumerated here.
+///
+/// With `unstable_asset_io`, every container asset-io supports is served through it; the
+/// legacy handlers remain only for formats it does not cover.
+fn handler_prototypes() -> Vec<Box<dyn AssetIO>> {
+    #[cfg(feature = "unstable_asset_io")]
+    let mut handlers = crate::asset_handlers::asset_io_adapter::builtin_adapters();
+    #[cfg(not(feature = "unstable_asset_io"))]
+    let mut handlers: Vec<Box<dyn AssetIO>> = vec![
         #[cfg(feature = "pdf")]
         Box::new(PdfIO::new("")),
         Box::new(BmffIO::new("")),
         Box::new(C2paIO::new("")),
         Box::new(JpegIO::new("")),
-        Box::new(JpegXlIO::new("")),
         Box::new(PngIO::new("")),
         Box::new(RiffIO::new("")),
         Box::new(SvgIO::new("")),
@@ -51,12 +59,20 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+    ];
+    handlers.extend([
+        Box::new(JpegXlIO::new("")) as Box<dyn AssetIO>,
         #[cfg(feature = "unstable_structured_text")]
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
         Box::new(PlainTextIO::new("")),
         Box::new(ZipIO::new("")),
-    ];
+    ]);
+    handlers
+}
+
+lazy_static! {
+    static ref HANDLER_PROTOTYPES: Vec<Box<dyn AssetIO>> = handler_prototypes();
 
     static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
         let mut map = HashMap::new();
@@ -242,6 +258,15 @@ pub mod tests {
     use std::io::Seek;
 
     use super::*;
+    #[cfg(all(feature = "pdf", feature = "unstable_asset_io"))]
+    use crate::asset_handlers::pdf_io::PdfIO;
+    #[cfg(feature = "unstable_asset_io")]
+    use crate::asset_handlers::tiff_io::TiffIO;
+    #[cfg(feature = "unstable_asset_io")]
+    use crate::asset_handlers::{
+        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
+        mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
+    };
     use crate::{
         utils::{test::create_test_store, test_signer::test_signer},
         SigningAlg,
@@ -378,6 +403,8 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "tif"));
         assert!(supported.iter().any(|s| s == "tiff"));
         assert!(supported.iter().any(|s| s == "dng"));
+        assert!(supported.iter().any(|s| s == "arw"));
+        assert!(supported.iter().any(|s| s == "nef"));
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
         assert!(supported.iter().any(|s| s == "jxl"));

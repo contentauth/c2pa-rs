@@ -67,7 +67,7 @@ This lets us keep moving quickly before 1.0 while giving you a predictable sched
 Every change lands on `main` first and is then brought onto `stable` for release, so `main` is always the superset of what has shipped.
 
 > [!NOTE]
-> The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims. For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
+> The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_claims) by default, and signing deprecated v1 claims was removed in 0.93.0. For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
 
 ### New API
 

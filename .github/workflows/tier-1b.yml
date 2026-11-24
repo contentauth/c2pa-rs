@@ -236,7 +236,7 @@ jobs:
           toolchain: nightly-2026-07-12
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
+        uses: cargo-bins/cargo-binstall@851112458b5f28a29e5bc14a690c3f283d9dcc6f # v1.26.2
 
       - name: Install cargo-udeps
         run: cargo binstall --no-confirm cargo-udeps@0.1.60

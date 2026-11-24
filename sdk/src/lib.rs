@@ -213,7 +213,6 @@ pub mod dynamic_assertion;
 pub mod http;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
-#[doc(hidden)]
 pub mod identity;
 
 /// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
@@ -265,6 +264,9 @@ pub(crate) enum SigningAlgSchema {
     Ps512,
     Ed25519,
 }
+#[cfg(feature = "unstable_asset_io")]
+#[doc(inline)]
+pub use asset_io::HandlerRegistry;
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use external_manifest::ManifestPatchCallback;
