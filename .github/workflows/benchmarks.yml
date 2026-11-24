@@ -185,7 +185,7 @@ jobs:
                      /etc/apt/sources.list.d/azure-cli.sources
 
       - name: Run the benchmarks
-        uses: CodSpeedHQ/action@78102a468f96d8e0ccb92d0ec49425753fc42062 # v5.6.0
+        uses: CodSpeedHQ/action@af75f77f17a054769abefaa42fe8dc2975469b5f # v5.6.3
         with:
           mode: ${{ matrix.build_mode || 'simulation' }}
           # TODO: disabled as it causes ~15% variation in mp3 benchmark, consider re-enabling when asset IO
