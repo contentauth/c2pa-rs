@@ -54,13 +54,103 @@ use crate::{
     Signer,
 };
 
-/// An init segment, the directory its output goes in, and the identifiers of the
-/// Merkle tree of its fragments.
-struct Rendition {
-    handler: Arc<dyn ContainerHandler>,
+/// A part of a rendition: its init segment, or one of its fragments by position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Part {
+    Init,
+    Fragment(usize),
+}
+
+/// Where the init segment and fragments of one rendition are read from, and where
+/// the signed ones are written to.
+pub(crate) trait RenditionIo {
+    /// The number of fragments. Every proof box is sized before any fragment is
+    /// hashed, so the count must be known up front.
+    fn fragment_count(&self) -> usize;
+
+    /// The input stream of `part`.
+    fn open_input(&mut self, part: Part) -> Result<Box<dyn ReadSeek>>;
+
+    /// A new, empty output stream for `part`.
+    fn create_output(&mut self, part: Part) -> Result<Box<dyn ReadWriteSeek>>;
+
+    /// The output of `part` again, to have a proof or the signed store patched in.
+    /// Streams are not kept open between the passes, so many fragments do not need
+    /// many streams open at once.
+    fn reopen_output(&mut self, part: Part) -> Result<Box<dyn ReadWriteSeek>>;
+}
+
+/// A rendition to sign: how to read and write its parts, the container format of
+/// its init segment and fragments, and the identifier of the Merkle tree of its
+/// fragments.
+pub(crate) struct Rendition {
+    pub(crate) handler: Arc<dyn ContainerHandler>,
+    pub(crate) io: Box<dyn RenditionIo>,
+    pub(crate) id: usize,
+}
+
+/// A rendition on the file system: an init segment and the fragment files that go
+/// with it, written to a directory.
+struct DirRenditionIo {
     init: PathBuf,
+    fragments: Vec<PathBuf>,
     dir: PathBuf,
-    id: usize,
+}
+
+impl DirRenditionIo {
+    /// The init segment `init` and the fragment files in its directory that
+    /// `fragment_glob` names, to be written to a directory of the same name in
+    /// `output_path`.
+    fn new(init: &Path, fragment_glob: &Path, output_path: &Path) -> Result<Self> {
+        let init_dir = init.parent().ok_or_else(|| {
+            Error::BadParam("failed to get parent directory for init segment".to_string())
+        })?;
+        let dir = output_path.join(file_name(init_dir)?);
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self {
+            init: init.to_owned(),
+            fragments: fragments_of(init_dir, fragment_glob)?,
+            dir,
+        })
+    }
+
+    fn source(&self, part: Part) -> Result<&Path> {
+        match part {
+            Part::Init => Ok(&self.init),
+            Part::Fragment(index) => self
+                .fragments
+                .get(index)
+                .map(PathBuf::as_path)
+                .ok_or(Error::NotFound),
+        }
+    }
+
+    fn destination(&self, part: Part) -> Result<PathBuf> {
+        Ok(self.dir.join(file_name(self.source(part)?)?))
+    }
+}
+
+impl RenditionIo for DirRenditionIo {
+    fn fragment_count(&self) -> usize {
+        self.fragments.len()
+    }
+
+    fn open_input(&mut self, part: Part) -> Result<Box<dyn ReadSeek>> {
+        Ok(Box::new(File::open(self.source(part)?)?))
+    }
+
+    fn create_output(&mut self, part: Part) -> Result<Box<dyn ReadWriteSeek>> {
+        Ok(Box::new(create_new(&self.destination(part)?)?))
+    }
+
+    fn reopen_output(&mut self, part: Part) -> Result<Box<dyn ReadWriteSeek>> {
+        Ok(Box::new(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(self.destination(part)?)?,
+        ))
+    }
 }
 
 /// The number of boxes of `structure` named `name`.
@@ -131,33 +221,32 @@ fn fragments_of(init_dir: &Path, fragment_glob: &Path) -> Result<Vec<PathBuf>> {
         .collect()
 }
 
-/// Write each of `fragments` to `out_dir` with a `merkle` box in front of its
-/// `moof`, as the leaves of one Merkle tree. Returns the tree's Merkle map, with
-/// no init hash yet.
-#[allow(clippy::too_many_arguments)]
+/// Write each fragment of `rendition` with a `merkle` box in front of its `moof`,
+/// as the leaves of one Merkle tree. Returns the tree's Merkle map, with no init
+/// hash yet.
 fn write_fragments(
-    handler: &Arc<dyn ContainerHandler>,
-    fragments: &[PathBuf],
-    out_dir: &Path,
+    rendition: &mut Rendition,
     bmff_hash: &BmffHash,
     alg: &str,
-    id: usize,
     max_proofs: usize,
     context: &Context,
 ) -> Result<MerkleMap> {
-    if fragments.is_empty() {
+    let id = rendition.id;
+    let count = rendition.io.fragment_count();
+    if count == 0 {
         return Err(Error::BadParam(
-            "at least one fragment path must be provided".to_string(),
+            "at least one fragment must be provided".to_string(),
         ));
     }
     // A tree of the right shape sizes the proof boxes, which are zeros until every
     // fragment is hashed.
-    let dummy = C2PAMerkleTree::dummy_tree(fragments.len(), alg);
-    let mut leaves = Vec::with_capacity(fragments.len());
-    let mut written = Vec::with_capacity(fragments.len());
-    for (location, fragment) in fragments.iter().enumerate() {
-        let mut source = File::open(fragment)?;
-        let structure = open_structure(Arc::clone(handler), &mut source)?;
+    let dummy = C2PAMerkleTree::dummy_tree(count, alg);
+    let mut leaves = Vec::with_capacity(count);
+    let mut sizes = Vec::with_capacity(count);
+    for location in 0..count {
+        let part = Part::Fragment(location);
+        let mut source = rendition.io.open_input(part)?;
+        let structure = open_structure(Arc::clone(&rendition.handler), &mut *source)?;
         if count_boxes(&structure, "moof")? != 1 {
             return Err(Error::BadParam("expected 1 moof in fragment".to_string()));
         }
@@ -175,30 +264,29 @@ fn write_fragments(
             ));
         }
         let size = BmffHash::merkle_proof_payload(&dummy, id, id, location, max_proofs)?.len();
-        let dest_path = out_dir.join(file_name(fragment)?);
-        let mut dest = create_new(&dest_path)?;
+        let mut dest = rendition.io.create_output(part)?;
         let digest = write_hashed(
             &structure,
-            &mut source,
-            &mut dest,
+            &mut *source,
+            &mut *dest,
             &Updates::new().set_merkle(vec![vec![0; size]]),
             bmff_hash,
             alg,
             context,
         )?;
         leaves.push(MerkleNode(digest));
-        written.push((dest_path, size));
+        sizes.push(size);
     }
 
     let tree = C2PAMerkleTree::from_leaves(leaves, alg, false);
-    for (location, (path, size)) in written.iter().enumerate() {
+    for (location, size) in sizes.into_iter().enumerate() {
         let proof = BmffHash::merkle_proof_payload(&tree, id, id, location, max_proofs)?;
-        if proof.len() != *size {
+        if proof.len() != size {
             return Err(Error::JumbfCreationError);
         }
-        let mut file = OpenOptions::new().read(true).write(true).open(path)?;
-        let structure = open_structure(Arc::clone(handler), &mut file)?;
-        patch_merkle(&structure, &mut file, &[proof])?;
+        let mut output = rendition.io.reopen_output(Part::Fragment(location))?;
+        let structure = open_structure(Arc::clone(&rendition.handler), &mut *output)?;
+        patch_merkle(&structure, &mut *output, &[proof])?;
     }
 
     let mut map = MerkleMap {
@@ -247,6 +335,42 @@ impl Store {
             })?;
         }
 
+        let mut renditions = Vec::with_capacity(init_paths.len());
+        for (index, init) in init_paths.iter().enumerate() {
+            let handler = context
+                .io()
+                .supported_extension(init)
+                .filter(|ext| context.io().is_bmff_format(ext))
+                .and_then(|ext| context.io().container_handler(&ext))
+                .ok_or(Error::UnsupportedType)?;
+            renditions.push(Rendition {
+                handler,
+                io: Box::new(DirRenditionIo::new(
+                    init,
+                    fragment_glob.as_ref(),
+                    output_path,
+                )?),
+                id: index + 1,
+            });
+        }
+        self.sign_fragmented(renditions, signer, context)
+    }
+
+    /// Sign fragmented `renditions`, writing each through its own `RenditionIo`:
+    /// each fragment with a Merkle proof box and every init segment with the one
+    /// manifest.
+    pub(crate) fn sign_fragmented(
+        &mut self,
+        mut renditions: Vec<Rendition>,
+        signer: &dyn Signer,
+        context: &Context,
+    ) -> Result<()> {
+        if renditions.is_empty() {
+            return Err(Error::BadParam(
+                "at least one rendition must be provided".to_string(),
+            ));
+        }
+
         // Add dynamic assertion placeholders, to be filled in just before signing.
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
@@ -273,37 +397,9 @@ impl Store {
         bmff_hash.clear_hash(); // a Merkle tree of fragments replaces the hash
 
         // Every fragment, as a leaf of the tree of its rendition.
-        let mut renditions = Vec::with_capacity(init_paths.len());
-        for (index, init) in init_paths.iter().enumerate() {
-            let handler = context
-                .io()
-                .supported_extension(init)
-                .filter(|ext| context.io().is_bmff_format(ext))
-                .and_then(|ext| context.io().container_handler(&ext))
-                .ok_or(Error::UnsupportedType)?;
-            let init_dir = init.parent().ok_or_else(|| {
-                Error::BadParam("failed to get parent directory for init segment".to_string())
-            })?;
-            let dir = output_path.join(file_name(init_dir)?);
-            std::fs::create_dir_all(&dir)?;
-            let id = index + 1;
-            let map = write_fragments(
-                &handler,
-                &fragments_of(init_dir, fragment_glob.as_ref())?,
-                &dir,
-                &bmff_hash,
-                &alg,
-                id,
-                max_proofs,
-                context,
-            )?;
+        for rendition in &mut renditions {
+            let map = write_fragments(rendition, &bmff_hash, &alg, max_proofs, context)?;
             bmff_hash.merkle.get_or_insert_default().push(map);
-            renditions.push(Rendition {
-                handler,
-                init: init.clone(),
-                dir,
-                id,
-            });
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -316,16 +412,14 @@ impl Store {
         // The manifest goes into each init segment, as it will be signed but for the
         // signature, and the hash of each init segment then completes the tree's map.
         let unsigned = self.to_jumbf_internal(signer.reserve_size())?;
-        let mut outputs = Vec::with_capacity(renditions.len());
-        for rendition in &renditions {
-            let mut source = File::open(&rendition.init)?;
-            let structure = open_structure(Arc::clone(&rendition.handler), &mut source)?;
-            let dest_path = rendition.dir.join(file_name(&rendition.init)?);
-            let mut dest = create_new(&dest_path)?;
+        for rendition in &mut renditions {
+            let mut source = rendition.io.open_input(Part::Init)?;
+            let structure = open_structure(Arc::clone(&rendition.handler), &mut *source)?;
+            let mut dest = rendition.io.create_output(Part::Init)?;
             let digest = write_hashed(
                 &structure,
-                &mut source,
-                &mut dest,
+                &mut *source,
+                &mut *dest,
                 &Updates::new().set_c2pa(unsigned.clone()),
                 &bmff_hash,
                 &alg,
@@ -337,17 +431,16 @@ impl Store {
                 .and_then(|maps| maps.iter_mut().find(|map| map.unique_id == rendition.id))
                 .ok_or(Error::NotFound)?
                 .init_hash = Some(ByteBuf::from(digest));
-            outputs.push((rendition.handler.clone(), dest_path));
         }
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.replace_assertion(bmff_hash.to_assertion()?)?;
 
         let signed =
             self.sign_for_save(signer, &dynamic_assertions, context, Some(unsigned.len()))?;
-        for (handler, path) in outputs {
-            let mut file = OpenOptions::new().read(true).write(true).open(path)?;
-            let structure = open_structure(handler, &mut file)?;
-            patch_store(&structure, &mut file, &signed)?;
+        for rendition in &mut renditions {
+            let mut output = rendition.io.reopen_output(Part::Init)?;
+            let structure = open_structure(Arc::clone(&rendition.handler), &mut *output)?;
+            patch_store(&structure, &mut *output, &signed)?;
         }
         Ok(())
     }
@@ -357,7 +450,11 @@ impl Store {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Seek;
+    use std::{
+        collections::HashMap,
+        io::{Cursor, Read, Seek, SeekFrom, Write},
+        sync::Mutex,
+    };
 
     use super::*;
     use crate::{
@@ -407,6 +504,138 @@ mod tests {
         }
         files.sort();
         files
+    }
+
+    /// An output held in memory, which the test keeps a handle on.
+    #[derive(Clone, Default)]
+    struct SharedBuf(Arc<Mutex<Cursor<Vec<u8>>>>);
+
+    impl Read for SharedBuf {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().read(buf)
+        }
+    }
+
+    impl Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().write(buf)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Seek for SharedBuf {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.0.lock().unwrap().seek(pos)
+        }
+    }
+
+    /// A rendition held in memory. Outputs are keyed by 0 for the init segment and
+    /// by 1 + the position of a fragment.
+    struct MemoryRenditionIo {
+        init: Vec<u8>,
+        fragments: Vec<Vec<u8>>,
+        outputs: Arc<Mutex<HashMap<usize, SharedBuf>>>,
+    }
+
+    fn key(part: Part) -> usize {
+        match part {
+            Part::Init => 0,
+            Part::Fragment(index) => index + 1,
+        }
+    }
+
+    impl RenditionIo for MemoryRenditionIo {
+        fn fragment_count(&self) -> usize {
+            self.fragments.len()
+        }
+
+        fn open_input(&mut self, part: Part) -> Result<Box<dyn ReadSeek>> {
+            let bytes = match part {
+                Part::Init => &self.init,
+                Part::Fragment(index) => &self.fragments[index],
+            };
+            Ok(Box::new(Cursor::new(bytes.clone())))
+        }
+
+        fn create_output(&mut self, part: Part) -> Result<Box<dyn ReadWriteSeek>> {
+            let output = SharedBuf::default();
+            self.outputs
+                .lock()
+                .unwrap()
+                .insert(key(part), output.clone());
+            Ok(Box::new(output))
+        }
+
+        fn reopen_output(&mut self, part: Part) -> Result<Box<dyn ReadWriteSeek>> {
+            let output = self.outputs.lock().unwrap().get(&key(part)).cloned();
+            Ok(Box::new(output.ok_or(Error::NotFound)?))
+        }
+    }
+
+    /// A rendition signed from and to memory is the one signed from and to files.
+    #[test]
+    fn renditions_can_be_signed_in_memory() {
+        let context = Context::new();
+        let signer = test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG_INTERNAL]).unwrap();
+        let init = inits().remove(0);
+        let init_dir = init.parent().unwrap();
+
+        let dir = tempdirectory().unwrap();
+        store(&context)
+            .sign_fragmented_asset_io(
+                std::slice::from_ref(&init),
+                &fragment_glob(),
+                &dir.path().to_path_buf(),
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+        let rendition_dir = dir.path().join(init_dir.file_name().unwrap());
+
+        let fragment_paths = fragments_of(init_dir, &fragment_glob()).unwrap();
+        assert!(fragment_paths.len() > 1);
+        let outputs = Arc::new(Mutex::new(HashMap::new()));
+        let io = MemoryRenditionIo {
+            init: std::fs::read(&init).unwrap(),
+            fragments: fragment_paths
+                .iter()
+                .map(|path| std::fs::read(path).unwrap())
+                .collect(),
+            outputs: Arc::clone(&outputs),
+        };
+        let handler = context
+            .io()
+            .supported_extension(&init)
+            .and_then(|ext| context.io().container_handler(&ext))
+            .unwrap();
+        store(&context)
+            .sign_fragmented(
+                vec![Rendition {
+                    handler,
+                    io: Box::new(io),
+                    id: 1,
+                }],
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        let outputs = outputs.lock().unwrap();
+        assert_eq!(outputs.len(), fragment_paths.len() + 1);
+        for (index, path) in fragment_paths.iter().enumerate() {
+            let in_memory = outputs[&(index + 1)].0.lock().unwrap().get_ref().clone();
+            let on_disk = std::fs::read(rendition_dir.join(path.file_name().unwrap())).unwrap();
+            assert_eq!(in_memory, on_disk, "{}", path.display());
+        }
+        // The init segments differ only in the manifest.
+        let in_memory = outputs[&0].0.lock().unwrap().get_ref().len();
+        let on_disk = std::fs::read(rendition_dir.join(init.file_name().unwrap()))
+            .unwrap()
+            .len();
+        assert_eq!(in_memory, on_disk);
     }
 
     /// Fragments signed through asset-io are those the legacy code writes, bit for
