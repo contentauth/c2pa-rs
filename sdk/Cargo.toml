@@ -125,7 +125,7 @@ c2pa_cbor = "0.78.0"
 c2pa_raw_crypto = { version = "0.3.0", default-features = false, features = ["serde"] }
 coset = "0.4.2"
 cms = { version = "0.3.0-rc.2", default-features = false, features = ["std"] }
-der = { version = "0.8.2", features = ["alloc", "std", "oid", "derive"] }
+der = { version = "0.8.3", features = ["alloc", "std", "oid", "derive"] }
 extfmt = "0.2.0"
 getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
 glob = { version = "0.3.3", optional = true }

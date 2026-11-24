@@ -128,7 +128,8 @@ impl OcspResponse {
             return Ok(output);
         };
 
-        let Ok(basic_response) = BasicOcspResponse::from_der(response_bytes.response.as_bytes())
+        let Ok((basic_response, tbs)) =
+            BasicOcspResponse::decode_with_signed_data(response_bytes.response.as_bytes())
         else {
             return Ok(output);
         };
@@ -149,9 +150,6 @@ impl OcspResponse {
             return Ok(output);
         };
         let sig_val = bcder::OctetString::new(bytes::Bytes::copy_from_slice(signature));
-        let Ok(tbs) = response_data.to_der() else {
-            return Ok(output);
-        };
 
         let mut cert_der_vec = basic_response
             .certs
@@ -164,6 +162,13 @@ impl OcspResponse {
         if cert_der_vec.iter().any(|der| {
             !X509Certificate::from_der(der).is_ok_and(|(remaining, _)| remaining.is_empty())
         }) {
+            log_item!(
+                "",
+                "OCSP response ignored: invalid embedded certificate",
+                "check_ocsp_response"
+            )
+            .informational(validation_log);
+
             return Ok(output);
         }
 
@@ -175,7 +180,7 @@ impl OcspResponse {
             };
 
             responder_id_matches(&response_data.responder_id, &cert)
-                && validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, cert.public_key().raw)
+                && validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, tbs, cert.public_key().raw)
                     .is_ok()
         });
 
@@ -203,7 +208,7 @@ impl OcspResponse {
                 return Ok(OcspResponse::default());
             }
 
-            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, issuer.public_key().raw)
+            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, tbs, issuer.public_key().raw)
                 .is_err()
             {
                 return Ok(OcspResponse::default());
@@ -587,7 +592,7 @@ pub(crate) enum OcspError {
     CertificateStatusUnknown,
 }
 
-fn status_time(value: &asn1::GeneralizedTime) -> Result<DateTime<Utc>, OcspError> {
+fn status_time(value: &asn1::OcspGeneralizedTime) -> Result<DateTime<Utc>, OcspError> {
     if value.datetime.nanosecond() != 0 {
         return Err(OcspError::InvalidCertificate);
     }
@@ -657,6 +662,29 @@ mod tests {
             .into_iter()
             .map(|p| p.into_contents())
             .collect()
+    }
+
+    #[test]
+    fn invalid_embedded_certificate_ignores_response_with_diagnostic() {
+        let mut basic = basic_response();
+        basic.certs.as_mut().unwrap().push(Any::null());
+
+        let mut log = StatusTracker::default();
+        let response = OcspResponse::from_der_checked(
+            &encode_response(&basic),
+            &signing_cert_chain(),
+            Some(Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap()),
+            &mut log,
+        )
+        .unwrap();
+
+        assert!(response.ocsp_certs.is_none());
+        assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!log.has_any_error());
+        assert!(log.logged_items().iter().any(|item| {
+            item.kind == LogKind::Informational
+                && item.description == "OCSP response ignored: invalid embedded certificate"
+        }));
     }
 
     #[test]

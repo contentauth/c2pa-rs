@@ -202,6 +202,8 @@ fn default_validity() -> Result<Validity> {
 fn validity_at(now: DateTime<Utc>) -> Result<Validity> {
     let encode_time = |date: DateTime<Utc>| {
         let system_time = std::time::SystemTime::from(date);
+        // RFC 5280 section 4.1.2.5 requires UTCTime through 2049,
+        // GeneralizedTime from 2050 onward; this is not an expiry cutoff.
         let time = if date.year() < 2050 {
             UtcTime::from_system_time(system_time).map(Time::UtcTime)
         } else {

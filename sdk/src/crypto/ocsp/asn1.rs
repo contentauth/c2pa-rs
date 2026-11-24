@@ -24,8 +24,9 @@
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 pub(crate) use cms::x509_cert::ext::{pkix::crl::CrlReason, Extension};
 use der::{
-    asn1::{Any, BitString, Int, OctetString},
-    DecodeValue, EncodeValue, FixedTag, Header, Length, Reader, Sequence, Tag, Writer,
+    asn1::{Any, AnyRef, BitString, Int, OctetString},
+    Decode, DecodeValue, EncodeValue, FixedTag, Header, Length, Reader, Sequence, SliceReader, Tag,
+    Writer,
 };
 use spki::AlgorithmIdentifierOwned;
 pub(crate) use x509_ocsp::{OcspResponse as Response, OcspResponseStatus, ResponderId};
@@ -33,16 +34,16 @@ pub(crate) use x509_ocsp::{OcspResponse as Response, OcspResponseStatus, Respond
 // Keep original time values for response-signature verification. Unlike der's
 // GeneralizedTime, OCSP timestamps can represent dates before the Unix epoch.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct GeneralizedTime {
+pub(crate) struct OcspGeneralizedTime {
     value: Vec<u8>,
     pub(crate) datetime: DateTime<Utc>,
 }
 
-impl FixedTag for GeneralizedTime {
+impl FixedTag for OcspGeneralizedTime {
     const TAG: Tag = Tag::GeneralizedTime;
 }
 
-impl<'a> DecodeValue<'a> for GeneralizedTime {
+impl<'a> DecodeValue<'a> for OcspGeneralizedTime {
     type Error = der::Error;
 
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
@@ -89,7 +90,7 @@ impl<'a> DecodeValue<'a> for GeneralizedTime {
     }
 }
 
-impl EncodeValue for GeneralizedTime {
+impl EncodeValue for OcspGeneralizedTime {
     fn value_len(&self) -> der::Result<Length> {
         self.value.len().try_into()
     }
@@ -110,12 +111,23 @@ pub(crate) struct BasicOcspResponse {
     pub(crate) certs: Option<Vec<Any>>,
 }
 
+impl BasicOcspResponse {
+    pub(crate) fn decode_with_signed_data(encoded: &[u8]) -> der::Result<(Self, &[u8])> {
+        let response = Self::from_der(encoded)?;
+        let sequence = AnyRef::from_der(encoded)?;
+        let mut fields = SliceReader::new(sequence.value())?;
+        let signed_data = fields.tlv_bytes()?;
+
+        Ok((response, signed_data))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub(crate) struct ResponseData {
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) version: Option<Int>,
     pub(crate) responder_id: ResponderId,
-    pub(crate) produced_at: GeneralizedTime,
+    pub(crate) produced_at: OcspGeneralizedTime,
     pub(crate) responses: Vec<SingleResponse>,
     #[asn1(context_specific = "1", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) response_extensions: Option<Vec<Extension>>,
@@ -125,9 +137,9 @@ pub(crate) struct ResponseData {
 pub(crate) struct SingleResponse {
     pub(crate) cert_id: CertId,
     pub(crate) cert_status: CertStatus,
-    pub(crate) this_update: GeneralizedTime,
+    pub(crate) this_update: OcspGeneralizedTime,
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
-    pub(crate) next_update: Option<GeneralizedTime>,
+    pub(crate) next_update: Option<OcspGeneralizedTime>,
     #[asn1(context_specific = "1", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) single_extensions: Option<Vec<Extension>>,
 }
@@ -177,7 +189,7 @@ pub(crate) enum CertStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub(crate) struct RevokedInfo {
-    pub(crate) revocation_time: GeneralizedTime,
+    pub(crate) revocation_time: OcspGeneralizedTime,
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
     pub(crate) revocation_reason: Option<CrlReason>,
 }
@@ -188,7 +200,7 @@ mod tests {
     use chrono::Timelike;
     use der::{asn1::Any, Decode, Encode, Tag};
 
-    use super::{BasicOcspResponse, GeneralizedTime, Response};
+    use super::{BasicOcspResponse, OcspGeneralizedTime, Response};
 
     fn encoded_time(value: &str) -> Vec<u8> {
         Any::new(Tag::GeneralizedTime, value.as_bytes())
@@ -206,7 +218,7 @@ mod tests {
             ("20500101000000Z", 2_524_608_000, 0),
         ] {
             let encoded = encoded_time(value);
-            let decoded = GeneralizedTime::from_der(&encoded).unwrap();
+            let decoded = OcspGeneralizedTime::from_der(&encoded).unwrap();
             assert_eq!(decoded.datetime.timestamp(), seconds);
             assert_eq!(decoded.datetime.nanosecond(), nanoseconds);
             assert_eq!(decoded.to_der().unwrap(), encoded);
@@ -227,7 +239,7 @@ mod tests {
             "20250101000000.123xZ",
         ] {
             assert!(
-                GeneralizedTime::from_der(&encoded_time(value)).is_err(),
+                OcspGeneralizedTime::from_der(&encoded_time(value)).is_err(),
                 "{value}"
             );
         }
@@ -240,7 +252,9 @@ mod tests {
         assert_eq!(response.to_der().unwrap(), encoded);
 
         let basic_der = response.response_bytes.unwrap().response;
-        let basic = BasicOcspResponse::from_der(basic_der.as_bytes()).unwrap();
+        let (basic, signed_data) =
+            BasicOcspResponse::decode_with_signed_data(basic_der.as_bytes()).unwrap();
         assert_eq!(basic.to_der().unwrap(), basic_der.as_bytes());
+        assert_eq!(signed_data, basic.tbs_response_data.to_der().unwrap());
     }
 }

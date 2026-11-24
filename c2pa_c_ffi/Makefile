@@ -206,9 +206,10 @@ release-android-x86_64:
 
 release-emscripten:
 	rustup toolchain install $(EMSCRIPTEN_TOOLCHAIN) --profile minimal --component rust-src --target wasm32-unknown-emscripten
-	# Emscripten emits cache-generation INFO messages on stderr, even on success.
+	# Prebuild side-module support so cache INFO output is not a linker warning.
+	embuilder --pic build crtbegin-mt libclang_rt.builtins-mt
 	EMCC_CFLAGS="-fwasm-exceptions -pthread" \
-	RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals -A linker-messages" \
+	RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals" \
 	C2PA_HEADER_DIR="$(abspath $(TARGET_DIR)/wasm32-unknown-emscripten/release)" \
 		cargo +$(EMSCRIPTEN_TOOLCHAIN) build -Z build-std=std,panic_abort --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN)
 	@$(call make_zip_emscripten,$(TARGET_DIR)/wasm32-unknown-emscripten/release,wasm32-unknown-emscripten)
