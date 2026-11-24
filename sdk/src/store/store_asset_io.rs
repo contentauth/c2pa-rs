@@ -76,7 +76,7 @@ impl ContainerHandler for OpaqueHandler {
 }
 
 /// Parse `input` with `handler`.
-fn open_structure(
+pub(super) fn open_structure(
     handler: Arc<dyn ContainerHandler>,
     input: &mut dyn ReadSeek,
 ) -> Result<Structure> {
@@ -86,7 +86,7 @@ fn open_structure(
 
 /// The plan for writing `structure` with `updates`. A value the container cannot
 /// hold is refused here, before anything is written.
-fn plan_write<'a>(
+pub(super) fn plan_write<'a>(
     structure: &Structure,
     input: &mut dyn ReadSeek,
     updates: &'a Updates,
@@ -102,7 +102,7 @@ fn plan_write<'a>(
 
 /// Fill the placeholder Merkle proof boxes of `written`, already in `output`, with
 /// `proofs`, which are the size the boxes were planned with.
-fn patch_merkle(
+pub(super) fn patch_merkle(
     written: &Structure,
     output: &mut dyn ReadWriteSeek,
     proofs: &[Vec<u8>],
@@ -187,7 +187,7 @@ fn run_plan<S: Sink>(
 }
 
 /// Write `plan` into `output`, reporting progress in `phase`.
-fn write_plan<S: Sink>(
+pub(super) fn write_plan<S: Sink>(
     plan: &WritePlan<'_>,
     input: &mut dyn ReadSeek,
     output: &mut dyn ReadWriteSeek,
@@ -204,7 +204,11 @@ fn write_plan<S: Sink>(
 /// Fill the placeholder store of `written`, already in `output`, with the whole
 /// `store`. A container that holds the store in parts (a PDF's revisions) patches
 /// only its active part.
-fn patch_store(written: &Structure, output: &mut dyn ReadWriteSeek, store: &[u8]) -> Result<()> {
+pub(super) fn patch_store(
+    written: &Structure,
+    output: &mut dyn ReadWriteSeek,
+    store: &[u8],
+) -> Result<()> {
     output.rewind()?;
     let mut output = output;
     written
@@ -496,7 +500,7 @@ impl Store {
         context: &Context,
         target_len: Option<usize>,
     ))]
-    fn sign_for_save(
+    pub(super) fn sign_for_save(
         &mut self,
         signer: &dyn Signer,
         dynamic_assertions: &[Box<dyn DynamicAssertion>],

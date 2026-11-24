@@ -184,6 +184,7 @@ impl Store {
     }
 
     #[cfg(feature = "file_io")]
+    #[cfg_attr(feature = "unstable_asset_io", allow(dead_code))]
     fn add_merkmap_for_rendition(
         &mut self,
         fragments: &[std::path::PathBuf],
@@ -266,6 +267,7 @@ impl Store {
 
     /// Embed the claims store as jumbf into fragmented assets.
     #[cfg(feature = "file_io")]
+    #[cfg_attr(feature = "unstable_asset_io", allow(dead_code))]
     pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         init_paths: &[PathBuf],

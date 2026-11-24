@@ -322,6 +322,19 @@ impl BmffHash {
         )?;
         Ok((excluded.ranges, excluded.offsets))
     }
+
+    /// The span of the whole of `asset` this hash covers, hashed with `alg`: the
+    /// output less what its exclusions take out, with the offsets of its boxes.
+    pub(crate) fn plan_span(
+        &self,
+        asset: &mut PlannedAsset<'_, '_>,
+        alg: &str,
+    ) -> Result<HashSpan> {
+        let (exclusions, offsets) = self.planned_ranges(asset)?;
+        Ok(HashSpan::new(asset.full_range()?, alg)
+            .excluding(exclusions)?
+            .with_offsets(offsets))
+    }
 }
 
 impl AssetBinding for BmffHash {
@@ -343,15 +356,13 @@ impl AssetBinding for BmffHash {
         asset: &mut PlannedAsset<'_, '_>,
         default_alg: &str,
     ) -> Result<Vec<HashSpan>> {
-        let (exclusions, offsets) = self.planned_ranges(asset)?;
         let alg = self
             .alg()
             .cloned()
             .unwrap_or_else(|| default_alg.to_owned());
+        let span = self.plan_span(asset, &alg)?;
         self.set_hash(vec![0; hash_size_by_alg(&alg)?]);
-        Ok(vec![HashSpan::new(asset.full_range()?, &alg)
-            .excluding(exclusions)?
-            .with_offsets(offsets)])
+        Ok(vec![span])
     }
 
     fn set_hashes(&mut self, digests: Vec<Vec<u8>>) {

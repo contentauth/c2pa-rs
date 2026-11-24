@@ -2390,56 +2390,23 @@ impl BmffHash {
         merkle_map: &mut MerkleMap,
         max_proofs: usize,
     ) -> crate::Result<Vec<Vec<u8>>> {
-        let num_leaves = m_tree.leaves.len();
-
-        // save desired Merkle tree row
-        let tree_row = std::cmp::min(max_proofs, m_tree.layers.len() - 1);
-        let merkle_row = m_tree.layers[tree_row].clone();
-        let mut new_hash_row = Vec::new();
-        for mn in merkle_row {
-            let bb = ByteBuf::from(mn.0);
-            new_hash_row.push(bb);
-        }
-        merkle_map.hashes = VecByteBuf(new_hash_row);
-        merkle_map.count = m_tree.leaves.len(); // number of leaves
+        let tree_row = Self::store_merkle_row(m_tree, merkle_map, max_proofs);
 
         // if we are storing the leaves there is no need to generate UUID boxes
         if tree_row == 0 {
             return Ok(Vec::new());
         }
 
-        // generate a Vec containing the BmffMerkleMaps with the proof hashes
-        let mut bmff_merkle_maps = Vec::new();
-        for i in 0..num_leaves {
-            let mut bmff_mm = BmffMerkleMap {
-                unique_id: merkle_map.unique_id,
-                local_id: merkle_map.local_id,
-                location: i,
-                hashes: None,
-            };
-
-            // get proof for this location and replace temp proof
-            let proof = m_tree.get_proof_by_index(bmff_mm.location, max_proofs)?;
-            if !proof.is_empty() {
-                let mut proof_vec = Vec::new();
-                for v in proof {
-                    let bb = ByteBuf::from(v);
-                    proof_vec.push(bb);
-                }
-
-                bmff_mm.hashes = Some(VecByteBuf(proof_vec));
-            }
-
-            bmff_merkle_maps.push(bmff_mm);
-        }
-
-        // generate UUID C2PA Merkle boxes containing each BmffMerkleMap
+        // the BmffMerkleMap of each leaf, with the proof hashes
         let mut uuid_boxes = Vec::new();
-        for bmff_mm in bmff_merkle_maps {
-            let mm_cbor = c2pa_cbor::to_vec(&bmff_mm)
-                .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
-
-            uuid_boxes.push(mm_cbor);
+        for location in 0..m_tree.leaves.len() {
+            uuid_boxes.push(Self::merkle_proof_payload(
+                m_tree,
+                merkle_map.unique_id,
+                merkle_map.local_id,
+                location,
+                max_proofs,
+            )?);
         }
 
         // pad the uuid boxes  with zeros to the same length as the longest box per the spec
@@ -2451,6 +2418,45 @@ impl BmffHash {
         }
 
         Ok(uuid_boxes)
+    }
+
+    /// Store the tree row `max_proofs` rows above the leaves (or the root, if there
+    /// are fewer) and the leaf count in `merkle_map`. Returns the row's index, which
+    /// is 0 when the leaves themselves are stored.
+    pub(crate) fn store_merkle_row(
+        m_tree: &C2PAMerkleTree,
+        merkle_map: &mut MerkleMap,
+        max_proofs: usize,
+    ) -> usize {
+        let tree_row = std::cmp::min(max_proofs, m_tree.layers.len() - 1);
+        merkle_map.hashes = VecByteBuf(
+            m_tree.layers[tree_row]
+                .iter()
+                .map(|node| ByteBuf::from(node.0.clone()))
+                .collect(),
+        );
+        merkle_map.count = m_tree.leaves.len(); // number of leaves
+        tree_row
+    }
+
+    /// The payload of the Merkle proof box of leaf `location` of `m_tree`: its
+    /// `BmffMerkleMap`, with the proof hashes unless there are none.
+    pub(crate) fn merkle_proof_payload(
+        m_tree: &C2PAMerkleTree,
+        unique_id: usize,
+        local_id: usize,
+        location: usize,
+        max_proofs: usize,
+    ) -> crate::Result<Vec<u8>> {
+        let proof = m_tree.get_proof_by_index(location, max_proofs)?;
+        let bmff_mm = BmffMerkleMap {
+            unique_id,
+            local_id,
+            location,
+            hashes: (!proof.is_empty())
+                .then(|| VecByteBuf(proof.into_iter().map(ByteBuf::from).collect())),
+        };
+        c2pa_cbor::to_vec(&bmff_mm).map_err(|err| Error::AssertionEncoding(err.to_string()))
     }
 
     // validate the MerkleMap for the mdat box

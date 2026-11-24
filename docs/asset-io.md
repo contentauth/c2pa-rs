@@ -117,9 +117,28 @@ Still read through `bmff_io.rs` either way, until asset-io provides them:
 timed-media sample tables (`BmffSampleReader`), and the framing of Merkle
 proof boxes the SDK writes itself (`write_c2pa_box`).
 
-`Builder::sign` and everything built on it use the direct-save pipeline above.
-Fragmented BMFF signing (`Builder::sign_fragmented_files`) does not: it still uses
-the legacy BMFF code.
+`Builder::sign` and everything built on it use the direct-save pipeline above, and
+so does `Builder::sign_fragmented_files`, as described next.
+
+### Fragmented ISO BMFF
+
+`Builder::sign_fragmented_files` signs each init segment with the fragment files in
+its directory that the glob names, and writes them to a directory of the same name
+in the output. Each fragment is a leaf of one Merkle tree and holds the proof of
+its own leaf in a `merkle` box immediately before its `moof` (C2PA 2.5 A.5.3), which
+`BmffUpdates::set_merkle` places in a file that has `moof` boxes (one payload for
+each). The output matches what the legacy code writes, fragment for fragment.
+
+As with the flat-file trees, the proof boxes are written as zeros of their final
+size, sized by a tree of the same shape, while each fragment is hashed in the same
+pass; the proofs are patched in once every fragment is hashed. The tree's row and
+the hash of each init segment go in the BMFF hash, so the manifest is written into
+every init segment at its final size, each init segment is hashed, and the signed
+manifest, of the same size, is patched in.
+
+The fragment files must each have one `moof` and one `mdat` and no manifest, as
+before. A flat fragmented file, one with a `moof` and an `mdat` for each fragment,
+is not signed this way yet, though `set_merkle` places its proof boxes.
 
 ## Differences from the legacy handlers
 

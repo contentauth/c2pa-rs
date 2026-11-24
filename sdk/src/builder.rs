@@ -3464,6 +3464,15 @@ impl Builder {
         }
 
         // sign and write our store to DASH content
+        #[cfg(feature = "unstable_asset_io")]
+        store.sign_fragmented_asset_io(
+            &asset_paths,
+            fragment_glob.as_ref(),
+            output_path.as_ref(),
+            signer,
+            &self.context,
+        )?;
+        #[cfg(not(feature = "unstable_asset_io"))]
         store.save_to_bmff_fragmented(
             &asset_paths,
             fragment_glob.as_ref(),

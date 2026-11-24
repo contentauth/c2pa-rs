@@ -16,6 +16,8 @@ mod invalid_claim;
 // Kept separate from save_to_stream until the direct flow reaches parity.
 #[cfg_attr(not(test), allow(dead_code))]
 mod store_asset_io;
+#[cfg(all(feature = "unstable_asset_io", feature = "file_io"))]
+mod store_asset_io_fragments;
 mod store_core;
 mod store_io;
 mod store_signature;
