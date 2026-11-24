@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 # Copyright 2026 Adobe. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0 OR MIT
+# This file is licensed to you under the Apache License,
+# Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+# or the MIT license (http://opensource.org/licenses/MIT),
+# at your option.
+
+# Unless required by applicable law or agreed to in writing,
+# this software is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+# implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+# specific language governing permissions and limitations under
+# each license.
+
 """Compare independently built pre/post-migration SDKs on identical offline inputs.
+
+This is a manual, opt-in check; neither cargo test nor CI runs it automatically.
 
 Run from any directory:
   python3 sdk/tests/fixtures/crypto/compare_asn1.py --output /absolute/empty/directory
