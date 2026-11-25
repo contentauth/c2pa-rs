@@ -746,6 +746,42 @@ impl Ingredient {
         }
     }
 
+    /// Adds findings from `current`, the validation results of the store this ingredient was read
+    /// from, that its stored validation results lack.
+    ///
+    /// `assertion_uri` is the URI of this ingredient's assertion in that store. A validator newer
+    /// than the one that produced the stored results can report findings the stored results
+    /// don't contain; recording them keeps the ingredient's attestation complete.
+    pub(crate) fn add_current_validation(
+        &mut self,
+        current: &ValidationResults,
+        store: &Store,
+        assertion_uri: &str,
+    ) {
+        let Some(manifest_label) = self.active_manifest.as_deref() else {
+            return;
+        };
+
+        let had_results = self.validation_results.is_some();
+        let mut results = self.validation_results.take().unwrap_or_default();
+        if !had_results {
+            // Results supersede the legacy statuses when matching, so carry those over.
+            for status in self.validation_status.iter().flatten() {
+                let kind = validation_status::log_kind(status.code());
+                results.add_status(status.clone().set_kind(kind));
+            }
+        }
+
+        let changed =
+            results.add_current_ingredient_results(current, store, assertion_uri, manifest_label);
+        if changed {
+            self.validation_status = results.validation_errors();
+        }
+        if changed || had_results {
+            self.validation_results = Some(results);
+        }
+    }
+
     // Internal utility function to get thumbnail from an assertion.
     fn thumbnail_from_assertion(assertion: &Assertion) -> (&str, &[u8]) {
         (assertion.content_type(), assertion.data())

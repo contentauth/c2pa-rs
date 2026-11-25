@@ -1168,6 +1168,9 @@ impl Reader {
     }
 
     /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
+    ///
+    /// Findings from the Reader's validation about the ingredient that its stored validation
+    /// results lack, as when a newer validator adds a check, are added to its validation results.
     /// # Errors
     /// Returns an [`Error`] if there is no parent ingredient.
     pub(crate) fn to_ingredient(&self) -> Result<Ingredient> {
@@ -1179,6 +1182,18 @@ impl Reader {
 
         // populate manifest_data on demand for ingredients with an active manifest
         ingredient.set_store_resolver(Arc::clone(&self.store));
+
+        if let (Some(current), Some(manifest_label)) = (
+            self.validation_results.as_ref(),
+            self.active_manifest.as_ref(),
+        ) {
+            let assertion_uri = ingredient
+                .label()
+                .map(|label| crate::jumbf::labels::to_assertion_uri(manifest_label, label));
+            if let Some(uri) = assertion_uri {
+                ingredient.add_current_validation(current, &self.store, &uri);
+            }
+        }
 
         Ok(ingredient)
     }
