@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 As of December 2025 and until the 1.0.0 version is released, the CAI team will only make minor version changes (incrementing the `x` in `0.x.0`) if breaking changes are made. Features will now result in a patch version change (incrementing the `y` in `0.x.y`). This brings us into closer compliance with typical SemVer practice (and follows the default behavior of [`release-plz`](https://release-plz.dev/docs/config#the-features_always_increment_minor-field).
 
+## [0.92.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.92.2...c2pa-v0.92.3)
+_25 November 2026_
+
+### Fixed
+
+* Refresh ingredient archive validation results (backport #3146) ([#3152](https://github.com/contentauth/c2pa-rs/pull/3152))
+* *(sdk)* Do not report free/skip padding as additional BMFF hash exclusions (backport #3121) ([#3134](https://github.com/contentauth/c2pa-rs/pull/3134))
+
+### Other
+
+* Characterize ASN.1 time boundaries and OCSP request bytes (backport #3131) ([#3135](https://github.com/contentauth/c2pa-rs/pull/3135))
+
+### Updated dependencies
+
+* Zip from v9.3.0 -> v9.6.1 (backport #3095) ([#3103](https://github.com/contentauth/c2pa-rs/pull/3103))
+
 ## [0.92.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.92.1...c2pa-v0.92.2)
 _16 November 2026_
 
