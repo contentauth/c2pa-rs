@@ -41,6 +41,7 @@ pub(crate) fn ica_example() -> IdentityClaimsAggregationVc {
     }
 }
 
+#[allow(deprecated)]
 pub(crate) fn ica_example_identities() -> NEVec<VerifiedIdentity> {
     nev![
         VerifiedIdentity {

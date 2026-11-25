@@ -187,6 +187,12 @@ fn received_signed_attributes(
 /// RSA-PSS signatures must use PS256, PS384, or PS512 parameters. Legacy RSA
 /// PKCS#1 v1.5 timestamps remain supported. The CMS signature algorithm selects
 /// the scheme independently of the TSA certificate's public key algorithm.
+///
+/// See the [chrono migration guide](crate#chrono-migration).
+#[deprecated(
+    since = "0.92.3",
+    note = "The timestamp result exposes conversions to unmaintained chrono types. Migrate to the time::OffsetDateTime conversions in 0.93.0; they are not available on stable yet. Will be changed or removed in 0.93.0 (scheduled for mid-January 2027)."
+)]
 #[async_generic]
 pub fn verify_time_stamp(
     ts: &[u8],
@@ -1341,6 +1347,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn malformed_tokens_are_reported_and_empty_chains_are_rejected() {
         use super::*;
         let mut log = StatusTracker::default();
@@ -1385,6 +1392,7 @@ pub(crate) mod message_imprint_regression {
         x509::{extension::ExtendedKeyUsage, X509Builder, X509NameBuilder},
     };
 
+    #[allow(deprecated)]
     use super::{generalized_time_to_datetime, verify_time_stamp};
     use crate::{
         crypto::{cose::CertificateTrustPolicy, time_stamp::TimeStampError},
@@ -1717,6 +1725,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn allowed_message_imprint_algorithms_are_accepted() {
         for (name, oid, md) in [
             ("SHA-256", OID_SHA256, MessageDigest::sha256()),
@@ -1747,6 +1756,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn disallowed_message_imprint_algorithms_are_untrusted_and_ignored() {
         // Each token has a valid signature and a matching imprint; only the algorithm is
         // disallowed (C2PA 15.8.2: anything other than SHA-256/384/512).
@@ -1778,6 +1788,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn mismatched_imprint_is_rejected() {
         // Guards against the positive tests passing without the imprint being compared.
         let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
@@ -1803,6 +1814,7 @@ pub(crate) mod message_imprint_regression {
     /// time-stamping authority, whose attested time could otherwise suppress
     /// the signer certificate's expiry.
     #[test]
+    #[allow(deprecated)]
     fn private_credential_store_is_not_a_timestamp_authority() {
         use openssl::x509::X509;
 
@@ -1862,6 +1874,7 @@ pub(crate) mod message_imprint_regression {
     /// anchors: C2PA keeps those lists separate, so a token chaining only to a
     /// manifest (signer) trust anchor must not be reported trusted.
     #[test]
+    #[allow(deprecated)]
     fn manifest_trust_anchor_is_not_a_timestamp_authority() {
         use openssl::x509::X509;
 
@@ -1916,6 +1929,7 @@ pub(crate) mod message_imprint_regression {
         )
     }
 
+    #[allow(deprecated)]
     fn check_error(token: &[u8], status: &str) -> TimeStampError {
         let mut log = StatusTracker::default();
         let error = verify_time_stamp(
@@ -1932,6 +1946,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn signed_attributes_validate_all_supported_cms_digests() {
         for (oid, md) in [
             (OID_SHA1, MessageDigest::sha1()),
@@ -1969,6 +1984,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn signed_signing_time_does_not_override_expired_tst_info_time() {
         for (tag, time) in [
             (0x17, b"210102030405Z".as_slice()),
@@ -2093,6 +2109,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn token_structure_and_signature_failures_are_not_trusted() {
         use crate::validation_status::TIMESTAMP_MALFORMED;
         let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
@@ -2146,6 +2163,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn certificate_validity_and_accuracy_boundaries() {
         use crate::validation_status::TIMESTAMP_OUTSIDE_VALIDITY;
         for time in [b"20170101000000Z".as_slice(), b"20310101000000Z".as_slice()] {
@@ -2202,6 +2220,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn signer_lookup_matches_issuer_serial_and_decoded_ski() {
         use rasn_cms::{CertificateChoices, SignerIdentifier};
         let token = build_token_with(
@@ -2256,6 +2275,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn timestamp_trust_requires_timestamp_signing_eku() {
         use crate::{crypto::cose::TrustAnchorType, validation_status::SIGNING_CREDENTIAL_INVALID};
 
@@ -2617,6 +2637,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn timestamp_trust_respects_tsa_anchor_list() {
         use crate::crypto::cose::TrustAnchorType;
 
@@ -2690,6 +2711,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn trust_is_separate_from_signature_and_profile_validation() {
         use crate::crypto::cose::TrustAnchorType;
         for valid_profile in [false, true] {
@@ -2804,6 +2826,7 @@ pub(crate) mod message_imprint_regression {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn signer_lookup_handles_missing_serial_ski_and_unsupported_cert_choices() {
         let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
         for ski in [false, true] {
@@ -2902,6 +2925,7 @@ mod signed_attrs_tests {
     const DATA: &[u8] = b"some sample content to sign";
 
     #[test]
+    #[allow(deprecated)]
     fn verifies_signed_attributes_in_encoded_order() {
         // The signer wrote its signed attributes in an order other than DER's
         // sorted order, and signed that encoding.
@@ -2923,6 +2947,7 @@ mod signed_attrs_tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn verifies_signed_attributes_in_timestamp_response() {
         let mut response = tlv(0x30, &tlv(0x02, &[0]));
         response.extend_from_slice(TOKEN);
@@ -3036,6 +3061,7 @@ mod signed_attrs_tests {
         rebuild_token(token, Some(&forged_content), &signers)
     }
 
+    #[allow(deprecated)]
     fn assert_rejected(token: &[u8], data: &[u8]) {
         let mut log = StatusTracker::default();
         let result = verify_time_stamp(
@@ -3116,6 +3142,7 @@ mod signed_attrs_tests {
     // signatures. Re-sign with the existing fixture key to cover that path.
     #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     #[test]
+    #[allow(deprecated)]
     fn rejects_duplicate_signatures_in_der_sorted_token() {
         use openssl::{hash::MessageDigest, pkey::PKey, sign::Signer};
 
@@ -3213,6 +3240,7 @@ mod signed_attrs_tests {
             Some(expected)
         );
         let mut log = StatusTracker::default();
+        #[allow(deprecated)]
         verify_time_stamp(
             &token,
             DATA,
@@ -3260,6 +3288,7 @@ mod signed_attrs_tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn uses_gen_time_not_cms_signing_time() {
         // genTime is within the signing certificate's validity; the CMS
         // signingTime attribute is after the certificate expires.

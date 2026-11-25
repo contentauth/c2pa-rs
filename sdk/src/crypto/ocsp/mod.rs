@@ -33,9 +33,21 @@ pub struct OcspResponse {
     pub ocsp_der: Vec<u8>,
 
     /// Time when OCSP response should be re-checked.
+    ///
+    /// See the [chrono migration guide](crate#chrono-migration).
+    #[deprecated(
+        since = "0.92.3",
+        note = "This date field uses the unmaintained chrono crate. Migrate to time::OffsetDateTime in 0.93.0; the replacement is not available on stable yet. Will be changed or removed in 0.93.0 (scheduled for mid-January 2027)."
+    )]
     pub next_update: DateTime<Utc>,
 
     /// Time when certificate was revoked, if applicable.
+    ///
+    /// See the [chrono migration guide](crate#chrono-migration).
+    #[deprecated(
+        since = "0.92.3",
+        note = "This date field uses the unmaintained chrono crate. Migrate to time::OffsetDateTime in 0.93.0; the replacement is not available on stable yet. Will be changed or removed in 0.93.0 (scheduled for mid-January 2027)."
+    )]
     pub revoked_at: Option<DateTime<Utc>>,
 
     /// Authenticated responder certificate chain, including an issuing CA
@@ -47,6 +59,7 @@ pub struct OcspResponse {
 }
 
 impl Default for OcspResponse {
+    #[allow(deprecated)]
     fn default() -> Self {
         Self {
             ocsp_der: Vec::new(),
@@ -92,6 +105,7 @@ impl OcspResponse {
 
     /// As [`from_der_checked`](Self::from_der_checked), evaluated at the
     /// current time `now`.
+    #[allow(deprecated)]
     fn from_der_checked_at(
         der: &[u8],
         signing_cert_chain: &[Vec<u8>],
@@ -655,6 +669,7 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
+    #[allow(deprecated)]
     fn good() {
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
 
@@ -680,6 +695,7 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
+    #[allow(deprecated)]
     fn revoked() {
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
 
@@ -736,6 +752,7 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
+    #[allow(deprecated)]
     fn unknown() {
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_unknown.der");
 
@@ -821,6 +838,7 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
+    #[allow(deprecated)]
     fn response_from_the_future_is_ignored() {
         // response_good.der has thisUpdate 2025-03-07T14:53:24Z.
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
@@ -858,6 +876,7 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
+    #[allow(deprecated)]
     fn validity() {
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
 
@@ -946,6 +965,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn uninterpretable_responses_preserve_der_without_asserting_status() {
         let mut responses = vec![Vec::new(), vec![0xde, 0xad]];
         let mut response: rasn_ocsp::OcspResponse = rasn::der::decode(include_bytes!(
@@ -1030,6 +1050,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn issuer_response_rejects_signed_wrong_ids_and_cert_ids_and_bad_signature() {
         use super::test_responder::IssuerResponder;
 
@@ -1263,6 +1284,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn issuer_response_preserves_stale_good_and_trusted_time_windows() {
         use super::test_responder::IssuerResponder;
 
@@ -1319,6 +1341,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn issuer_signed_revoked_and_unknown_responses_preserve_status_codes() {
         use super::test_responder::IssuerResponder;
 
@@ -1498,6 +1521,7 @@ mod tests {
 
     #[cfg(feature = "openssl")]
     #[test]
+    #[allow(deprecated)]
     fn good_time_boundaries_and_missing_next_update() {
         let mut basic = basic_response();
         let this_update = basic.tbs_response_data.responses[0].this_update.to_utc();
@@ -1575,6 +1599,7 @@ mod tests {
 
     #[cfg(feature = "openssl")]
     #[test]
+    #[allow(deprecated)]
     fn good_response_current_time_requires_freshness() {
         let now = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
         for (this_update_hours, produced_at_hours, next_update_hours, accepted) in [
@@ -1617,6 +1642,7 @@ mod tests {
 
     #[cfg(feature = "openssl")]
     #[test]
+    #[allow(deprecated)]
     fn future_responses_are_ignored_regardless_of_certificate_status() {
         use rasn_ocsp::{CertStatus, RevokedInfo};
         use rasn_pkix::CrlReason;
@@ -1663,6 +1689,7 @@ mod tests {
 
     #[cfg(feature = "openssl")]
     #[test]
+    #[allow(deprecated)]
     fn revocation_reason_and_signing_time_matrix() {
         use rasn_ocsp::{CertStatus, RevokedInfo};
         use rasn_pkix::CrlReason;
@@ -1775,6 +1802,7 @@ mod tests {
 
     #[cfg(feature = "openssl")]
     #[test]
+    #[allow(deprecated)]
     fn later_good_response_keeps_earlier_revoked_at_but_discards_its_diagnostic() {
         let mut basic = basic_response();
         basic.tbs_response_data.produced_at =

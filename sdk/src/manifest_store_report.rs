@@ -120,6 +120,7 @@ impl ManifestReport {
             })
             .collect();
 
+        #[allow(deprecated)]
         let signature = match claim.signature_info() {
             Some(info) => SignatureReport {
                 alg: info.alg.map_or_else(String::new, |a| a.to_string()),

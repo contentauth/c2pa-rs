@@ -26,6 +26,7 @@ use super::{
     CertificateInfo, CertificateTrustError, CertificateTrustPolicy, CoseError, TimeStampStorage,
     Verifier,
 };
+#[allow(deprecated)]
 use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
@@ -165,6 +166,7 @@ pub(crate) fn trusted_cawg_timestamp_token(
     validation_log: &mut StatusTracker,
 ) -> Option<TstInfo> {
     let mut timestamp_log = StatusTracker::default();
+    #[allow(deprecated)]
     let result: Result<_, TimeStampError> =
         verify_time_stamp(token, signature, policy, &mut timestamp_log, true);
     checked_timestamp(result.ok(), timestamp_log, validation_log)
