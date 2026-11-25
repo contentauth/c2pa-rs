@@ -3589,6 +3589,9 @@ impl Builder {
     }
 
     /// Add an ingredient to the manifest from a Reader.
+    ///
+    /// Findings the Reader's validation made about the ingredient, but that the ingredient's
+    /// stored validation results lack, are added to its validation results.
     /// # Arguments
     /// * `reader` - The Reader to get the ingredient from.
     /// # Returns
@@ -3614,9 +3617,9 @@ impl Builder {
     /// this builder when their ids are not already present, so thumbnails and similar assertions
     /// can resolve when signing.
     ///
-    /// The ingredient's manifest store is revalidated using this builder's context,
-    /// including its trust and OCSP fetch settings. Archived asset-binding results
-    /// are preserved because the original asset bytes are not available.
+    /// The archive is validated with this builder's context as it is read. Findings that the
+    /// current validator reports for the ingredient, but that the archived validation results
+    /// lack, are added to the ingredient's validation results.
     ///
     /// For other `application/c2pa` stores, use [`Self::add_ingredient_from_reader`] or
     /// [`Self::add_ingredient_from_stream`].
@@ -3684,11 +3687,6 @@ impl Builder {
         };
 
         let mut ingredient = reader.to_ingredient()?;
-        if _sync {
-            ingredient.revalidate_manifest(&self.context)?;
-        } else {
-            ingredient.revalidate_manifest_async(&self.context).await?;
-        }
         if let Some(id) = ingredient_id {
             ingredient.set_label(id);
         }

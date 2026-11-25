@@ -175,12 +175,17 @@ fn is_tolerated_manifest_failure_code(code: &str) -> bool {
 /// the verified provenance, so their ingredient assertions must not take part in
 /// validation-status reconciliation.
 fn referenced_claim_labels(store: &Store) -> HashSet<String> {
+    store
+        .provenance_claim()
+        .map(|active| referenced_claim_labels_from(store, active.label()))
+        .unwrap_or_default()
+}
+
+/// Labels of `root` and every claim reachable from it through ingredient assertions.
+fn referenced_claim_labels_from(store: &Store, root: &str) -> HashSet<String> {
     let mut referenced = HashSet::new();
-    let Some(active) = store.provenance_claim() else {
-        return referenced;
-    };
-    let mut queue = vec![active.label().to_string()];
-    referenced.insert(active.label().to_string());
+    let mut queue = vec![root.to_string()];
+    referenced.insert(root.to_string());
 
     while let Some(label) = queue.pop() {
         let Some(claim) = store.get_claim(&label) else {
@@ -365,62 +370,49 @@ impl ValidationResults {
         results
     }
 
-    pub(crate) fn preserve_asset_binding_results(&mut self, archived: &Self, label: &str) {
-        let groups = archived
-            .active_manifest()
-            .into_iter()
-            .map(|codes| (None, codes))
-            .chain(
-                archived
-                    .ingredient_deltas()
-                    .into_iter()
-                    .flatten()
-                    .map(|delta| {
-                        (
-                            Some(delta.ingredient_assertion_uri()),
-                            delta.validation_deltas(),
-                        )
-                    }),
-            );
-        let mut current = self.validation_status();
-        for (ingredient_uri, codes) in groups {
-            for status in codes
+    /// Adds the statuses `current` holds for the ingredient at `ingredient_uri`, along with
+    /// those for ingredients nested under its manifest, to these results.
+    ///
+    /// `current` is the validation results of the store the ingredient was read from, and
+    /// `ingredient_manifest` is the label of the ingredient's own manifest in that store.
+    /// Returns `true` if any status was added.
+    pub(crate) fn add_current_ingredient_results(
+        &mut self,
+        current: &Self,
+        store: &Store,
+        ingredient_uri: &str,
+        ingredient_manifest: &str,
+    ) -> bool {
+        let nested_manifests = referenced_claim_labels_from(store, ingredient_manifest);
+        let mut added = false;
+
+        for delta in current.ingredient_deltas().into_iter().flatten() {
+            let delta_uri = delta.ingredient_assertion_uri();
+            let codes = delta.validation_deltas();
+            let statuses = codes
                 .success()
                 .iter()
                 .chain(codes.informational())
-                .chain(codes.failure())
-            {
-                if ![
-                    "assertion.dataHash.",
-                    "assertion.bmffHash.",
-                    "assertion.boxesHash.",
-                    "assertion.collectionHash.",
-                ]
-                .iter()
-                .any(|prefix| status.code().starts_with(prefix))
-                    && !matches!(
-                        status.code(),
-                        validation_status::HARD_BINDINGS_MISSING
-                            | validation_status::HARD_BINDINGS_MULTIPLE
-                    )
-                {
-                    continue;
-                }
+                .chain(codes.failure());
 
-                // Kind and ingredient scope do not survive status serialization.
-                let mut status = status.clone().set_kind(log_kind(status.code()));
-                status.make_absolute(label);
-                if let Some(uri) = ingredient_uri {
-                    status = status.set_ingredient_uri(labels::to_absolute_uri(label, uri));
+            if delta_uri == ingredient_uri {
+                let active_manifest = self
+                    .active_manifest
+                    .get_or_insert_with(StatusCodes::default);
+                for status in statuses {
+                    active_manifest.add_status(status.clone());
+                    added = true;
                 }
-                if !current.iter().any(|existing| {
-                    existing == &status && existing.ingredient_uri() == status.ingredient_uri()
-                }) {
-                    current.push(status.clone());
-                    self.add_status(status);
+            } else if manifest_label_from_uri(delta_uri)
+                .is_some_and(|label| nested_manifests.contains(&label))
+            {
+                for status in statuses {
+                    self.add_status(status.clone().set_ingredient_uri(delta_uri.to_owned()));
+                    added = true;
                 }
             }
         }
+        added
     }
 
     /// Returns the [ValidationState] of the manifest store based on the validation results.
@@ -1564,58 +1556,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
-    #[test]
-    fn preserve_archived_asset_binding_results_after_roundtrip() {
-        use validation_status::*;
-
-        let mut archived = ValidationResults::default();
-        archived.add_status(ValidationStatus::new(ASSERTION_DATAHASH_MATCH));
-        archived.add_status(ValidationStatus::new_failure(CLAIM_MALFORMED));
-        archived = archived.add_ingredient_delta(IngredientDeltaValidationResult::new(
-            "self#jumbf=c2pa.assertions/c2pa.ingredient.v3",
-            StatusCodes::default()
-                .add_failure_val(
-                    ValidationStatus::new_failure(ASSERTION_BMFFHASH_MISMATCH)
-                        .set_url("self#jumbf=/c2pa/nested/c2pa.assertions/c2pa.hash.bmff"),
-                )
-                .add_informational_val(ValidationStatus::new(
-                    ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS,
-                ))
-                .add_failure_val(ValidationStatus::new_failure(SIGNING_CREDENTIAL_EXPIRED)),
-        ));
-        let archived: ValidationResults =
-            serde_json::from_value(serde_json::to_value(archived).unwrap()).unwrap();
-
-        let mut current = ValidationResults::default();
-        current.add_status(ValidationStatus::new(ASSERTION_DATAHASH_MATCH));
-        current.preserve_asset_binding_results(&archived, "active");
-
-        let active = current.active_manifest().unwrap();
-        assert_eq!(
-            active.success().len(),
-            1,
-            "do not duplicate binding results"
-        );
-        assert!(active.failure().is_empty(), "drop stale manifest failures");
-        let deltas = current.ingredient_deltas().unwrap();
-        assert_eq!(deltas.len(), 1);
-        assert_eq!(
-            deltas[0].ingredient_assertion_uri(),
-            "self#jumbf=/c2pa/active/c2pa.assertions/c2pa.ingredient.v3"
-        );
-        let codes = deltas[0].validation_deltas();
-        assert_eq!(codes.failure().len(), 1);
-        assert_eq!(codes.failure()[0].code(), ASSERTION_BMFFHASH_MISMATCH);
-        assert_eq!(codes.failure()[0].kind(), &LogKind::Failure);
-        assert_eq!(codes.informational().len(), 1);
-        assert_eq!(
-            codes.informational()[0].code(),
-            ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS
-        );
-        assert!(codes.success().is_empty());
-    }
-
     use crate::{
         assertions,
         claim::Claim,

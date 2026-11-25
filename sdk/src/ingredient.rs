@@ -746,40 +746,40 @@ impl Ingredient {
         }
     }
 
-    #[async_generic]
-    pub(crate) fn revalidate_manifest(&mut self, context: &Context) -> Result<()> {
-        let Some(label) = self.active_manifest() else {
-            return Ok(());
+    /// Adds findings from `current`, the validation results of the store this ingredient was read
+    /// from, that its stored validation results lack.
+    ///
+    /// `assertion_uri` is the URI of this ingredient's assertion in that store. A validator newer
+    /// than the one that produced the stored results can report findings the stored results
+    /// don't contain; recording them keeps the ingredient's attestation complete.
+    pub(crate) fn add_current_validation(
+        &mut self,
+        current: &ValidationResults,
+        store: &Store,
+        assertion_uri: &str,
+    ) {
+        let Some(manifest_label) = self.active_manifest.as_deref() else {
+            return;
         };
-        let data_ref = self
-            .manifest_data
-            .as_ref()
-            .ok_or(Error::IngredientNotFound)?;
-        let data = self.resources.get(&data_ref.identifier)?;
-        let mut validation_log = StatusTracker::default();
-        let store = Store::from_jumbf_with_context(&data, &mut validation_log, context)?;
-        if _sync {
-            Store::verify_store(&store, None, &mut validation_log, context)?;
-        } else {
-            Store::verify_store_async(&store, None, &mut validation_log, context).await?;
-        }
-        let mut results = ValidationResults::from_store(&store, &validation_log);
-        if let Some(archived) = &self.validation_results {
-            results.preserve_asset_binding_results(archived, label);
-        } else if let Some(statuses) = &self.validation_status {
-            let mut archived = ValidationResults::default();
-            for status in statuses {
-                archived.add_status(
-                    status
-                        .clone()
-                        .set_kind(validation_status::log_kind(status.code())),
-                );
+
+        let had_results = self.validation_results.is_some();
+        let mut results = self.validation_results.take().unwrap_or_default();
+        if !had_results {
+            // Results supersede the legacy statuses when matching, so carry those over.
+            for status in self.validation_status.iter().flatten() {
+                let kind = validation_status::log_kind(status.code());
+                results.add_status(status.clone().set_kind(kind));
             }
-            results.preserve_asset_binding_results(&archived, label);
         }
-        self.validation_status = results.validation_errors();
-        self.validation_results = Some(results);
-        Ok(())
+
+        let changed =
+            results.add_current_ingredient_results(current, store, assertion_uri, manifest_label);
+        if changed {
+            self.validation_status = results.validation_errors();
+        }
+        if changed || had_results {
+            self.validation_results = Some(results);
+        }
     }
 
     // Internal utility function to get thumbnail from an assertion.
