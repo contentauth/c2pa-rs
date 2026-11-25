@@ -22,6 +22,21 @@ The C language is not object-oriented, does not perform garbage collection, and 
 
 For these reasons, use the the C++ API unless you have a specific reason to use C.
 
+## Byte-buffer ownership
+
+Returned byte buffers are library-owned and read-only. Release each non-null
+allocation exactly once with `c2pa_free`, never C `free`, `realloc`, C++ `delete`,
+or a foreign container's deallocator. Follow the returning function's documented
+byte count and lifetime.
+
+Stream callbacks borrow buffers only for the duration of the callback; do not
+retain or free them. HTTP resolver callbacks instead transfer ownership of a
+`malloc`-allocated response body to Rust and must not access or free it afterward.
+Rust releases that allocation when the response body reader is dropped.
+
+See the [API reference](https://docs.rs/c2pa-c-ffi/latest/c2pa_c/) for
+function-specific ownership requirements.
+
 ## Building locally
 
 Pre-requisite: You must have the Rust toolchain (cargo) installed.

@@ -68,9 +68,9 @@ impl UtcTime {
         })
     }
 
-    /// Convert to chrono DateTime
-    pub fn to_datetime(&self) -> chrono::DateTime<chrono::Utc> {
-        // Convert der's time to SystemTime, then to chrono
+    /// Convert to OffsetDateTime
+    pub fn to_datetime(&self) -> time::OffsetDateTime {
+        // Convert der's time to SystemTime, then to OffsetDateTime
         let system_time = self.der_time.to_system_time();
         system_time.into()
     }
@@ -1465,7 +1465,7 @@ impl Time {
     }
 }
 
-impl From<Time> for chrono::DateTime<chrono::Utc> {
+impl From<Time> for time::OffsetDateTime {
     fn from(t: Time) -> Self {
         match t {
             Time::UtcTime(utc) => utc.to_datetime(),
@@ -1480,6 +1480,7 @@ pub type AttributeCertificateV2 = AttributeCertificate;
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::crypto::internal;
 
     fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
         let mut result = vec![tag];
@@ -1501,8 +1502,8 @@ mod tests {
         ] {
             let der = tlv(tag, time);
             let decoded = Constructed::decode(der.as_slice(), Mode::Der, Time::take_from).unwrap();
-            let dt: chrono::DateTime<chrono::Utc> = decoded.into();
-            assert_eq!(dt.timestamp(), expected);
+            let dt: time::OffsetDateTime = decoded.into();
+            assert_eq!(dt.unix_timestamp(), expected);
         }
 
         for (tag, time) in [
@@ -1541,8 +1542,12 @@ mod tests {
                 }
             }
 
-            let actual: chrono::DateTime<chrono::Utc> = decoded.into();
-            assert_eq!(actual.to_rfc3339(), expected, "{value}");
+            let actual: time::OffsetDateTime = decoded.into();
+            assert_eq!(
+                internal::time::format_with_offset(actual),
+                expected,
+                "{value}"
+            );
         }
     }
 
@@ -1614,7 +1619,7 @@ mod tests {
     #[test]
     fn unsupported_legacy_certificate_choices_fail_without_panicking() {
         // These legacy CMS choices have explicit unimplemented parsers;
-        // the RFC 3161 engine uses rasn_cms instead.
+        // the RFC 3161 engine uses RustCrypto CMS with opaque certificates instead.
         for tag in [0xa0, 0xa1, 0xa2, 0xa3] {
             let der = tlv(tag, &[0x30, 0]);
             assert!(Constructed::decode(

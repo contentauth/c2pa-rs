@@ -27,7 +27,10 @@ use crate::{
     context::{Context, ProgressPhase},
     crypto::{
         asn1::rfc3161::TstInfo,
-        cose::{cert_chain_from_sign1, CertificateTrustPolicy},
+        cose::{
+            cert_chain_from_sign1, trusted_cawg_timestamp, trusted_cawg_timestamp_token,
+            CertificateTrustPolicy, Verifier,
+        },
         ocsp::OcspResponse,
         time_stamp::verify_time_stamp,
     },
@@ -63,8 +66,6 @@ impl Store {
         assertion_label: &str,
         validation_log: &mut StatusTracker,
     ) -> Result<Option<TstInfo>> {
-        use crate::crypto::cose::{trusted_cawg_timestamp, trusted_cawg_timestamp_token, Verifier};
-
         let Some((signed_uri, _)) = claim.assertion_hashed_uri_from_label(assertion_label) else {
             return Ok(None);
         };
@@ -703,6 +704,10 @@ mod ocsp_reporting_tests {
     use coset::{cbor::value::Value, CoseSign1, Label, TaggedCborSerializable};
 
     use super::*;
+    #[cfg(feature = "openssl")]
+    use crate::crypto::internal;
+    #[cfg(feature = "openssl")]
+    use crate::crypto::ocsp::test_responder::{ocsp_time, TestResponder};
     use crate::{
         assertions::DataHash,
         cose_validator::{check_ocsp_status, check_ocsp_status_async, get_signing_cert_serial_num},
@@ -924,7 +929,7 @@ mod ocsp_reporting_tests {
         let mut tampered = good_basic_response();
         tampered.tbs_response_data.responses[0]
             .cert_id
-            .serial_number = 1.into();
+            .serial_number = der::asn1::Int::new(&[1]).unwrap();
         let store = store(vec![vec![0], encode_response(&tampered)], None, &context);
         let claim = store.provenance_claim().unwrap();
         let mut log = StatusTracker::default();
@@ -998,19 +1003,15 @@ mod ocsp_reporting_tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn fresh_good_reports_once_after_collection() {
-        use chrono::{DateTime, Duration, Utc};
-
-        use crate::crypto::ocsp::test_responder::TestResponder;
-
         let context = context(true);
         let responder = TestResponder::new();
         let mut basic = good_basic_response();
-        let now = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
-        basic.tbs_response_data.produced_at = (now - Duration::hours(1)).fixed_offset();
+        let now = internal::time::utc_now().replace_nanosecond(0).unwrap();
+        basic.tbs_response_data.produced_at = ocsp_time(now - time::Duration::hours(1));
         basic.tbs_response_data.responses[0].this_update =
-            (now - Duration::hours(1)).fixed_offset();
+            ocsp_time(now - time::Duration::hours(1));
         basic.tbs_response_data.responses[0].next_update =
-            Some((now + Duration::hours(24)).fixed_offset());
+            Some(ocsp_time(now + time::Duration::hours(24)));
         let mut store = store(vec![responder.sign(basic)], None, &context);
         store
             .ctp
