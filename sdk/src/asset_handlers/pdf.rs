@@ -75,7 +75,6 @@ pub enum Error {
 /// a Subtype key whose value is `application/c2pa`".
 const C2PA_MIME_TYPE: &str = "application/c2pa";
 
-#[cfg_attr(test, mockall::automock)]
 pub(crate) trait C2paPdf: Sized {
     /// Save the `C2paPdf` implementation to the provided `writer`.
     fn save_to<W: Write + 'static>(&mut self, writer: &mut W) -> Result<(), std::io::Error>;
@@ -93,8 +92,7 @@ pub(crate) trait C2paPdf: Sized {
     fn write_manifest_as_annotation(&mut self, vec: Vec<u8>) -> Result<(), Error>;
 
     /// Returns a reference to the C2PA manifest bytes.
-    #[allow(clippy::needless_lifetimes)] // required for automock::mockall
-    fn read_manifest_bytes<'a>(&'a self) -> Result<Option<Vec<&'a [u8]>>, Error>;
+    fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error>;
 
     fn remove_manifest_bytes(&mut self) -> Result<(), Error>;
 

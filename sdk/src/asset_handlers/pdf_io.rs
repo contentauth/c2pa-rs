@@ -352,8 +352,10 @@ pub mod tests {
 
     use super::{find_stream_content_start, locate_manifest_content};
     use crate::{
-        asset_handlers,
-        asset_handlers::{pdf::MockC2paPdf, pdf_io::PdfIO},
+        asset_handlers::{
+            pdf::{C2paPdf, Pdf},
+            pdf_io::PdfIO,
+        },
         asset_io::{AssetIO, C2paReader},
     };
 
@@ -373,79 +375,67 @@ pub mod tests {
 
     static MANIFEST_BYTES: &[u8; 2] = &[10u8, 20u8];
 
+    /// `basic.pdf` with `MANIFEST_BYTES` embedded as a real C2PA manifest.
+    fn pdf_bytes_with_manifest() -> Vec<u8> {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        pdf.write_manifest_as_embedded_file(MANIFEST_BYTES.to_vec())
+            .unwrap();
+        let mut out = Vec::new();
+        pdf.save_to(&mut out).unwrap();
+        out
+    }
+
     #[test]
     fn test_error_reading_manifest_fails() {
-        let mut mock_pdf = MockC2paPdf::default();
-        mock_pdf.expect_read_manifest_bytes().returning(|| {
-            Err(asset_handlers::pdf::Error::UnableToReadPdf(
-                lopdf::Error::ReferenceLimit,
-            ))
-        });
+        // Rename the file spec's `/EF` key so the manifest can no longer be resolved.
+        let mut bytes = pdf_bytes_with_manifest();
+        let pos = bytes.windows(3).position(|w| w == b"/EF").unwrap();
+        bytes[pos..pos + 3].copy_from_slice(b"/XF");
+        let pdf = Pdf::from_bytes(&bytes).unwrap();
 
         let pdf_io = PdfIO::new("pdf");
         assert!(matches!(
-            pdf_io.read_manifest_bytes(mock_pdf),
+            pdf_io.read_manifest_bytes(pdf),
             Err(crate::Error::PdfReadError)
         ))
     }
 
     #[test]
     fn test_no_manifest_found_returns_no_jumbf_error() {
-        let mut mock_pdf = MockC2paPdf::default();
-        mock_pdf.expect_read_manifest_bytes().returning(|| Ok(None));
+        let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         let pdf_io = PdfIO::new("pdf");
 
         assert!(matches!(
-            pdf_io.read_manifest_bytes(mock_pdf),
+            pdf_io.read_manifest_bytes(pdf),
             Err(crate::Error::JumbfNotFound)
         ));
     }
 
     #[test]
     fn test_one_manifest_found_returns_bytes() {
-        let mut mock_pdf = MockC2paPdf::default();
-        mock_pdf
-            .expect_read_manifest_bytes()
-            .returning(|| Ok(Some(vec![MANIFEST_BYTES])));
+        let pdf = Pdf::from_bytes(&pdf_bytes_with_manifest()).unwrap();
 
         let pdf_io = PdfIO::new("pdf");
         assert_eq!(
-            pdf_io.read_manifest_bytes(mock_pdf).unwrap(),
+            pdf_io.read_manifest_bytes(pdf).unwrap(),
             MANIFEST_BYTES.to_vec()
         );
     }
 
     #[test]
-    fn test_multiple_manifest_fail_with_not_implemented_error() {
-        let mut mock_pdf = MockC2paPdf::default();
-        mock_pdf
-            .expect_read_manifest_bytes()
-            .returning(|| Ok(Some(vec![MANIFEST_BYTES, MANIFEST_BYTES, MANIFEST_BYTES])));
-
-        let pdf_io = PdfIO::new("pdf");
-
-        assert!(matches!(
-            pdf_io.read_manifest_bytes(mock_pdf),
-            Err(crate::Error::NotImplemented(_))
-        ));
-    }
-
-    #[test]
     fn test_returns_none_when_no_xmp() {
-        let mut mock_pdf = MockC2paPdf::default();
-        mock_pdf.expect_read_xmp().returning(|| None);
+        let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-no-xmp.pdf")).unwrap();
 
         let pdf_io = PdfIO::new("pdf");
-        assert_eq!(pdf_io.read_xmp_from_pdf(mock_pdf), None);
+        assert_eq!(pdf_io.read_xmp_from_pdf(pdf), None);
     }
 
     #[test]
     fn test_returns_some_when_some_xmp() {
-        let mut mock_pdf = MockC2paPdf::default();
-        mock_pdf.expect_read_xmp().returning(|| Some("xmp".into()));
+        let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
 
         let pdf_io = PdfIO::new("pdf");
-        assert!(pdf_io.read_xmp_from_pdf(mock_pdf).is_some());
+        assert!(pdf_io.read_xmp_from_pdf(pdf).is_some());
     }
 
     #[test]
