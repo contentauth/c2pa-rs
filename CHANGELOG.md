@@ -12,6 +12,21 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 ### Deprecated
 
 * The chrono-based signing-time and timestamp-verification functions (sync and async), `CertificateInfo::date`, `OcspResponse::{next_update, revoked_at}`, `VerifiedIdentity::verified_at`, and `IcaCredential::{valid_from, valid_until}` carry advance compiler warnings for their change or removal in **0.93.0 (scheduled for mid-January 2027)**. These notices are a stable-line security exception because chrono is unmaintained (RUSTSEC-2026-0543). Existing signatures and behavior are unchanged; the `time::OffsetDateTime` replacements are not yet available on stable. See the [Rust migration guide](sdk/src/lib.rs) and [#3105](https://github.com/contentauth/c2pa-rs/pull/3105) for the planned type changes and rejection of leap-second timestamp inputs.
+## [0.92.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.92.2...c2pa-v0.92.3)
+_25 November 2026_
+
+### Fixed
+
+* Refresh ingredient archive validation results (backport #3146) ([#3152](https://github.com/contentauth/c2pa-rs/pull/3152))
+* *(sdk)* Do not report free/skip padding as additional BMFF hash exclusions (backport #3121) ([#3134](https://github.com/contentauth/c2pa-rs/pull/3134))
+
+### Other
+
+* Characterize ASN.1 time boundaries and OCSP request bytes (backport #3131) ([#3135](https://github.com/contentauth/c2pa-rs/pull/3135))
+
+### Updated dependencies
+
+* Zip from v9.3.0 -> v9.6.1 (backport #3095) ([#3103](https://github.com/contentauth/c2pa-rs/pull/3103))
 
 ## [0.92.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.92.1...c2pa-v0.92.2)
 _16 November 2026_

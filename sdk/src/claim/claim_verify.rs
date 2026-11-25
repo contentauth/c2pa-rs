@@ -1336,14 +1336,19 @@ impl Claim {
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
-                    // are there addtional exclusions that are not manifests or ftyp
+                    // Are there additional exclusions beyond the C2PA manifest box, ftyp,
+                    // mfra, and free/skip padding? Padding is not an "additional"
+                    // exclusion (see the matching rule for data hashes in C2PA §15.12.1.1),
+                    // and the SDK's own signer excludes /free and /skip by default
+                    // (`builder.bmff_hash_exclude_free_and_skip_boxes`).
                     if dh.exclusions().iter().any(|e| {
                         if e.xpath == "/uuid" {
                             match &e.data {
                                 Some(dm_vec) if dm_vec.len() == 1 => !(dm_vec[0] == c2pa_dm),
                                 _ => true,
                             }
-                        } else if e.xpath == "/ftyp" || e.xpath == "/mfra" {
+                        } else if matches!(e.xpath.as_str(), "/ftyp" | "/mfra" | "/free" | "/skip")
+                        {
                             false
                         } else {
                             true // not ftyp, mfra or uuid
