@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -61,16 +61,8 @@ impl C2paWriter for ZipIO {
     ) -> Result<()> {
         let mut archive =
             ZipArchive::new(input_stream).map_err(|err| Error::InvalidAsset(err.to_string()))?;
-        if archive.index_for_name(MANIFEST_PATH).is_some() {
-            return zip_remove_entries(&mut archive, output_stream, &[MANIFEST_PATH])
-                .map_err(|err| Error::InvalidAsset(err.to_string()));
-        }
-
-        let input_stream = archive.into_inner();
-        input_stream.rewind()?;
-        io::copy(input_stream, output_stream)?;
-
-        Ok(())
+        zip_remove_entries(&mut archive, output_stream, &[MANIFEST_PATH])
+            .map_err(|err| Error::InvalidAsset(err.to_string()))
     }
 }
 
@@ -404,9 +396,7 @@ where
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use std::io::Write;
-
-    use io::{Cursor, Seek};
+    use std::io::{Cursor, Seek, Write};
 
     use super::*;
 
@@ -700,13 +690,31 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_without_manifest_copies_input() {
+    fn test_remove_without_manifest_keeps_entries() {
         let zip_io = ZipIO {};
         let mut src = Cursor::new(SAMPLES[0].to_vec());
 
         let mut output = Cursor::new(Vec::new());
         zip_io.remove_c2pa(&mut src, &mut output).unwrap();
 
-        assert_eq!(output.into_inner(), SAMPLES[0]);
+        assert_eq!(entry_names(&mut output), entry_names(&mut src));
+
+        let mut src_archive = ZipArchive::new(&mut src).unwrap();
+        let mut output_archive = ZipArchive::new(&mut output).unwrap();
+        for index in 0..src_archive.len() {
+            let mut expected = Vec::new();
+            src_archive
+                .by_index(index)
+                .unwrap()
+                .read_to_end(&mut expected)
+                .unwrap();
+            let mut actual = Vec::new();
+            output_archive
+                .by_index(index)
+                .unwrap()
+                .read_to_end(&mut actual)
+                .unwrap();
+            assert_eq!(expected, actual);
+        }
     }
 }
