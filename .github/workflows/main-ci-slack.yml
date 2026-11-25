@@ -6,13 +6,15 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '0 3,15 * * *' # 03:00 UTC and 15:00 UTC.
 
 permissions:
   actions: read
 
 jobs:
   notify:
-    uses: contentauth/ci-workflows/.github/workflows/ci-slack.yml@3b0da24fcbea0e507dba39ad96ad78625f6855c8
+    uses: contentauth/ci-workflows/.github/workflows/ci-slack.yml@7b8900a81224878b0671d1a60018939048572716
     with:
       branch: main
       workflow-names: '["*"]'
