@@ -978,11 +978,11 @@ mod tests {
             .unwrap();
     }
 
-    // Setup a mock for the AssetBoxHash trait
-    mockall::mock! {
-        pub MABH { }
-        impl AssetBoxHash for MABH {
-            fn get_box_map(&self, reader: &mut dyn ReadSeek) -> Result<Vec<AssetBoxMap>>;
+    struct FixedBoxMap(Vec<AssetBoxMap>);
+
+    impl AssetBoxHash for FixedBoxMap {
+        fn get_box_map(&self, _reader: &mut dyn ReadSeek) -> Result<Vec<AssetBoxMap>> {
+            Ok(self.0.clone())
         }
     }
 
@@ -990,23 +990,16 @@ mod tests {
     fn test_with_no_box_hashes_after_c2pa() {
         // Algorithm to use
         let alg = "sha256";
-        // Create a mock object
-        let mut mock = MockMABH::new();
-        // Setup the expectation when asked for the box map
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![
-                // Make sure the first one is the C2PA box
-                AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10).with_allowed_exclusions(vec![
-                    AllowedExclusion {
-                        start: 0,
-                        length: 10,
-                        kind: ExclusionKind::ManifestOrPadding,
-                    },
-                ]),
-                // And follow with
-                AssetBoxMap::new(vec!["test".to_string()], 10, 10),
-            ])
-        });
+        let box_map = FixedBoxMap(vec![
+            AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10).with_allowed_exclusions(vec![
+                AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::ManifestOrPadding,
+                },
+            ]),
+            AssetBoxMap::new(vec!["test".to_string()], 10, 10),
+        ]);
         // The data size must match what we return in the expectation
         let data = vec![0u8; 20];
         // And create a reader on that data, for the API call
@@ -1014,7 +1007,7 @@ mod tests {
         // Create the BoxHash object
         let mut bh = BoxHash { boxes: Vec::new() };
         // And generate the box hashes
-        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &mock, true);
+        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &box_map, true);
         // We should expect an OK result
         assert!(result.is_ok());
         // With a total of 2 boxes
@@ -1027,23 +1020,16 @@ mod tests {
     fn test_with_no_box_hashes_before_c2pa() {
         // Algorithm to use
         let alg = "sha256";
-        // Create a mock object
-        let mut mock = MockMABH::new();
-        // Setup the expectation when asked for the box map
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![
-                // And follow with
-                AssetBoxMap::new(vec!["test".to_string()], 0, 10),
-                // Make sure the first one is the C2PA box
-                AssetBoxMap::new(vec!["C2PA".to_string()], 10, 10).with_allowed_exclusions(vec![
-                    AllowedExclusion {
-                        start: 0,
-                        length: 10,
-                        kind: ExclusionKind::ManifestOrPadding,
-                    },
-                ]),
-            ])
-        });
+        let box_map = FixedBoxMap(vec![
+            AssetBoxMap::new(vec!["test".to_string()], 0, 10),
+            AssetBoxMap::new(vec!["C2PA".to_string()], 10, 10).with_allowed_exclusions(vec![
+                AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::ManifestOrPadding,
+                },
+            ]),
+        ]);
         // The data size must match what we return in the expectation
         let data = vec![0u8; 20];
         // And create a reader on that data, for the API call
@@ -1051,7 +1037,7 @@ mod tests {
         // Create the BoxHash object
         let mut bh = BoxHash { boxes: Vec::new() };
         // And generate the box hashes
-        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &mock, true);
+        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &box_map, true);
         // We should expect an OK result
         assert!(result.is_ok());
         // With a total of 2 boxes
@@ -1064,24 +1050,17 @@ mod tests {
     fn test_with_no_box_hashes_before_and_after_c2pa() {
         // Algorithm to use
         let alg = "sha256";
-        // Create a mock object
-        let mut mock = MockMABH::new();
-        // Setup the expectation when asked for the box map
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![
-                // And follow with
-                AssetBoxMap::new(vec!["test".to_string()], 0, 10),
-                // Make sure the first one is the C2PA box
-                AssetBoxMap::new(vec!["C2PA".to_string()], 10, 10).with_allowed_exclusions(vec![
-                    AllowedExclusion {
-                        start: 0,
-                        length: 10,
-                        kind: ExclusionKind::ManifestOrPadding,
-                    },
-                ]),
-                AssetBoxMap::new(vec!["test1".to_string()], 20, 10),
-            ])
-        });
+        let box_map = FixedBoxMap(vec![
+            AssetBoxMap::new(vec!["test".to_string()], 0, 10),
+            AssetBoxMap::new(vec!["C2PA".to_string()], 10, 10).with_allowed_exclusions(vec![
+                AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::ManifestOrPadding,
+                },
+            ]),
+            AssetBoxMap::new(vec!["test1".to_string()], 20, 10),
+        ]);
         // The data size must match what we return in the expectation
         let data = vec![0u8; 30];
         // And create a reader on that data, for the API call
@@ -1089,7 +1068,7 @@ mod tests {
         // Create the BoxHash object
         let mut bh = BoxHash { boxes: Vec::new() };
         // And generate the box hashes
-        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &mock, true);
+        let result = bh.generate_box_hash_from_stream(&mut reader, alg, &box_map, true);
         // We should expect an OK result
         assert!(result.is_ok());
         // With a total of 2 boxes
@@ -1130,20 +1109,17 @@ mod tests {
         // CDDL: `"exclusions": [1* box-exclusions-map]` - an empty array is
         // structurally invalid, not equivalent to the key being absent.
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![AssetBoxMap {
-                names: vec!["AAAA".to_string()],
-                excluded: None,
-                range_start: 0,
-                range_len: 10,
-                allowed_exclusions: vec![AllowedExclusion {
-                    start: 0,
-                    length: 10,
-                    kind: ExclusionKind::AssetMetadata,
-                }],
-            }])
-        });
+        let box_map = FixedBoxMap(vec![AssetBoxMap {
+            names: vec!["AAAA".to_string()],
+            excluded: None,
+            range_start: 0,
+            range_len: 10,
+            allowed_exclusions: vec![AllowedExclusion {
+                start: 0,
+                length: 10,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        }]);
 
         let data: Vec<u8> = (0..10).collect();
         let mut reader = Cursor::new(data);
@@ -1162,7 +1138,9 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &box_map, &mut |_, _| {
+                Ok(())
+            });
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1175,16 +1153,13 @@ mod tests {
         // otherwise-present `exclusions` value from still satisfying the
         // CDDL `[1* box-exclusions-map]` shape.
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![AssetBoxMap {
-                names: vec!["AAAA".to_string()],
-                excluded: None,
-                range_start: 0,
-                range_len: 10,
-                allowed_exclusions: vec![],
-            }])
-        });
+        let box_map = FixedBoxMap(vec![AssetBoxMap {
+            names: vec!["AAAA".to_string()],
+            excluded: None,
+            range_start: 0,
+            range_len: 10,
+            allowed_exclusions: vec![],
+        }]);
 
         let data: Vec<u8> = (0..10).collect();
         let mut reader = Cursor::new(data);
@@ -1203,7 +1178,9 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &box_map, &mut |_, _| {
+                Ok(())
+            });
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1215,20 +1192,17 @@ mod tests {
         // Same as above, but for the C2PA store's own box (`skip_c2pa`)
         // rather than an `excluded: true` box.
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![AssetBoxMap {
-                names: vec![C2PA_BOXHASH.to_string()],
-                excluded: None,
-                range_start: 0,
-                range_len: 10,
-                allowed_exclusions: vec![AllowedExclusion {
-                    start: 0,
-                    length: 10,
-                    kind: ExclusionKind::ManifestOrPadding,
-                }],
-            }])
-        });
+        let box_map = FixedBoxMap(vec![AssetBoxMap {
+            names: vec![C2PA_BOXHASH.to_string()],
+            excluded: None,
+            range_start: 0,
+            range_len: 10,
+            allowed_exclusions: vec![AllowedExclusion {
+                start: 0,
+                length: 10,
+                kind: ExclusionKind::ManifestOrPadding,
+            }],
+        }]);
 
         let data: Vec<u8> = (0..10).collect();
         let mut reader = Cursor::new(data);
@@ -1247,7 +1221,9 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &box_map, &mut |_, _| {
+                Ok(())
+            });
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1262,16 +1238,13 @@ mod tests {
         // `additionalExclusionsPresent` signal - even though this path never
         // classifies the excluded box's content.
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![AssetBoxMap {
-                names: vec!["AAAA".to_string()],
-                excluded: None,
-                range_start: 0,
-                range_len: 10,
-                allowed_exclusions: vec![],
-            }])
-        });
+        let box_map = FixedBoxMap(vec![AssetBoxMap {
+            names: vec!["AAAA".to_string()],
+            excluded: None,
+            range_start: 0,
+            range_len: 10,
+            allowed_exclusions: vec![],
+        }]);
 
         let data: Vec<u8> = (0..10).collect();
         let mut reader = Cursor::new(data);
@@ -1290,7 +1263,9 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &box_map, &mut |_, _| {
+                Ok(())
+            });
         assert!(result.unwrap());
     }
 
@@ -1299,20 +1274,17 @@ mod tests {
         // The C2PA store's own box is the baseline exclusion, not an
         // "additional" one - even if it's also marked `excluded: true`.
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![AssetBoxMap {
-                names: vec![C2PA_BOXHASH.to_string()],
-                excluded: None,
-                range_start: 0,
-                range_len: 10,
-                allowed_exclusions: vec![AllowedExclusion {
-                    start: 0,
-                    length: 10,
-                    kind: ExclusionKind::ManifestOrPadding,
-                }],
-            }])
-        });
+        let box_map = FixedBoxMap(vec![AssetBoxMap {
+            names: vec![C2PA_BOXHASH.to_string()],
+            excluded: None,
+            range_start: 0,
+            range_len: 10,
+            allowed_exclusions: vec![AllowedExclusion {
+                start: 0,
+                length: 10,
+                kind: ExclusionKind::ManifestOrPadding,
+            }],
+        }]);
 
         let data: Vec<u8> = (0..10).collect();
         let mut reader = Cursor::new(data);
@@ -1331,7 +1303,9 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &box_map, &mut |_, _| {
+                Ok(())
+            });
         assert!(!result.unwrap());
     }
 
@@ -1342,13 +1316,10 @@ mod tests {
     #[test]
     fn test_verify_rejects_truncated_box_list() {
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![
-                AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10),
-                AssetBoxMap::new(vec!["AAAA".to_string()], 10, 10),
-            ])
-        });
+        let box_map = FixedBoxMap(vec![
+            AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10),
+            AssetBoxMap::new(vec!["AAAA".to_string()], 10, 10),
+        ]);
 
         let data: Vec<u8> = (0..20).collect();
         let mut reader = Cursor::new(data);
@@ -1368,7 +1339,9 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &box_map, &mut |_, _| {
+                Ok(())
+            });
         assert!(
             matches!(&result, Err(Error::HashMismatch(s)) if s == ASSERTION_BOXHASH_UNKNOWN_BOX),
             "unexpected result: {result:?}"
@@ -1385,16 +1358,12 @@ mod tests {
 
         // The box map ends at offset 10, but the asset is 20 bytes long: the
         // trailing 10 bytes belong to no box.
-        let make_mock = || {
-            let mut mock = MockMABH::new();
-            mock.expect_get_box_map().returning(|_| {
-                Ok(vec![AssetBoxMap::new(
-                    vec![C2PA_BOXHASH.to_string()],
-                    0,
-                    10,
-                )])
-            });
-            mock
+        let make_box_map = || {
+            FixedBoxMap(vec![AssetBoxMap::new(
+                vec![C2PA_BOXHASH.to_string()],
+                0,
+                10,
+            )])
         };
         let bh = BoxHash {
             boxes: vec![BoxMap {
@@ -1413,7 +1382,7 @@ mod tests {
         let result = bh.verify_stream_hash_with_progress(
             &mut appended,
             Some(alg),
-            &make_mock(),
+            &make_box_map(),
             &mut |_, _| Ok(()),
         );
         assert!(
@@ -1427,7 +1396,7 @@ mod tests {
         let result = bh.verify_stream_hash_with_progress(
             &mut exact,
             Some(alg),
-            &make_mock(),
+            &make_box_map(),
             &mut |_, _| Ok(()),
         );
         assert!(
@@ -1445,16 +1414,12 @@ mod tests {
 
         // Box map ends at offset 10; the asset is 20 bytes, so [10, 20) is the
         // `c2pa.after` trailer the manifest lists and hashes below.
-        let make_mock = || {
-            let mut mock = MockMABH::new();
-            mock.expect_get_box_map().returning(|_| {
-                Ok(vec![AssetBoxMap::new(
-                    vec![C2PA_BOXHASH.to_string()],
-                    0,
-                    10,
-                )])
-            });
-            mock
+        let make_box_map = || {
+            FixedBoxMap(vec![AssetBoxMap::new(
+                vec![C2PA_BOXHASH.to_string()],
+                0,
+                10,
+            )])
         };
 
         let trailer_hash = hash_by_alg(alg, &(10..20u8).collect::<Vec<u8>>(), None);
@@ -1487,7 +1452,7 @@ mod tests {
         let result = bh.verify_stream_hash_with_progress(
             &mut asset,
             Some(alg),
-            &make_mock(),
+            &make_box_map(),
             &mut |_, _| Ok(()),
         );
         assert!(
@@ -1525,7 +1490,7 @@ mod tests {
         let result = bad.verify_stream_hash_with_progress(
             &mut asset,
             Some(alg),
-            &make_mock(),
+            &make_box_map(),
             &mut |_, _| Ok(()),
         );
         assert!(
@@ -1893,16 +1858,13 @@ mod tests {
     #[test]
     fn test_generate_box_hash_from_stream_with_exclusions_rejects_disallowed_request() {
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![AssetBoxMap {
-                names: vec!["AAAA".to_string()],
-                excluded: None,
-                range_start: 0,
-                range_len: 10,
-                allowed_exclusions: vec![],
-            }])
-        });
+        let box_map = FixedBoxMap(vec![AssetBoxMap {
+            names: vec!["AAAA".to_string()],
+            excluded: None,
+            range_start: 0,
+            range_len: 10,
+            allowed_exclusions: vec![],
+        }]);
 
         let data: Vec<u8> = (0..10).collect();
         let mut reader = Cursor::new(data);
@@ -1916,7 +1878,7 @@ mod tests {
         let result = bh.generate_box_hash_from_stream_with_exclusions(
             &mut reader,
             alg,
-            &mock,
+            &box_map,
             false,
             &exclusion_requests,
         );
@@ -1929,35 +1891,32 @@ mod tests {
     #[test]
     fn test_generate_and_verify_with_exclusions() {
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![
-                AssetBoxMap {
-                    names: vec!["AAAA".to_string()],
-                    excluded: None,
-                    range_start: 0,
-                    range_len: 10,
-                    // Only ranges within an AssetMetadata/ManifestOrPadding
-                    // range may be excluded (spec §15.12.3).
-                    allowed_exclusions: vec![AllowedExclusion {
-                        start: 0,
-                        length: 10,
-                        kind: ExclusionKind::AssetMetadata,
-                    }],
-                },
-                AssetBoxMap {
-                    names: vec!["BBBB".to_string()],
-                    excluded: None,
-                    range_start: 10,
-                    range_len: 10,
-                    allowed_exclusions: vec![AllowedExclusion {
-                        start: 0,
-                        length: 10,
-                        kind: ExclusionKind::AssetMetadata,
-                    }],
-                },
-            ])
-        });
+        let box_map = FixedBoxMap(vec![
+            AssetBoxMap {
+                names: vec!["AAAA".to_string()],
+                excluded: None,
+                range_start: 0,
+                range_len: 10,
+                // Only ranges within an AssetMetadata/ManifestOrPadding
+                // range may be excluded (spec §15.12.3).
+                allowed_exclusions: vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+            },
+            AssetBoxMap {
+                names: vec!["BBBB".to_string()],
+                excluded: None,
+                range_start: 10,
+                range_len: 10,
+                allowed_exclusions: vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+            },
+        ]);
 
         let data: Vec<u8> = (0..20).collect();
         let mut reader = Cursor::new(data.clone());
@@ -1980,21 +1939,21 @@ mod tests {
         bh.generate_box_hash_from_stream_with_exclusions(
             &mut reader,
             alg,
-            &mock,
+            &box_map,
             false,
             &exclusion_requests,
         )
         .unwrap();
 
         // Unmodified data verifies.
-        bh.verify_stream_hash(&mut reader, Some(alg), &mock)
+        bh.verify_stream_hash(&mut reader, Some(alg), &box_map)
             .unwrap();
 
         // A change inside an excluded range still verifies.
         let mut inside = data.clone();
         inside[3] ^= 0xff;
         let mut inside_reader = Cursor::new(inside);
-        bh.verify_stream_hash(&mut inside_reader, Some(alg), &mock)
+        bh.verify_stream_hash(&mut inside_reader, Some(alg), &box_map)
             .unwrap();
 
         // A change outside any excluded range invalidates the hash.
@@ -2002,7 +1961,7 @@ mod tests {
         outside[0] ^= 0xff;
         let mut outside_reader = Cursor::new(outside);
         assert!(bh
-            .verify_stream_hash(&mut outside_reader, Some(alg), &mock)
+            .verify_stream_hash(&mut outside_reader, Some(alg), &box_map)
             .is_err());
     }
 
@@ -2015,44 +1974,41 @@ mod tests {
         // translated to the box's position within the merged entry's
         // `names` list (not its position in the original source box list).
         let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![
-                AssetBoxMap {
-                    names: vec!["AAAA".to_string()],
-                    excluded: None,
-                    range_start: 0,
-                    range_len: 10,
-                    allowed_exclusions: vec![AllowedExclusion {
-                        start: 0,
-                        length: 10,
-                        kind: ExclusionKind::AssetMetadata,
-                    }],
-                },
-                AssetBoxMap {
-                    names: vec![C2PA_BOXHASH.to_string()],
-                    excluded: None,
-                    range_start: 10,
-                    range_len: 5,
-                    allowed_exclusions: vec![AllowedExclusion {
-                        start: 0,
-                        length: 5,
-                        kind: ExclusionKind::ManifestOrPadding,
-                    }],
-                },
-                AssetBoxMap {
-                    names: vec!["BBBB".to_string()],
-                    excluded: None,
-                    range_start: 15,
-                    range_len: 10,
-                    allowed_exclusions: vec![AllowedExclusion {
-                        start: 0,
-                        length: 10,
-                        kind: ExclusionKind::AssetMetadata,
-                    }],
-                },
-            ])
-        });
+        let box_map = FixedBoxMap(vec![
+            AssetBoxMap {
+                names: vec!["AAAA".to_string()],
+                excluded: None,
+                range_start: 0,
+                range_len: 10,
+                allowed_exclusions: vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+            },
+            AssetBoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                excluded: None,
+                range_start: 10,
+                range_len: 5,
+                allowed_exclusions: vec![AllowedExclusion {
+                    start: 0,
+                    length: 5,
+                    kind: ExclusionKind::ManifestOrPadding,
+                }],
+            },
+            AssetBoxMap {
+                names: vec!["BBBB".to_string()],
+                excluded: None,
+                range_start: 15,
+                range_len: 10,
+                allowed_exclusions: vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+            },
+        ]);
 
         let data: Vec<u8> = (0..25).collect();
         let mut reader = Cursor::new(data.clone());
@@ -2078,7 +2034,7 @@ mod tests {
         bh.generate_box_hash_from_stream_with_exclusions(
             &mut reader,
             alg,
-            &mock,
+            &box_map,
             true,
             &exclusion_requests,
         )
@@ -2092,21 +2048,21 @@ mod tests {
         assert_eq!(bh.boxes[2].names, vec!["BBBB".to_string()]);
 
         // Unmodified data verifies.
-        bh.verify_stream_hash(&mut reader, Some(alg), &mock)
+        bh.verify_stream_hash(&mut reader, Some(alg), &box_map)
             .unwrap();
 
         // A change inside AAAA's excluded range still verifies.
         let mut inside_before = data.clone();
         inside_before[3] ^= 0xff;
         let mut inside_before_reader = Cursor::new(inside_before);
-        bh.verify_stream_hash(&mut inside_before_reader, Some(alg), &mock)
+        bh.verify_stream_hash(&mut inside_before_reader, Some(alg), &box_map)
             .unwrap();
 
         // A change inside BBBB's excluded range still verifies.
         let mut inside_after = data.clone();
         inside_after[18] ^= 0xff;
         let mut inside_after_reader = Cursor::new(inside_after);
-        bh.verify_stream_hash(&mut inside_after_reader, Some(alg), &mock)
+        bh.verify_stream_hash(&mut inside_after_reader, Some(alg), &box_map)
             .unwrap();
 
         // A change outside any excluded range (but still within AAAA)
@@ -2115,7 +2071,7 @@ mod tests {
         outside[0] ^= 0xff;
         let mut outside_reader = Cursor::new(outside);
         assert!(bh
-            .verify_stream_hash(&mut outside_reader, Some(alg), &mock)
+            .verify_stream_hash(&mut outside_reader, Some(alg), &box_map)
             .is_err());
     }
 }
