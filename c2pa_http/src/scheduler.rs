@@ -71,10 +71,24 @@ impl Cancel for Pending {
 }
 
 struct Job {
-    pending: Arc<Pending>,
+    pending: Claim,
     resolver: Arc<dyn SyncHttpResolver>,
     request: Request<Vec<u8>>,
     max_response_body_size: Option<u64>,
+}
+
+/// A job's hold on its request: if the job is dropped before completing it (for example while
+/// still queued), the callback runs with an error rather than leaving a waiter blocked.
+struct Claim(Arc<Pending>);
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+            self.0.complete(Err(HttpResolverError::Other(
+                "the request was dropped before it completed".into(),
+            )))
+        }));
+    }
 }
 
 /// A pool of worker threads that performs HTTP requests on behalf of callers.
@@ -153,13 +167,13 @@ impl RequestScheduler {
             (scheduler, request) => scheduler.or(request),
         };
         let job = Job {
-            pending: Arc::clone(&pending),
+            pending: Claim(Arc::clone(&pending)),
             resolver,
             request,
             max_response_body_size,
         };
         if let Err(mpsc::SendError(job)) = self.sender.send(job) {
-            job.pending.complete(Err(HttpResolverError::Other(
+            job.pending.0.complete(Err(HttpResolverError::Other(
                 "the request scheduler has no running workers".into(),
             )));
         }
@@ -191,7 +205,7 @@ fn work(receiver: &Mutex<mpsc::Receiver<Job>>) {
         else {
             return;
         };
-        if pending.is_done() {
+        if pending.0.is_done() {
             continue;
         }
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
@@ -203,7 +217,7 @@ fn work(receiver: &Mutex<mpsc::Receiver<Job>>) {
             ))
         });
         // A panicking callback must not take the worker down with it.
-        let _ = panic::catch_unwind(AssertUnwindSafe(|| pending.complete(outcome)));
+        let _ = panic::catch_unwind(AssertUnwindSafe(|| pending.0.complete(outcome)));
     }
 }
 
@@ -837,6 +851,26 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(queued.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_job_dropped_before_it_runs_releases_its_waiter() {
+        // A scheduler with no workers: the test holds the queue and drops the job itself.
+        let (sender, queue) = mpsc::channel();
+        let scheduler = RequestScheduler {
+            sender,
+            workers: NonZeroUsize::MIN,
+            max_response_body_size: None,
+        };
+        let resolver = ScheduledResolver::new(scheduler, Echo::new(b"never"));
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || tx.send(resolver.http_resolve(get()).map(body)).unwrap());
+
+        drop(queue.recv_timeout(TIMEOUT).unwrap());
+        assert!(matches!(
+            rx.recv_timeout(TIMEOUT).unwrap(),
+            Err(HttpResolverError::Other(_))
+        ));
     }
 
     #[test]
