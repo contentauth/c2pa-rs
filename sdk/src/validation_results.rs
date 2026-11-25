@@ -175,12 +175,17 @@ fn is_tolerated_manifest_failure_code(code: &str) -> bool {
 /// the verified provenance, so their ingredient assertions must not take part in
 /// validation-status reconciliation.
 fn referenced_claim_labels(store: &Store) -> HashSet<String> {
+    store
+        .provenance_claim()
+        .map(|active| referenced_claim_labels_from(store, active.label()))
+        .unwrap_or_default()
+}
+
+/// Labels of `root` and every claim reachable from it through ingredient assertions.
+fn referenced_claim_labels_from(store: &Store, root: &str) -> HashSet<String> {
     let mut referenced = HashSet::new();
-    let Some(active) = store.provenance_claim() else {
-        return referenced;
-    };
-    let mut queue = vec![active.label().to_string()];
-    referenced.insert(active.label().to_string());
+    let mut queue = vec![root.to_string()];
+    referenced.insert(root.to_string());
 
     while let Some(label) = queue.pop() {
         let Some(claim) = store.get_claim(&label) else {
@@ -363,6 +368,51 @@ impl ValidationResults {
         }
         results.validation_time = Some(Utc::now().to_rfc3339());
         results
+    }
+
+    /// Adds the statuses `current` holds for the ingredient at `ingredient_uri`, along with
+    /// those for ingredients nested under its manifest, to these results.
+    ///
+    /// `current` is the validation results of the store the ingredient was read from, and
+    /// `ingredient_manifest` is the label of the ingredient's own manifest in that store.
+    /// Returns `true` if any status was added.
+    pub(crate) fn add_current_ingredient_results(
+        &mut self,
+        current: &Self,
+        store: &Store,
+        ingredient_uri: &str,
+        ingredient_manifest: &str,
+    ) -> bool {
+        let nested_manifests = referenced_claim_labels_from(store, ingredient_manifest);
+        let mut added = false;
+
+        for delta in current.ingredient_deltas().into_iter().flatten() {
+            let delta_uri = delta.ingredient_assertion_uri();
+            let codes = delta.validation_deltas();
+            let statuses = codes
+                .success()
+                .iter()
+                .chain(codes.informational())
+                .chain(codes.failure());
+
+            if delta_uri == ingredient_uri {
+                let active_manifest = self
+                    .active_manifest
+                    .get_or_insert_with(StatusCodes::default);
+                for status in statuses {
+                    active_manifest.add_status(status.clone());
+                    added = true;
+                }
+            } else if manifest_label_from_uri(delta_uri)
+                .is_some_and(|label| nested_manifests.contains(&label))
+            {
+                for status in statuses {
+                    self.add_status(status.clone().set_ingredient_uri(delta_uri.to_owned()));
+                    added = true;
+                }
+            }
+        }
+        added
     }
 
     /// Returns the [ValidationState] of the manifest store based on the validation results.
