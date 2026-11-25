@@ -16,7 +16,6 @@ use std::{
     fmt::{self, Display},
 };
 
-use chrono::Utc;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::AssertionBase,
     assertions::Ingredient,
+    crypto::internal,
     jumbf::labels::{self, manifest_label_from_uri},
     spec_versions::C2PA_VALIDATOR_VERSION,
     status_tracker::{LogKind, StatusTracker},
@@ -361,7 +361,8 @@ impl ValidationResults {
                 results.add_status(status);
             }
         }
-        results.validation_time = Some(Utc::now().to_rfc3339());
+        results.validation_time =
+            Some(internal::time::format_with_offset(internal::time::utc_now()));
         results
     }
 

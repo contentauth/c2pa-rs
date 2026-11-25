@@ -12,7 +12,10 @@
 
 #![allow(clippy::unwrap_used)]
 
+use x509_cert::der::{Decode as DerDecode, Encode as DerEncode};
+
 use super::*;
+use crate::crypto::time_stamp::response::SignerInfos;
 
 const DATA: &[u8] = b"RSA timestamp regression";
 const SHA256: &str = "2.16.840.1.101.3.4.2.1";
@@ -39,27 +42,22 @@ fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
     output
 }
 
-fn algorithm(oid: &str, parameters: Option<Vec<u8>>) -> rasn_pkix::AlgorithmIdentifier {
-    rasn_pkix::AlgorithmIdentifier {
-        algorithm: types::ObjectIdentifier::new_unchecked(
-            oid.split('.')
-                .map(|part| part.parse().unwrap())
-                .collect::<Vec<_>>()
-                .into(),
-        ),
-        parameters: parameters.map(types::Any::new),
+fn algorithm(oid: &str, parameters: Option<Vec<u8>>) -> spki::AlgorithmIdentifierOwned {
+    spki::AlgorithmIdentifierOwned {
+        oid: ObjectIdentifier::new(oid).unwrap(),
+        parameters: parameters.map(|value| Any::from_der(&value).unwrap()),
     }
 }
 
 fn hash_algorithm(hash: &str) -> Vec<u8> {
-    rasn::der::encode(&algorithm(hash, Some(vec![5, 0]))).unwrap()
+    Encode::to_der(&algorithm(hash, Some(vec![5, 0]))).unwrap()
 }
 
 fn pss(hash: &str, mgf_hash: &str, salt: u8, trailer: Option<u8>) -> Vec<u8> {
     let mut fields = tlv(0xa0, &hash_algorithm(hash));
     fields.extend(tlv(
         0xa1,
-        &rasn::der::encode(&algorithm(MGF1, Some(hash_algorithm(mgf_hash)))).unwrap(),
+        &Encode::to_der(&algorithm(MGF1, Some(hash_algorithm(mgf_hash)))).unwrap(),
     ));
     fields.extend(tlv(0xa2, &tlv(2, &[salt])));
 
@@ -70,38 +68,43 @@ fn pss(hash: &str, mgf_hash: &str, salt: u8, trailer: Option<u8>) -> Vec<u8> {
     tlv(0x30, &fields)
 }
 
-fn decode(token: &[u8]) -> rasn_cms::SignedData {
+fn decode(token: &[u8]) -> SignedData {
     signed_data_from_time_stamp_response(token)
         .unwrap()
         .unwrap()
 }
 
-fn encode(sd: &rasn_cms::SignedData) -> Vec<u8> {
-    let mut content: rasn_cms::ContentInfo = rasn::der::decode(PS256).unwrap();
-    content.content = types::Any::new(rasn::der::encode(sd).unwrap());
-    rasn::der::encode(&content).unwrap()
+fn encode(sd: &SignedData) -> Vec<u8> {
+    let mut content = cms::content_info::ContentInfo::from_der(PS256).unwrap();
+    content.content = Any::from_der(&Encode::to_der(sd).unwrap()).unwrap();
+    Encode::to_der(&content).unwrap()
 }
 
-fn certificate(sd: &rasn_cms::SignedData) -> &rasn_pkix::Certificate {
-    sd.certificates
-        .as_ref()
-        .unwrap()
-        .to_vec()
-        .into_iter()
-        .find_map(|choice| match choice {
-            CertificateChoices::Certificate(cert) => Some(cert.as_ref()),
-            _ => None,
-        })
-        .unwrap()
+fn certificate(sd: &SignedData) -> x509_cert::Certificate {
+    let certificate = sd.certificates.as_ref().unwrap().iter().next().unwrap();
+    x509_cert::Certificate::from_der(&certificate.to_der().unwrap()).unwrap()
 }
 
-fn change_certificate(
-    sd: &mut rasn_cms::SignedData,
-    change: impl FnOnce(&mut rasn_pkix::Certificate),
-) {
-    let mut cert = certificate(sd).clone();
+fn key_algorithm(sd: &SignedData) -> spki::AlgorithmIdentifierOwned {
+    spki::AlgorithmIdentifierOwned::from_der(
+        &certificate(sd)
+            .tbs_certificate
+            .subject_public_key_info
+            .algorithm
+            .to_der()
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+fn change_certificate(sd: &mut SignedData, change: impl FnOnce(&mut x509_cert::Certificate)) {
+    let mut cert = certificate(sd);
     change(&mut cert);
-    sd.certificates = Some(vec![CertificateChoices::Certificate(Box::new(cert))].into());
+    sd.certificates = Some(
+        vec![Any::from_der(&cert.to_der().unwrap()).unwrap()]
+            .try_into()
+            .unwrap(),
+    );
 }
 
 fn verify(token: &[u8]) -> (Result<TstInfo, TimeStampError>, StatusTracker) {
@@ -125,7 +128,7 @@ fn rsa_pss_profiles_with_rsa_encryption_spki_and_legacy_pkcs1_verify() {
                 .tbs_certificate
                 .subject_public_key_info
                 .algorithm
-                .algorithm
+                .oid
                 .to_string(),
             RSA_ENCRYPTION
         );
@@ -136,17 +139,18 @@ fn rsa_pss_profiles_with_rsa_encryption_spki_and_legacy_pkcs1_verify() {
         assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
 
         if token != PKCS1 {
-            let signer = sd.signer_infos.to_vec()[0];
+            let signer = sd.signer_infos.0.iter().next().unwrap();
             let key = &certificate(&sd).tbs_certificate.subject_public_key_info;
             let tbs = signed_attributes_digested_content(signer).unwrap().unwrap();
-            let signature = OctetString::new(bytes::Bytes::copy_from_slice(&signer.signature));
+            let signature =
+                OctetString::new(bytes::Bytes::copy_from_slice(signer.signature.as_bytes()));
             assert!(
                 validate_timestamp_sig(
                     &bcder::Oid::from_str(RSA_ENCRYPTION).unwrap(),
-                    &bcder::Oid::from_str(&signer.digest_algorithm.algorithm.to_string()).unwrap(),
+                    &bcder::Oid::from_str(&signer.digest_alg.oid.to_string()).unwrap(),
                     &signature,
                     &tbs,
-                    &rasn::der::encode(key).unwrap(),
+                    &key.to_der().unwrap(),
                 )
                 .is_err(),
                 "the previous SPKI-based selection must reproduce the failure"
@@ -168,23 +172,23 @@ fn rsa_profiles_and_ski_signers_reach_normal_tsa_trust_validation() {
 
         for ski in [false, true] {
             if ski {
-                let extension = certificate(&sd)
+                let cert = certificate(&sd);
+                let extension = cert
                     .tbs_certificate
                     .extensions
                     .as_ref()
                     .unwrap()
                     .iter()
-                    .find(|extension| {
-                        extension.extn_id
-                            == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
-                    })
+                    .find(|extension| extension.extn_id.to_string() == "2.5.29.14")
                     .unwrap();
-                let mut signer = sd.signer_infos.to_vec()[0].clone();
-                signer.version = 3.into();
+                let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
+                signer.version = cms::content_info::CmsVersion::V3;
                 signer.sid = SignerIdentifier::SubjectKeyIdentifier(
-                    rasn::der::decode(&extension.extn_value).unwrap(),
+                    DerOctetString::from_der(extension.extn_value.as_bytes())
+                        .unwrap()
+                        .into(),
                 );
-                sd.signer_infos = vec![signer].into();
+                sd.signer_infos = SignerInfos(vec![signer].try_into().unwrap());
             }
 
             let mut log = StatusTracker::default();
@@ -200,11 +204,8 @@ fn rsa_profiles_and_ski_signers_reach_normal_tsa_trust_validation() {
 #[test]
 fn legacy_rsa_signature_oids_preserve_pkcs1_and_require_matching_digest() {
     let mut sd = decode(PKCS1);
-    let mut signer = sd.signer_infos.to_vec()[0].clone();
-    let key = &certificate(&sd)
-        .tbs_certificate
-        .subject_public_key_info
-        .algorithm;
+    let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
+    let key = key_algorithm(&sd);
 
     for (signature, hash) in [
         ("1.2.840.113549.1.1.5", "1.3.14.3.2.26"),
@@ -213,34 +214,31 @@ fn legacy_rsa_signature_oids_preserve_pkcs1_and_require_matching_digest() {
         ("1.2.840.113549.1.1.13", SHA512),
     ] {
         signer.signature_algorithm = algorithm(signature, Some(vec![5, 0]));
-        signer.digest_algorithm = algorithm(hash, None);
+        signer.digest_alg = algorithm(hash, None);
         assert_eq!(
-            timestamp_signature_algorithm(&signer, key)
+            timestamp_signature_algorithm(&signer, &key)
                 .unwrap()
                 .to_string(),
             RSA_ENCRYPTION
         );
-        signer.digest_algorithm = algorithm("1.2.3.4", None);
-        assert!(timestamp_signature_algorithm(&signer, key).is_err());
+        signer.digest_alg = algorithm("1.2.3.4", None);
+        assert!(timestamp_signature_algorithm(&signer, &key).is_err());
     }
 
     signer.signature_algorithm = algorithm("1.2.840.113549.1.1.11", Some(vec![5, 0]));
-    signer.digest_algorithm = algorithm(SHA256, None);
-    sd.signer_infos = vec![signer].into();
+    signer.digest_alg = algorithm(SHA256, None);
+    sd.signer_infos = SignerInfos(vec![signer].try_into().unwrap());
     assert!(verify(&encode(&sd)).0.is_ok());
 }
 
 #[test]
 fn pss_signature_parameters_are_required_and_strictly_parsed() {
     let sd = decode(PS256);
-    let mut signer = sd.signer_infos.to_vec()[0].clone();
-    let key = &certificate(&sd)
-        .tbs_certificate
-        .subject_public_key_info
-        .algorithm;
+    let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
+    let key = key_algorithm(&sd);
     signer.signature_algorithm.parameters = None;
     assert!(matches!(
-        timestamp_signature_algorithm(&signer, key),
+        timestamp_signature_algorithm(&signer, &key),
         Err(TimeStampError::DecodeError(_))
     ));
 
@@ -258,7 +256,7 @@ fn pss_signature_parameters_are_required_and_strictly_parsed() {
             0x30,
             &tlv(
                 0xa0,
-                &rasn::der::encode(&algorithm(SHA256, Some(vec![4, 0]))).unwrap(),
+                &Encode::to_der(&algorithm(SHA256, Some(vec![4, 0]))).unwrap(),
             ),
         ),
         tlv(0x30, &tlv(0xa2, &[2, 1, 32, 5, 0])),
@@ -281,15 +279,17 @@ fn pss_signature_parameters_are_required_and_strictly_parsed() {
         [pss(SHA256, SHA256, 32, None), vec![5, 0]].concat(),
         tlv(
             0x30,
-            &tlv(0xa1, &rasn::der::encode(&algorithm(MGF1, None)).unwrap()),
+            &tlv(0xa1, &Encode::to_der(&algorithm(MGF1, None)).unwrap()),
         ),
     ] {
-        signer.signature_algorithm.parameters = Some(types::Any::new(parameters.clone()));
+        let result = Any::from_der(&parameters)
+            .map_err(|error| TimeStampError::DecodeError(error.to_string()))
+            .and_then(|parameters| {
+                signer.signature_algorithm.parameters = Some(parameters);
+                timestamp_signature_algorithm(&signer, &key)
+            });
         assert!(
-            matches!(
-                timestamp_signature_algorithm(&signer, key),
-                Err(TimeStampError::DecodeError(_))
-            ),
+            matches!(result, Err(TimeStampError::DecodeError(_))),
             "{parameters:02x?}"
         );
     }
@@ -298,7 +298,7 @@ fn pss_signature_parameters_are_required_and_strictly_parsed() {
 #[test]
 fn pss_profiles_reject_unsupported_and_inconsistent_parameters() {
     let mut sd = decode(PS256);
-    let mut signer = sd.signer_infos.to_vec()[0].clone();
+    let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
 
     for parameters in [
         vec![0x30, 0],
@@ -316,29 +316,22 @@ fn pss_profiles_reject_unsupported_and_inconsistent_parameters() {
                 tlv(0xa0, &hash_algorithm(SHA256)),
                 tlv(
                     0xa1,
-                    &rasn::der::encode(&algorithm("1.2.3.4", Some(hash_algorithm(SHA256))))
-                        .unwrap(),
+                    &Encode::to_der(&algorithm("1.2.3.4", Some(hash_algorithm(SHA256)))).unwrap(),
                 ),
                 tlv(0xa2, &tlv(2, &[32])),
             ]
             .concat(),
         ),
     ] {
-        signer.signature_algorithm.parameters = Some(types::Any::new(parameters.clone()));
+        signer.signature_algorithm.parameters = Some(Any::from_der(&parameters).unwrap());
         assert!(
             matches!(
-                timestamp_signature_algorithm(
-                    &signer,
-                    &certificate(&sd)
-                        .tbs_certificate
-                        .subject_public_key_info
-                        .algorithm
-                ),
+                timestamp_signature_algorithm(&signer, &key_algorithm(&sd)),
                 Err(TimeStampError::UnsupportedAlgorithm)
             ),
             "{parameters:02x?}"
         );
-        sd.signer_infos = vec![signer.clone()].into();
+        sd.signer_infos = SignerInfos(vec![signer.clone()].try_into().unwrap());
         let (result, log) = verify(&encode(&sd));
         assert!(result.is_err(), "{parameters:02x?}");
         assert!(log.has_status(TIMESTAMP_MALFORMED));
@@ -350,30 +343,27 @@ fn pss_profiles_reject_unsupported_and_inconsistent_parameters() {
 fn pss_parameter_defaults_and_null_or_absent_hash_parameters() {
     for (hash, salt) in [(SHA256, 32), (SHA384, 48), (SHA512, 64)] {
         let sd = decode(PS256);
-        let key = &certificate(&sd)
-            .tbs_certificate
-            .subject_public_key_info
-            .algorithm;
-        let mut signer = sd.signer_infos.to_vec()[0].clone();
-        signer.digest_algorithm = algorithm(hash, None);
+        let key = key_algorithm(&sd);
+        let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
+        signer.digest_alg = algorithm(hash, None);
         signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(hash, hash, salt, None)));
-        assert!(timestamp_signature_algorithm(&signer, key).is_ok());
+        assert!(timestamp_signature_algorithm(&signer, &key).is_ok());
 
-        let hash_der = rasn::der::encode(&algorithm(hash, None)).unwrap();
+        let hash_der = Encode::to_der(&algorithm(hash, None)).unwrap();
         let fields = [
             tlv(0xa0, &hash_der),
             tlv(
                 0xa1,
-                &rasn::der::encode(&algorithm(MGF1, Some(hash_der))).unwrap(),
+                &Encode::to_der(&algorithm(MGF1, Some(hash_der))).unwrap(),
             ),
             tlv(0xa2, &tlv(2, &[salt])),
         ]
         .concat();
-        signer.signature_algorithm.parameters = Some(types::Any::new(tlv(0x30, &fields)));
-        assert!(timestamp_signature_algorithm(&signer, key).is_ok());
+        signer.signature_algorithm.parameters = Some(Any::from_der(&tlv(0x30, &fields)).unwrap());
+        assert!(timestamp_signature_algorithm(&signer, &key).is_ok());
     }
 
-    let defaults = pss_parameters(&types::Any::new(vec![0x30, 0])).unwrap();
+    let defaults = pss_parameters(&Any::from_der(&[0x30, 0]).unwrap()).unwrap();
     assert_eq!(defaults.hash, "1.3.14.3.2.26");
     assert_eq!(defaults.mgf_hash, "1.3.14.3.2.26");
     assert_eq!(defaults.salt_length, 20);
@@ -388,9 +378,9 @@ fn pss_actual_salt_must_match_the_declared_profile() {
     ] {
         assert!(verify(token).0.is_err());
         let mut sd = decode(token);
-        let mut signer = sd.signer_infos.to_vec()[0].clone();
+        let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
         signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(SHA256, SHA256, 32, None)));
-        sd.signer_infos = vec![signer].into();
+        sd.signer_infos = SignerInfos(vec![signer].try_into().unwrap());
         let (result, log) = verify(&encode(&sd));
         assert!(matches!(result, Err(TimeStampError::Untrusted)));
         assert!(log.has_status(TIMESTAMP_UNTRUSTED));
@@ -401,21 +391,21 @@ fn pss_actual_salt_must_match_the_declared_profile() {
 #[test]
 fn pss_actual_hash_must_match_the_declared_profile() {
     let sd = decode(PS384);
-    let mut signer = sd.signer_infos.to_vec()[0].clone();
-    signer.digest_algorithm = algorithm(SHA256, None);
+    let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
+    signer.digest_alg = algorithm(SHA256, None);
     signer.signature_algorithm = algorithm(RSA_PSS, Some(pss(SHA256, SHA256, 32, None)));
     let key = &certificate(&sd).tbs_certificate.subject_public_key_info;
-    let signature_algorithm = timestamp_signature_algorithm(&signer, &key.algorithm).unwrap();
+    let signature_algorithm = timestamp_signature_algorithm(&signer, &key_algorithm(&sd)).unwrap();
     let tbs = signed_attributes_digested_content(&signer)
         .unwrap()
         .unwrap();
-    let signature = OctetString::new(bytes::Bytes::copy_from_slice(&signer.signature));
+    let signature = OctetString::new(bytes::Bytes::copy_from_slice(signer.signature.as_bytes()));
     assert!(validate_timestamp_sig(
         &signature_algorithm,
         &bcder::Oid::from_str(SHA256).unwrap(),
         &signature,
         &tbs,
-        &rasn::der::encode(key).unwrap(),
+        &key.to_der().unwrap(),
     )
     .is_err());
 }
@@ -423,7 +413,7 @@ fn pss_actual_hash_must_match_the_declared_profile() {
 #[test]
 fn pss_spki_restrictions_and_key_compatibility() {
     let sd = decode(PS256);
-    let signer = sd.signer_infos.to_vec()[0].clone();
+    let signer = sd.signer_infos.0.iter().next().unwrap().clone();
 
     for parameters in [
         None,
@@ -434,7 +424,9 @@ fn pss_spki_restrictions_and_key_compatibility() {
         assert!(timestamp_signature_algorithm(&signer, &key).is_ok());
         let mut changed = sd.clone();
         change_certificate(&mut changed, |cert| {
-            cert.tbs_certificate.subject_public_key_info.algorithm = key;
+            cert.tbs_certificate.subject_public_key_info.algorithm =
+                x509_cert::spki::AlgorithmIdentifierOwned::from_der(&key.to_der().unwrap())
+                    .unwrap();
         });
         let (result, log) = verify(&encode(&changed));
         assert!(result.is_ok(), "{parameters:02x?}: {result:?}: {log:?}");
@@ -459,7 +451,7 @@ fn pss_spki_restrictions_and_key_compatibility() {
 
     let legacy = decode(PKCS1);
     assert!(timestamp_signature_algorithm(
-        legacy.signer_infos.to_vec()[0],
+        legacy.signer_infos.0.iter().next().unwrap(),
         &algorithm(RSA_PSS, None),
     )
     .is_err());
@@ -476,18 +468,15 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
         .as_ref()
         .unwrap()
         .iter()
-        .find(|extension| {
-            extension.extn_id
-                == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
-        })
+        .find(|extension| extension.extn_id.to_string() == "2.5.29.14")
         .unwrap()
         .extn_value
         .clone();
-    let identifier = rasn::der::decode::<types::OctetString>(&extension).unwrap();
-    let mut signer = sd.signer_infos.to_vec()[0].clone();
-    signer.version = 3.into();
-    signer.sid = SignerIdentifier::SubjectKeyIdentifier(identifier.clone());
-    sd.signer_infos = vec![signer.clone()].into();
+    let identifier = DerOctetString::from_der(extension.as_bytes()).unwrap();
+    let mut signer = sd.signer_infos.0.iter().next().unwrap().clone();
+    signer.version = cms::content_info::CmsVersion::V3;
+    signer.sid = SignerIdentifier::SubjectKeyIdentifier(identifier.clone().into());
+    sd.signer_infos = SignerInfos(vec![signer.clone()].try_into().unwrap());
     let token = encode(&sd);
     assert_eq!(
         tsa_signer_cert_der_from_token(&token).unwrap(),
@@ -500,10 +489,10 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
     for value in [
         None,
         Some(vec![4, 1, 0]),
-        Some(identifier.to_vec()),
+        Some(identifier.as_bytes().to_vec()),
         Some(vec![4, 20, 1]),
         Some(vec![5, 0]),
-        Some([extension.to_vec(), vec![5, 0]].concat()),
+        Some([extension.as_bytes().to_vec(), vec![5, 0]].concat()),
     ] {
         let mut changed = sd.clone();
         change_certificate(&mut changed, |cert| {
@@ -511,17 +500,11 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
             if let Some(value) = value {
                 let extension = extensions
                     .iter_mut()
-                    .find(|extension| {
-                        extension.extn_id
-                            == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
-                    })
+                    .find(|extension| extension.extn_id.to_string() == "2.5.29.14")
                     .unwrap();
-                extension.extn_value = value.into();
+                extension.extn_value = x509_cert::der::asn1::OctetString::new(value).unwrap();
             } else {
-                extensions.retain(|extension| {
-                    extension.extn_id
-                        != Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
-                });
+                extensions.retain(|extension| extension.extn_id.to_string() != "2.5.29.14");
             }
         });
         let token = encode(&changed);
@@ -529,8 +512,10 @@ fn both_signer_lookup_sites_accept_ski_and_preserve_issuer_serial() {
         assert!(matches!(verify(&token).0, Err(TimeStampError::InvalidData)));
     }
 
-    signer.sid = SignerIdentifier::SubjectKeyIdentifier(extension);
-    sd.signer_infos = vec![signer].into();
+    signer.sid = SignerIdentifier::SubjectKeyIdentifier(
+        DerOctetString::new(extension.as_bytes()).unwrap().into(),
+    );
+    sd.signer_infos = SignerInfos(vec![signer].try_into().unwrap());
     let token = encode(&sd);
     assert!(tsa_signer_cert_der_from_token(&token).unwrap().is_none());
     assert!(matches!(verify(&token).0, Err(TimeStampError::InvalidData)));

@@ -304,37 +304,46 @@ pub(crate) fn get_signing_info(
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod tests {
+    use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
     use coset::{cbor::value::Value, Label};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
+    use x509_cert::{
+        der::{
+            asn1::{ObjectIdentifier, OctetString},
+            Decode as DerDecode, Encode as DerEncode,
+        },
+        Certificate,
+    };
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;
     use crate::{
-        settings::Settings, status_tracker::StatusTracker, utils::test_signer::test_signer, Signer,
-        SigningAlg,
+        crypto::{
+            cert_chain_pem_to_der,
+            cose::{
+                cose_reserve_size, sign, CertificateProfileError, RawSignerCoseSigner,
+                TimeStampStorage,
+            },
+        },
+        settings::Settings,
+        status_tracker::StatusTracker,
+        utils::test_signer::test_signer,
+        validation_status::{SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED},
+        Signer, SigningAlg,
     };
 
     #[c2pa_macros::c2pa_test_async]
     async fn claim_role_rejects_specialty_ekus_even_when_configured_or_privately_trusted() {
-        use crate::{
-            crypto::{
-                cert_chain_pem_to_der,
-                cose::{sign, CertificateProfileError, RawSignerCoseSigner, TimeStampStorage},
-            },
-            validation_status::{SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED},
-        };
-
         for purpose in [8, 9] {
             let mut certificates =
                 cert_chain_pem_to_der(include_bytes!("../tests/fixtures/certs/ed25519.pub"))
                     .unwrap();
 
             // Only EKU profile/role checks are under test; the public key is unchanged.
-            let mut certificate: rasn_pkix::Certificate =
-                rasn::der::decode(&certificates[0]).unwrap();
+            let mut certificate = Certificate::from_der(&certificates[0]).unwrap();
 
-            let eku_oid = rasn::types::ObjectIdentifier::new(vec![2, 5, 29, 37]).unwrap();
+            let eku_oid = ObjectIdentifier::new_unwrap("2.5.29.37");
 
             certificate
                 .tbs_certificate
@@ -344,14 +353,14 @@ pub mod tests {
                 .iter_mut()
                 .find(|extension| extension.extn_id == eku_oid)
                 .unwrap()
-                .extn_value = rasn::der::encode(&vec![rasn::types::ObjectIdentifier::new(vec![
-                1, 3, 6, 1, 5, 5, 7, 3, purpose,
-            ])
-            .unwrap()])
-            .unwrap()
-            .into();
+                .extn_value = OctetString::new(
+                vec![ObjectIdentifier::new(&format!("1.3.6.1.5.5.7.3.{purpose}")).unwrap()]
+                    .to_der()
+                    .unwrap(),
+            )
+            .unwrap();
 
-            certificates[0] = rasn::der::encode(&certificate).unwrap();
+            certificates[0] = certificate.to_der().unwrap();
 
             let raw_signer = c2pa_raw_crypto::signer_from_private_key(
                 include_bytes!("../tests/fixtures/certs/ed25519.pem"),
@@ -564,10 +573,6 @@ pub mod tests {
     }
     #[test]
     fn test_stapled_ocsp() {
-        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
-
-        use crate::crypto::{cert_chain_pem_to_der, cose::cose_reserve_size};
-
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
 

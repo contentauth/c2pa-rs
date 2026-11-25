@@ -13,14 +13,13 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, FixedOffset};
 use iref::{Iri, IriBuf, UriBuf};
 use non_empty_string::NonEmptyString;
 use nonempty_collections::NEVec;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    crypto::asn1::rfc3161::TstInfo,
+    crypto::{asn1::rfc3161::TstInfo, internal},
     identity::{
         claim_aggregation::w3c_vc::credential::{CredentialV2, VerifiableCredentialSubtype},
         identity_assertion::signature_verifier::ToCredentialSummary,
@@ -159,8 +158,9 @@ pub struct VerifiedIdentity {
     /// valid date-time as specified by RFC 3339. It represents the date and
     /// time when the relationship between the _named actor_ and the _identity
     /// provider_ was verified by the _identity assertion generator._
-    #[serde(rename = "verifiedAt")]
-    pub verified_at: DateTime<FixedOffset>,
+    /// Leap-second inputs (`:60`) are rejected.
+    #[serde(rename = "verifiedAt", with = "internal::time::rfc3339")]
+    pub verified_at: time::OffsetDateTime,
 
     /// ## Identity provider details
     ///
@@ -214,13 +214,13 @@ pub struct IcaCredentialSummary {
 
     issuer: UriBuf,
 
-    #[serde(rename = "validFrom")]
+    #[serde(rename = "validFrom", with = "internal::time::rfc3339::option")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    valid_from: Option<DateTime<FixedOffset>>,
+    valid_from: Option<time::OffsetDateTime>,
 
-    #[serde(rename = "validUntil")]
+    #[serde(rename = "validUntil", with = "internal::time::rfc3339::option")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    valid_until: Option<DateTime<FixedOffset>>,
+    valid_until: Option<time::OffsetDateTime>,
 
     #[serde(rename = "verifiedIdentities")]
     verified_identities: NEVec<VerifiedIdentity>,

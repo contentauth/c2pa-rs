@@ -17,7 +17,6 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use x509_parser::{certificate::X509Certificate, prelude::FromDer};
@@ -32,6 +31,7 @@ use crate::{
             cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
             signing_time_from_sign1, timestamp_token_bytes_from_sign1,
         },
+        internal,
         time_stamp::tsa_signer_cert_der_from_token,
     },
     error::{Error, Result},
@@ -490,7 +490,8 @@ impl<'a> CrJsonExporter<'a> {
                 .and_then(|der| parse_certificate_from_der(der).ok().flatten())
         });
 
-        let ts_time = signing_time_from_sign1(&sign1, data.as_ref(), false).map(|t| t.to_rfc3339());
+        let ts_time = signing_time_from_sign1(&sign1, data.as_ref(), false)
+            .map(internal::time::format_with_offset);
 
         let tsa_cert_info = timestamp_token_bytes_from_sign1(&sign1).and_then(|token_bytes| {
             tsa_signer_cert_der_from_token(&token_bytes)
@@ -528,7 +529,7 @@ impl<'a> CrJsonExporter<'a> {
         let validation_time = vr
             .validation_time()
             .map(String::from)
-            .unwrap_or_else(|| Utc::now().to_rfc3339());
+            .unwrap_or_else(|| internal::time::format_with_offset(internal::time::utc_now()));
 
         if let Some(active_label) = self.reader.active_label() {
             let codes = vr.active_manifest().cloned().unwrap_or_default();
@@ -666,10 +667,12 @@ fn build_manifest_validation_results(
     label: &str,
     validation_map: &HashMap<String, (StatusCodes, String)>,
 ) -> ManifestValidationResults {
-    let (codes, validation_time) = validation_map
-        .get(label)
-        .cloned()
-        .unwrap_or_else(|| (StatusCodes::default(), Utc::now().to_rfc3339()));
+    let (codes, validation_time) = validation_map.get(label).cloned().unwrap_or_else(|| {
+        (
+            StatusCodes::default(),
+            internal::time::format_with_offset(internal::time::utc_now()),
+        )
+    });
     ManifestValidationResults {
         success: codes.success().clone(),
         informational: codes.informational().clone(),
@@ -773,17 +776,13 @@ fn parse_certificate_from_der(der: &[u8]) -> Result<Option<CrJsonCertInfo>> {
     let (_, cert) = X509Certificate::from_der(der).map_err(|_e| Error::CoseInvalidCert)?;
     let not_before = cert.validity().not_before.to_datetime();
     let not_after = cert.validity().not_after.to_datetime();
-    let not_before_chrono: DateTime<Utc> =
-        DateTime::from_timestamp(not_before.unix_timestamp(), 0).ok_or(Error::CoseInvalidCert)?;
-    let not_after_chrono: DateTime<Utc> =
-        DateTime::from_timestamp(not_after.unix_timestamp(), 0).ok_or(Error::CoseInvalidCert)?;
     Ok(Some(CrJsonCertInfo {
         serial_number: Some(format!("{:x}", cert.serial)),
         issuer: Some(extract_dn_components(cert.issuer())?),
         subject: Some(extract_dn_components(cert.subject())?),
         validity: Some(CrJsonValidity {
-            not_before: not_before_chrono.to_rfc3339(),
-            not_after: not_after_chrono.to_rfc3339(),
+            not_before: internal::time::format_with_offset(not_before),
+            not_after: internal::time::format_with_offset(not_after),
         }),
     }))
 }
