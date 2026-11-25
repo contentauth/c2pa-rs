@@ -839,47 +839,43 @@ impl Store {
                 ));
             }
 
-            // set placeholder hashes for all of the existing files and the central directory first.
-            // we use that to insert the manifest at the correct size then hash it again so that offsets
-            // don't change. after the sizes are correct, we go back and generate real hashes for the
-            // files and central directory.
+            // the zip2 crate does not preserve the original file headers when doing raw copies, so
+            // writing the manifest may change the bytes.
+            // see https://github.com/zip-rs/zip2/issues/1346.
             //
-            // ideally we would hash all of the existing files first in one pass rather than
-            // reading the zip, setting placeholders, then reading it again to generate hashes.
-            // however, the zip2 crate does not preserve the original file headers when doing raw
-            // copies and thus they may change. see https://github.com/zip-rs/zip2/issues/1346.
+            // to work around this, we do a first pass with an empty manifest using zip2, hash
+            // all of the files, use placeholder central directory hash, then insert the manifest
+            // and hash the central directory.
             let needs_hash = pc.collection_hash_assertions().is_empty();
-            if needs_hash {
-                let mut placeholder_collection_hash = CollectionHash::new(pc.alg().to_owned());
+            if needs_hash && !remove_manifests {
+                let mut rebuilt = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                let manifest_writer = io_handler
+                    .and_then(|handler| handler.get_writer(format))
+                    .ok_or(Error::UnsupportedType)?;
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
-                    placeholder_collection_hash
-                        .set_placeholder_zip_uri_hashes(&mut intermediate_stream)?;
+                    manifest_writer.remove_c2pa(&mut intermediate_stream, &mut rebuilt)?;
                 } else {
                     input_stream.rewind()?;
-                    placeholder_collection_hash.set_placeholder_zip_uri_hashes(input_stream)?;
+                    manifest_writer.remove_c2pa(input_stream, &mut rebuilt)?;
                 }
+                intermediate_stream = rebuilt;
+                source_is_intermediate = true;
+            }
 
-                placeholder_collection_hash.set_placeholder_zip_central_directory_hash()?;
-                pc.add_assertion(&placeholder_collection_hash)?;
-
-                if !remove_manifests {
-                    let data = self.to_jumbf_internal(reserve_size)?;
-                    let mut scratch = io_utils::stream_with_fs_fallback(threshold, input_len)?;
-                    if source_is_intermediate {
-                        intermediate_stream.rewind()?;
-                        io.write_c2pa(format, &mut intermediate_stream, &mut scratch, &data)?;
-                    } else {
-                        input_stream.rewind()?;
-                        io.write_c2pa(format, input_stream, &mut scratch, &data)?;
-                    }
-
-                    scratch.rewind()?;
-                    placeholder_collection_hash.set_placeholder_zip_uri_hashes(&mut scratch)?;
-
-                    let claim = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                    claim.replace_assertion(placeholder_collection_hash.to_assertion()?)?;
+            let mut new_collection_hash = None;
+            if needs_hash {
+                let mut collection_hash = CollectionHash::new(pc.alg().to_owned());
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    collection_hash.gen_zip_uri_hashes(&mut intermediate_stream)?;
+                } else {
+                    input_stream.rewind()?;
+                    collection_hash.gen_zip_uri_hashes(input_stream)?;
                 }
+                collection_hash.set_placeholder_zip_central_directory_hash()?;
+                pc.add_assertion(&collection_hash)?;
+                new_collection_hash = Some(collection_hash);
             }
 
             data = self.to_jumbf_internal(reserve_size)?;
@@ -900,12 +896,8 @@ impl Store {
 
             context.check_progress(ProgressPhase::Writing, 2, 2)?;
 
-            if needs_hash {
+            if let Some(mut collection_hash) = new_collection_hash {
                 let claim = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                let mut collection_hash = CollectionHash::new(claim.alg().to_owned());
-
-                output_stream.rewind()?;
-                collection_hash.gen_zip_uri_hashes(output_stream)?;
 
                 output_stream.rewind()?;
                 collection_hash.gen_zip_central_directory_hash(output_stream)?;

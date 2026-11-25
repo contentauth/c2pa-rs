@@ -278,33 +278,6 @@ impl CollectionHash {
         Ok(())
     }
 
-    /// Set a zero-filled placeholder hash for each file entry in a ZIP stream, without reading
-    /// the entries' contents.
-    ///
-    /// Use [`gen_zip_uri_hashes`](Self::gen_zip_uri_hashes) to generate the finalized hashes.
-    pub fn set_placeholder_zip_uri_hashes<R>(&mut self, stream: &mut R) -> Result<()>
-    where
-        R: Read + Seek + ?Sized,
-    {
-        let hash_size = hash_size_by_alg(&self.alg)?;
-
-        self.uris = Vec::new();
-        for (path, hash_range) in zip_uri_ranges(stream)? {
-            self.uris.push(UriHashedDataMap {
-                uri: Self::path_to_uri(&path)?,
-                hash: Some(vec![0u8; hash_size]),
-                size: Some(hash_range.length()),
-                dc_format: mime::mime_from_path(&path),
-                data_types: None,
-            });
-        }
-
-        // sort by URI for deterministic output
-        self.uris.sort_by(|a, b| a.uri.cmp(&b.uri));
-
-        Ok(())
-    }
-
     /// Generate the ZIP central directory hash.
     ///
     /// Use [`gen_zip_uri_hashes`](Self::gen_zip_uri_hashes) to generate the per-file hashes.
