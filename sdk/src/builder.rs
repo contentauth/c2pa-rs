@@ -11156,7 +11156,10 @@ mod tests {
 
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         writer
-            .start_file("manifest.json", SimpleFileOptions::default())
+            .start_file(
+                "manifest.json",
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+            )
             .unwrap();
         writer
             .write_all(
