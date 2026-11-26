@@ -90,6 +90,16 @@ pub enum IcaValidationError {
     /// `c2paAsset` does not match `signer_payload`
     #[error("c2paAsset does not match signer_payload")]
     SignerPayloadMismatch,
+
+    /// `credentialSubject.verifiedIdentities` is missing, not an array, or
+    /// empty.
+    #[error("credential has no verifiedIdentities")]
+    VerifiedIdentitiesMissing,
+
+    /// An entry in `credentialSubject.verifiedIdentities` does not meet the
+    /// requirements of the CAWG identity assertion specification.
+    #[error("credential has an invalid verifiedIdentities entry ({0})")]
+    VerifiedIdentitiesInvalid(String),
 }
 
 impl From<coset::CoseError> for ValidationError<IcaValidationError> {
