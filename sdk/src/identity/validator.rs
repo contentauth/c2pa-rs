@@ -329,6 +329,151 @@ mod tests {
         );
     }
 
+    /// Codes reported for the active manifest's identity assertion(s).
+    async fn identity_codes(asset: &[u8]) -> (Vec<String>, Vec<String>) {
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", Cursor::new(asset))
+            .await
+            .unwrap();
+        let results = reader.validation_results().unwrap();
+        let statuses = results.active_manifest().unwrap();
+        let cawg = |list: &[crate::validation_status::ValidationStatus]| {
+            list.iter()
+                .map(|s| s.code().to_string())
+                .filter(|c| c.starts_with("cawg."))
+                .collect::<Vec<_>>()
+        };
+        (cawg(statuses.success()), cawg(statuses.failure()))
+    }
+
+    /// CAWG Identity 1.3 §7.2: `cawg.identity.well-formed` means the identity
+    /// assertion was validated, so it must not accompany a §7.1 failure.
+    #[c2pa_test_async]
+    async fn well_formed_not_reported_with_validation_failure() {
+        const PAD1_INVALID: &[u8] =
+            include_bytes!("tests/fixtures/validation_method/pad1_invalid.jpg");
+        const DUPLICATE_REFERENCE: &[u8] =
+            include_bytes!("tests/fixtures/validation_method/duplicate_assertion_reference.jpg");
+
+        for (asset, failure) in [
+            (PAD1_INVALID, "cawg.identity.pad.invalid"),
+            (NO_HARD_BINDING, "cawg.identity.hard_binding_missing"),
+            (DUPLICATE_REFERENCE, "cawg.identity.assertion.duplicate"),
+        ] {
+            let (success, failures) = identity_codes(asset).await;
+            assert!(
+                failures.iter().any(|c| c == failure),
+                "{failure}: {failures:?}"
+            );
+            assert!(
+                !success.iter().any(|c| c == "cawg.identity.well-formed"),
+                "well-formed reported alongside {failure}"
+            );
+        }
+
+        // A valid identity assertion is still reported as validated. Under the
+        // CAWG interim certificate rules its test credential isn't trusted, so
+        // that is `well-formed`, alongside `cawg.x509.credential.untrusted`.
+        const VALID: &[u8] = include_bytes!("../../tests/fixtures/C_with_CAWG_data.jpg");
+        let (success, failures) = identity_codes(VALID).await;
+        assert_eq!(failures, vec!["cawg.x509.credential.untrusted"]);
+        assert!(success.iter().any(|c| c == "cawg.identity.well-formed"));
+        assert!(!success.iter().any(|c| c == "cawg.identity.trusted"));
+    }
+
+    /// CAWG Identity 1.3 §7.2: a validated ICA credential from a trusted issuer
+    /// is `cawg.identity.trusted`; from an issuer not on the allow-list it is
+    /// `cawg.identity.well-formed`.
+    #[c2pa_test_async]
+    async fn ica_reports_trusted_or_well_formed() {
+        const ICA_SUCCESS: &[u8] =
+            include_bytes!("tests/fixtures/claim_aggregation/ica_validation/success.jpg");
+
+        async fn success_codes(context: crate::Context) -> Vec<String> {
+            let reader = Reader::from_context(context)
+                .with_stream_async("image/jpeg", Cursor::new(ICA_SUCCESS))
+                .await
+                .unwrap();
+            let results = reader.validation_results().unwrap();
+            let statuses = results.active_manifest().unwrap();
+            statuses
+                .success()
+                .iter()
+                .map(|s| s.code().to_string())
+                .collect()
+        }
+
+        // This context trusts the fixture's issuer.
+        let success = success_codes(crate::identity::tests::ica_test_context()).await;
+        assert!(
+            success.iter().any(|c| c == "cawg.identity.trusted"),
+            "{success:?}"
+        );
+        assert!(!success.iter().any(|c| c == "cawg.identity.well-formed"));
+
+        let success = success_codes(crate::Context::new()).await;
+        assert!(
+            success.iter().any(|c| c == "cawg.identity.well-formed"),
+            "{success:?}"
+        );
+        assert!(!success.iter().any(|c| c == "cawg.identity.trusted"));
+        assert!(!success.iter().any(|c| c == "cawg.ica.credential_valid"));
+    }
+
+    /// An X.509 identity signature from an expired certificate is rejected
+    /// (§8.2.2 `cawg.x509.signature.outside_validity`), so it is not
+    /// well-formed either.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[c2pa_test_async]
+    async fn well_formed_not_reported_for_expired_x509_credential() {
+        use crate::{
+            identity::{
+                builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
+                tests::fixtures::{manifest_json, parent_json},
+                x509::AsyncX509CredentialHolder,
+            },
+            Builder, SigningAlg,
+        };
+
+        const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+        const TEST_THUMBNAIL: &[u8] = include_bytes!("../../tests/fixtures/thumbnail.jpg");
+        const EXPIRED_CERT: &[u8] =
+            include_bytes!("../../tests/fixtures/rsa-pss256_key-expired.pub");
+        const EXPIRED_KEY: &[u8] = include_bytes!("../../tests/fixtures/rsa-pss256-expired.pem");
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let holder = AsyncX509CredentialHolder::from_async_raw_signer(
+            c2pa_raw_crypto::signer_from_private_key(EXPIRED_KEY, SigningAlg::Ps256).unwrap(),
+            crate::crypto::cert_chain_pem_to_der(EXPIRED_CERT).unwrap(),
+        );
+        let mut signer = AsyncIdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+        signer.add_identity_assertion(AsyncIdentityAssertionBuilder::for_credential_holder(holder));
+        builder
+            .sign_async(&signer, format, &mut source, &mut dest)
+            .await
+            .unwrap();
+
+        let (success, failures) = identity_codes(dest.get_ref()).await;
+        assert!(
+            failures
+                .iter()
+                .any(|c| c == "cawg.x509.signature.outside_validity"),
+            "{failures:?}"
+        );
+        assert!(!success.iter().any(|c| c == "cawg.identity.well-formed"));
+    }
+
     #[c2pa_test_async]
     async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
