@@ -1907,15 +1907,21 @@ impl JUMBFEmbeddedFileDescriptionBox {
     }
 
     /// Makes a new `JUMBFDescriptionBox` instance from read in data
-    pub fn from(togs: u8, mt_bytes: Vec<u8>, fn_bytes: Option<Vec<u8>>) -> Self {
-        let mt_cstring: CString = unsafe { CString::from_vec_unchecked(mt_bytes) };
-        let fn_cstring = fn_bytes.map(|b| unsafe { CString::from_vec_unchecked(b) });
+    ///
+    /// Returns an error if either string contains a NUL byte.
+    pub fn from(togs: u8, mt_bytes: Vec<u8>, fn_bytes: Option<Vec<u8>>) -> JumbfParseResult<Self> {
+        let mt_cstring =
+            CString::new(mt_bytes).map_err(|_| JumbfParseError::InvalidDescriptionBox)?;
+        let fn_cstring = fn_bytes
+            .map(CString::new)
+            .transpose()
+            .map_err(|_| JumbfParseError::InvalidDescriptionBox)?;
 
-        JUMBFEmbeddedFileDescriptionBox {
+        Ok(JUMBFEmbeddedFileDescriptionBox {
             toggles: togs,          // media togles
             media_type: mt_cstring, // file media type
             file_name: fn_cstring,  // optional file name
-        }
+        })
     }
 }
 
@@ -2005,11 +2011,26 @@ boxtype! {
 pub struct BoxHeader {
     pub name: BoxType,
     pub size: u64,
+    /// True if the size came from the 64-bit XLBox field, making the header 16 bytes long.
+    pub is_large: bool,
 }
 impl BoxHeader {
     pub fn new(name: BoxType, size: u64) -> Self {
-        Self { name, size }
+        Self {
+            name,
+            size,
+            is_large: false,
+        }
     }
+}
+
+/// Splits `bytes` at the first NUL, returning the bytes before it and the bytes after it.
+fn split_c_string(bytes: &[u8]) -> (&[u8], &[u8]) {
+    let mut parts = bytes.splitn(2, |&b| b == 0);
+    (
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+    )
 }
 
 // ANCHOR BoxReader
@@ -2052,12 +2073,10 @@ impl BoxReader {
             Ok(BoxHeader {
                 name: BoxType::from(typ),
                 size: large_size,
+                is_large: true,
             })
         } else {
-            Ok(BoxHeader {
-                name: BoxType::from(typ),
-                size: size as u64,
-            })
+            Ok(BoxHeader::new(BoxType::from(typ), size as u64))
         }
     }
 
@@ -2360,38 +2379,28 @@ impl BoxReader {
 
         // read the data itself...
         let data_len = size - HEADER_SIZE - TOGGLE_SIZE;
-        let mut buf = reader
+        let buf = reader
             .read_to_vec(data_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
-        let (media_type, file_name) = match togs[0] {
-            1 => {
-                // there may be two c strings in this vec
-                match buf.iter().position(|&x| x == 0) {
-                    Some(pos) => {
-                        if pos != buf.len() - 1 {
-                            (buf, None)
-                        } else {
-                            let (first, second) = buf.split_at(pos);
-                            (first.to_vec(), Some(second.to_vec()))
-                        }
-                    }
-                    None => (buf, None),
-                }
-            }
-            _ => {
-                // we do not store the trailing 0 on load
-                if buf.last() == Some(&0) {
-                    buf.pop();
-                }
+        // The strings are NUL-terminated. We do not store the terminator on load, and we
+        // tolerate a missing one on the last string.
+        let (media_type, rest) = split_c_string(&buf);
 
-                (buf, None)
-            }
+        // Bit 0 of the toggles says a file name may follow. The writer can set this bit
+        // without writing a name, so an empty name is treated as absent.
+        let (file_name, rest) = if togs[0] & 0x01 != 0 {
+            let (name, rest) = split_c_string(rest);
+            ((!name.is_empty()).then(|| name.to_vec()), rest)
+        } else {
+            (None, rest)
         };
 
-        Ok(JUMBFEmbeddedFileDescriptionBox::from(
-            togs[0], media_type, file_name,
-        ))
+        if !rest.is_empty() {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
+
+        JUMBFEmbeddedFileDescriptionBox::from(togs[0], media_type.to_vec(), file_name)
     }
 
     pub fn read_embedded_content_box<R: Read + Seek>(
@@ -2444,14 +2453,17 @@ impl BoxReader {
         }
 
         // figure out where this particular box ends...
-        let dest_pos = start_pos + jumb_header.size;
+        let dest_pos = start_pos
+            .checked_add(jumb_header.size)
+            .ok_or(JumbfParseError::InvalidBoxRange)?;
 
         // now let's load the jumd
         let jumd_header =
             BoxReader::read_header(reader).map_err(|_| JumbfParseError::ExpectedJumdError)?;
         if jumb_header.name == BoxType::Empty {
             return Err(JumbfParseError::UnexpectedEof);
-        } else if jumd_header.name != BoxType::Jumd {
+        } else if jumd_header.name != BoxType::Jumd || jumd_header.is_large {
+            // read_desc_box assumes an 8-byte header
             return Err(JumbfParseError::ExpectedJumdError);
         }
 
@@ -2474,6 +2486,12 @@ impl BoxReader {
             if box_header.name == BoxType::Empty {
                 found = false;
             } else {
+                // Child box readers assume an 8-byte header, so a 16-byte header would leave
+                // the reader misaligned.
+                if box_header.is_large {
+                    return Err(JumbfParseError::InvalidBoxHeader);
+                }
+
                 unread_bytes(reader, HEADER_SIZE)?; // seek back to the beginning of the box
                 let next_box: Box<dyn BMFFBox> = match box_header.name {
                     BoxType::Jumb => Box::new(BoxReader::read_super_box_impl(reader, depth + 1)?),
@@ -3276,6 +3294,139 @@ pub mod tests {
             "expected BoxNestingTooDeep for {} nested boxes",
             BoxReader::MAX_JUMB_DEPTH + 1
         );
+    }
+
+    fn bfdb_box(toggles: u8, payload: &[u8]) -> Vec<u8> {
+        let mut stream = ((9 + payload.len()) as u32).to_be_bytes().to_vec();
+        stream.extend_from_slice(b"bfdb");
+        stream.push(toggles);
+        stream.extend_from_slice(payload);
+        stream
+    }
+
+    fn read_bfdb(toggles: u8, payload: &[u8]) -> JumbfParseResult<JUMBFEmbeddedFileDescriptionBox> {
+        let stream = bfdb_box(toggles, payload);
+        let size = stream.len() as u64;
+        BoxReader::read_embedded_media_desc_box(&mut Cursor::new(stream), size)
+    }
+
+    #[test]
+    fn embedded_media_desc_box_reads_file_name() {
+        let desc = read_bfdb(1, b"image/png\0photo.png\0").unwrap();
+        assert_eq!(desc.media_type(), "image/png");
+        assert_eq!(desc.file_name().as_deref(), Some("photo.png"));
+
+        // the last string's terminator is optional
+        let desc = read_bfdb(1, b"image/png\0photo.png").unwrap();
+        assert_eq!(desc.file_name().as_deref(), Some("photo.png"));
+    }
+
+    #[test]
+    fn embedded_media_desc_box_treats_missing_file_name_as_absent() {
+        for payload in [&b"image/png\0"[..], &b"image/png"[..]] {
+            let desc = read_bfdb(1, payload).unwrap();
+            assert_eq!(desc.media_type(), "image/png");
+            assert_eq!(desc.file_name(), None);
+        }
+    }
+
+    #[test]
+    fn embedded_media_desc_box_rejects_trailing_data() {
+        for (toggles, payload) in [
+            (0, &b"image/png\0hidden\0"[..]),
+            (0, &b"image/png\0\0"[..]),
+            (1, &b"image/png\0photo.png\0hidden\0"[..]),
+            (1, &b"image/png\0photo.png\0\0"[..]),
+        ] {
+            assert!(
+                matches!(
+                    read_bfdb(toggles, payload),
+                    Err(JumbfParseError::InvalidDescriptionBox)
+                ),
+                "expected an error for toggles {toggles} and payload {payload:?}"
+            );
+        }
+    }
+
+    /// A `jumd` box with the label "a", as the first child of a superbox.
+    fn jumd_box() -> Vec<u8> {
+        let mut jumd = 27u32.to_be_bytes().to_vec();
+        jumd.extend_from_slice(b"jumd");
+        jumd.extend_from_slice(&[0u8; 16]); // UUID
+        jumd.extend_from_slice(b"\x03a\0"); // toggles and label
+        jumd
+    }
+
+    #[test]
+    fn test_read_super_box_accepts_large_size_at_top_level() {
+        let jumd = jumd_box();
+
+        let mut stream = 1u32.to_be_bytes().to_vec();
+        stream.extend_from_slice(b"jumb");
+        stream.extend_from_slice(&(16 + jumd.len() as u64).to_be_bytes());
+        stream.extend_from_slice(&jumd);
+
+        assert!(BoxReader::read_super_box(&mut Cursor::new(stream)).is_ok());
+    }
+
+    #[test]
+    fn test_read_super_box_rejects_size_overflow() {
+        // Start past offset 0 so that adding the largest possible size overflows.
+        let mut stream = vec![0u8; 8];
+        stream.extend_from_slice(&1u32.to_be_bytes());
+        stream.extend_from_slice(b"jumb");
+        stream.extend_from_slice(&u64::MAX.to_be_bytes());
+        stream.extend_from_slice(&jumd_box());
+
+        let mut reader = Cursor::new(stream);
+        reader.set_position(8);
+        assert!(matches!(
+            BoxReader::read_super_box(&mut reader),
+            Err(JumbfParseError::InvalidBoxRange)
+        ));
+    }
+
+    #[test]
+    fn test_read_super_box_rejects_large_size_in_child_box() {
+        // The XLBox field is itself shaped like a large-size header. Before child boxes with
+        // large sizes were rejected, this panicked on overflow with overflow checks enabled.
+        let mut child = 1u32.to_be_bytes().to_vec();
+        child.extend_from_slice(b"jumb");
+        child.extend_from_slice(&1u32.to_be_bytes());
+        child.extend_from_slice(b"jumb");
+        child.extend_from_slice(&u64::MAX.to_be_bytes());
+        child.extend_from_slice(&[0u8; 32]);
+
+        let jumd = jumd_box();
+        let mut stream = ((8 + jumd.len() + child.len()) as u32)
+            .to_be_bytes()
+            .to_vec();
+        stream.extend_from_slice(b"jumb");
+        stream.extend_from_slice(&jumd);
+        stream.extend_from_slice(&child);
+
+        assert!(matches!(
+            BoxReader::read_super_box(&mut Cursor::new(stream)),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_super_box_rejects_large_size_in_jumd_box() {
+        let mut jumd = 1u32.to_be_bytes().to_vec();
+        jumd.extend_from_slice(b"jumd");
+        jumd.extend_from_slice(&27u64.to_be_bytes());
+        jumd.extend_from_slice(&[0u8; 16]); // UUID
+        jumd.extend_from_slice(b"\x03a\0"); // toggles and label
+
+        let mut stream = ((8 + jumd.len()) as u32).to_be_bytes().to_vec();
+        stream.extend_from_slice(b"jumb");
+        stream.extend_from_slice(&jumd);
+
+        assert!(matches!(
+            BoxReader::read_super_box(&mut Cursor::new(stream)),
+            Err(JumbfParseError::ExpectedJumdError)
+        ));
     }
 
     #[test]
