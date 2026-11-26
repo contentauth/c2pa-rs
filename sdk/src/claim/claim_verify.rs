@@ -43,7 +43,10 @@ use crate::{
     settings::Settings,
     status_tracker::StatusTracker,
     store::StoreValidationInfo,
-    utils::hash_utils::{vec_compare, HashRange},
+    utils::{
+        hash_utils::{vec_compare, HashRange},
+        riff_c2pa::RiffC2paChunk,
+    },
     validation_status,
 };
 
@@ -104,13 +107,15 @@ pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
 /// location, found independently by re-parsing the asset; a legitimate exclusion
 /// covers exactly it. A mismatch means the exclusion covers non-manifest bytes -- a
 /// detached manifest applied to an unrelated asset, or content injected into the
-/// space freed by shrinking the manifest.
+/// space freed by shrinking the manifest. RIFF-based assets follow the rules in
+/// [`riff_exclusions_match_manifest`] instead.
 ///
 /// This fails closed: an exclusion that cannot be checked against a manifest found
 /// in the asset (none there, or the lookup failed) does not match.
-fn data_hash_exclusions_match_manifest(
+pub(super) fn data_hash_exclusions_match_manifest(
     exclusions: &[HashRange],
     manifest_store_range: Option<&HashRange>,
+    riff_chunk: Option<&RiffC2paChunk>,
 ) -> bool {
     // Remote/sidecar manifests carry a placeholder exclusion that excludes no
     // bytes; the whole asset is hashed, so there is nothing to police.
@@ -118,10 +123,67 @@ fn data_hash_exclusions_match_manifest(
         return true;
     }
 
-    // An exclusion must cover exactly the manifest found in this asset. With none
-    // found, nothing may be excluded: a detached manifest on an unrelated asset
-    // (#2643), or one whose location could not be determined.
-    manifest_store_range.is_some_and(|range| exclusions.contains(range))
+    match (manifest_store_range, riff_chunk) {
+        (Some(_), Some(chunk)) => riff_exclusions_match_manifest(exclusions, chunk),
+        // An exclusion must cover exactly the manifest found in this asset.
+        (Some(range), None) => exclusions.contains(range),
+        // With none found, nothing may be excluded: a detached manifest on an
+        // unrelated asset (#2643), or one whose location could not be determined.
+        (None, _) => false,
+    }
+}
+
+/// Validates the data hash exclusions of a RIFF-based asset, per the C2PA rules
+/// for hashing RIFF-based files. The manifest exclusion may begin at the `C2PA`
+/// chunk identifier, its size field, or the C2PA Manifest Store, and must end at
+/// the end of the chunk data or of its zero pad byte. An excluded pad byte must be
+/// zero, and an excluded top-level `RIFF` size field must end the `RIFF` chunk at
+/// the end of the `C2PA` chunk.
+fn riff_exclusions_match_manifest(exclusions: &[HashRange], chunk: &RiffC2paChunk) -> bool {
+    let covers = |e: &HashRange, start: u64, end: u64| {
+        e.start() < end && e.start().saturating_add(e.length()) > start
+    };
+
+    if chunk.pad.is_some_and(|pad| pad != 0)
+        && exclusions
+            .iter()
+            .any(|e| covers(e, chunk.data_end(), chunk.padded_end()))
+    {
+        return false;
+    }
+    if chunk.riff_end != chunk.padded_end() && exclusions.iter().any(|e| covers(e, 4, 8)) {
+        return false;
+    }
+
+    let starts = [chunk.offset, chunk.offset + 4, chunk.data_start()];
+    let mut ends = vec![chunk.data_end(), chunk.padded_end()];
+    if chunk.size_counts_pad() {
+        // Older writers counted the pad byte in the size field and excluded only
+        // the JUMBF superbox, leaving that zero byte hashed.
+        ends.push(chunk.data_end() - 1);
+    }
+    exclusions.iter().any(|e| {
+        starts.contains(&e.start())
+            && e.start()
+                .checked_add(e.length())
+                .is_some_and(|end| ends.contains(&end))
+    })
+}
+
+/// Returns the manifest exclusion of a RIFF-based asset adjusted for an Update
+/// Manifest: it keeps its starting position relative to the `C2PA` chunk and ends
+/// at the end of the current chunk data and pad byte. An odd recorded length means
+/// the original pad byte was hashed, so the adjusted range stops before the pad.
+pub(super) fn riff_update_manifest_exclusion(
+    exclusion: &HashRange,
+    chunk: &RiffC2paChunk,
+) -> HashRange {
+    let end = if exclusion.length() % 2 == 1 {
+        chunk.data_end()
+    } else {
+        chunk.padded_end()
+    };
+    HashRange::new(exclusion.start(), end.saturating_sub(exclusion.start()))
 }
 
 impl Claim {
@@ -1187,7 +1249,20 @@ impl Claim {
                         let mut start_adjust = 0;
                         let mut start_offset = 0;
                         if let Some(exclusions) = &mut dh.exclusions {
-                            if let Some(range) = &svi.manifest_store_range {
+                            if let Some(chunk) = &svi.riff_c2pa_chunk {
+                                // a RIFF exclusion may start at the chunk identifier, size field or data
+                                let starts = [chunk.offset, chunk.offset + 4, chunk.data_start()];
+                                if let Some(pos) =
+                                    exclusions.iter().position(|r| starts.contains(&r.start()))
+                                {
+                                    let range =
+                                        riff_update_manifest_exclusion(&exclusions[pos], chunk);
+                                    start_offset = range.start();
+                                    start_adjust =
+                                        range.length().saturating_sub(exclusions[pos].length());
+                                    exclusions[pos] = range;
+                                }
+                            } else if let Some(range) = &svi.manifest_store_range {
                                 // find the range that starts at the same position as the manifest store range
                                 if let Some(pos) =
                                     exclusions.iter().position(|r| r.start() == range.start())
@@ -1217,6 +1292,7 @@ impl Claim {
                             if !data_hash_exclusions_match_manifest(
                                 exclusions,
                                 svi.manifest_store_range.as_ref(),
+                                svi.riff_c2pa_chunk.as_ref(),
                             ) {
                                 let description = match &svi.manifest_location_error {
                                     Some(error) => format!(
@@ -1237,6 +1313,9 @@ impl Claim {
                                             .to_string(),
                                     ),
                                 )?;
+                                // Continue validating other bindings, but never emit a
+                                // match for this rejected exclusion range.
+                                continue;
                             }
 
                             // there are extra exclusion then log the information code about extra exclusion
@@ -2308,22 +2387,32 @@ mod tests {
         let wrong = [HashRange::new(100, 60)];
         let placeholder = [HashRange::new(0, 0)];
 
-        assert!(data_hash_exclusions_match_manifest(&exact, Some(&manifest)));
+        assert!(data_hash_exclusions_match_manifest(
+            &exact,
+            Some(&manifest),
+            None
+        ));
         assert!(data_hash_exclusions_match_manifest(
             &with_extra,
-            Some(&manifest)
+            Some(&manifest),
+            None
         ));
         assert!(!data_hash_exclusions_match_manifest(
             &wrong,
-            Some(&manifest)
+            Some(&manifest),
+            None
         ));
 
         // Nothing excluded: nothing to check, wherever the manifest is.
-        assert!(data_hash_exclusions_match_manifest(&placeholder, None));
-        assert!(data_hash_exclusions_match_manifest(&[], None));
+        assert!(data_hash_exclusions_match_manifest(
+            &placeholder,
+            None,
+            None
+        ));
+        assert!(data_hash_exclusions_match_manifest(&[], None, None));
 
         // Bytes excluded but no manifest located (absent, or the lookup failed):
         // fails closed, even for a manifest read from the asset itself.
-        assert!(!data_hash_exclusions_match_manifest(&exact, None));
+        assert!(!data_hash_exclusions_match_manifest(&exact, None, None));
     }
 }

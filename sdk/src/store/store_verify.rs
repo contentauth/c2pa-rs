@@ -22,7 +22,7 @@ use super::store_core::MAX_INGREDIENT_DEPTH;
 use crate::{
     assertion::AssertionBase,
     assertions::{CertificateStatus, Ingredient, Relationship, TimeStamp},
-    asset_io::ObjectType,
+    asset_io::{ObjectType, ReadSeek},
     claim::{Claim, ClaimAssetData},
     context::{Context, ProgressPhase},
     crypto::{
@@ -41,7 +41,11 @@ use crate::{
     log_item,
     status_tracker::StatusTracker,
     store::Store,
-    utils::{hash_utils::HashRange, is_zero},
+    utils::{
+        hash_utils::HashRange,
+        is_zero,
+        riff_c2pa::{riff_c2pa_chunk, RiffC2paChunk},
+    },
     validation_status, ValidationResults, ValidationState,
 };
 
@@ -56,6 +60,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
     pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
     pub manifest_location_error: Option<String>, // why the manifest store could not be located in the asset, if the lookup failed
+    pub riff_c2pa_chunk: Option<RiffC2paChunk>, // layout of the C2PA chunk when the asset is RIFF-based
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
 
@@ -455,34 +460,39 @@ impl Store {
 
         // get the manifest offset position
         if let Some(asset_data) = asset_data {
-            let locations = match asset_data {
+            let inspect = |format: &str, reader: &mut dyn ReadSeek| {
+                let locations = io.object_locations(format, reader);
+                let riff_chunk = riff_c2pa_chunk(format, reader);
+                (locations, riff_chunk)
+            };
+            let (locations, riff_chunk) = match asset_data {
                 #[cfg(feature = "file_io")]
                 ClaimAssetData::Path(path) => {
                     let format = io.supported_extension(path).ok_or(Error::UnsupportedType)?;
                     let mut reader = std::fs::File::open(path)?;
 
-                    io.object_locations(&format, &mut reader)
+                    inspect(&format, &mut reader)
                 }
                 ClaimAssetData::Bytes(items, typ) => {
                     let format = typ.to_owned();
                     let mut reader = Cursor::new(items);
 
-                    io.object_locations(&format, &mut reader)
+                    inspect(&format, &mut reader)
                 }
                 ClaimAssetData::Stream(reader, typ) => {
                     let format = typ.to_owned();
-                    let positions = io.object_locations(&format, reader);
+                    let inspected = inspect(&format, *reader);
                     reader.rewind()?;
-                    positions
+                    inspected
                 }
                 ClaimAssetData::StreamFragment(reader, _read1, typ) => {
                     let format = typ.to_owned();
-                    io.object_locations(&format, reader)
+                    inspect(&format, *reader)
                 }
                 #[cfg(feature = "file_io")]
                 ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
                     let format = typ.to_owned();
-                    io.object_locations(&format, reader)
+                    inspect(&format, *reader)
                 }
             };
 
@@ -499,6 +509,7 @@ impl Store {
                 }
                 Err(error) => svi.manifest_location_error = Some(error.to_string()),
             }
+            svi.riff_c2pa_chunk = riff_chunk;
         }
 
         for found_claim in svi.manifest_map.values() {
