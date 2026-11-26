@@ -19,12 +19,14 @@ use std::{
 };
 
 use async_generic::async_generic;
+use zip::ZipArchive;
 
 #[cfg(feature = "fetch_remote_manifests")]
 use crate::settings::SettingsValidate;
 use crate::{
     assertion::AssertionBase,
     assertions::{BmffHash, BoxHash, CollectionHash, DataHash},
+    asset_handlers::zip_io::opc,
     asset_io::{ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek},
     claim::{Claim, ClaimAssetData, RemoteManifest},
     context::{Context, ProgressPhase},
@@ -837,6 +839,26 @@ impl Store {
                 return Err(Error::BadParam(
                     "update manifests are not supported for ZIP-based assets".to_string(),
                 ));
+            }
+
+            // declare "[Content_Types].xml" for OPC packages before hashing
+            if !remove_manifests && pc.collection_hash_assertions().is_empty() {
+                let mut added = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                let changed = if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    let mut archive = ZipArchive::new(&mut intermediate_stream)
+                        .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+                    opc::add_c2pa_content_type(&mut archive, &mut added, threshold)?
+                } else {
+                    input_stream.rewind()?;
+                    let mut archive = ZipArchive::new(&mut *input_stream)
+                        .map_err(|err| Error::InvalidAsset(err.to_string()))?;
+                    opc::add_c2pa_content_type(&mut archive, &mut added, threshold)?
+                };
+                if changed {
+                    intermediate_stream = added;
+                    source_is_intermediate = true;
+                }
             }
 
             // the zip2 crate does not preserve the original file headers when doing raw copies, so
