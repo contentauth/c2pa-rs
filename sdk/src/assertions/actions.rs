@@ -179,6 +179,11 @@ pub mod c2pa_action {
     /// Areas of the asset's "editorial" content were cropped out.
     pub const CROPPED: &str = "c2pa.cropped";
 
+    /// Areas of the asset's digital content were deleted. When the deletion covers all of an
+    /// ingredient added in a previous manifest, its `ingredients` parameter may reference that
+    /// `componentOf` ingredient assertion.
+    pub const DELETED: &str = "c2pa.deleted";
+
     /// Changes using drawing tools including brushes or eraser.
     pub const DRAWING: &str = "c2pa.drawing";
 
