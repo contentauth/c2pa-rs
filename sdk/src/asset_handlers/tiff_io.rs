@@ -463,37 +463,41 @@ where
                         decode_offset(subifd.value_offset, ts.byte_order, ts.big_tiff)?;
                     input.seek(SeekFrom::Start(decoded_offset))?;
 
-                    let num_longs_x4 =
-                        usize::try_from(subifd.value_count.checked_mul(4).ok_or_else(|| {
-                            Error::InvalidAsset("value out of range".to_string())
-                        })?)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+                    // SubIFD offsets are 4 bytes (IFD, LONG) or 8 bytes (IFD8, LONG8) by entry type
+                    let offset_size: u64 = match IFDEntryType::from_u16(subifd.entry_type) {
+                        Some(IFDEntryType::Long8 | IFDEntryType::Slong8 | IFDEntryType::Ifd8) => 8,
+                        _ => 4,
+                    };
 
-                    check_ifd_data_size(num_longs_x4 as u64, file_size)?;
+                    // the entry's value field holds 4 bytes in TIFF and 8 bytes in BigTIFF
+                    let inline_capacity: u64 = if ts.big_tiff { 8 } else { 4 };
 
-                    let mut subfile_offsets = safe_vec(subifd.value_count, Some(0u32))?; // will contain offsets in native endianness
+                    let total_bytes = subifd
+                        .value_count
+                        .checked_mul(offset_size)
+                        .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    if num_longs_x4 <= 4 || ts.big_tiff && num_longs_x4 <= 8 {
-                        let offset_bytes = subifd.value_offset.to_ne_bytes();
-                        let offset_reader = Cursor::new(offset_bytes);
+                    check_ifd_data_size(total_bytes, file_size)?;
 
-                        with_order!(offset_reader, ts.byte_order, |src| {
-                            for item in subfile_offsets.iter_mut().take(num_longs_x4 / 4) {
-                                let s = src.read_u32()?; // read a long from offset
-                                *item = s; // write a long in output endian
-                            }
-                        });
+                    let mut subfile_offsets = safe_vec(subifd.value_count, Some(0u64))?; // will contain offsets in native endianness
+
+                    let offset_bytes = if total_bytes <= inline_capacity {
+                        subifd.value_offset.to_ne_bytes().to_vec()
                     } else {
-                        let buf = input.read_to_vec(num_longs_x4 as u64)?;
-                        let offsets_buf = Cursor::new(buf);
+                        input.read_to_vec(total_bytes)?
+                    };
+                    let offsets_buf = Cursor::new(offset_bytes);
 
-                        with_order!(offsets_buf, ts.byte_order, |src| {
-                            for item in subfile_offsets.iter_mut().take(num_longs_x4 / 4) {
-                                let s = src.read_u32()?; // read a long from offset
-                                *item = s; // write a long in output endian
-                            }
-                        });
-                    }
+                    with_order!(offsets_buf, ts.byte_order, |src| {
+                        for item in subfile_offsets.iter_mut() {
+                            let s = if offset_size == 8 {
+                                src.read_u64()?
+                            } else {
+                                u64::from(src.read_u32()?)
+                            };
+                            *item = s; // write an offset in output endian
+                        }
+                    });
 
                     // make sure this is resonable number of subfiles, avoid arbitrary large allocations and possible DoS attacks
                     if subfile_offsets.len() > MAX_SUBFILES {
@@ -504,7 +508,7 @@ where
 
                     // get all subfiles
                     for subfile_offset in subfile_offsets {
-                        let u64_offset = subfile_offset as u64;
+                        let u64_offset = subfile_offset;
                         input.seek(SeekFrom::Start(u64_offset))?;
 
                         //println!("Reading SubIFD: {}", u64_offset);
