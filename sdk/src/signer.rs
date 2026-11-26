@@ -426,6 +426,65 @@ impl Signer for OcspStapledSigner {
     }
 }
 
+/// Adds request headers (an API key, for example) to the time stamp requests of
+/// a [`Signer`]: see [`create_signer::with_tsa_headers`](crate::create_signer::with_tsa_headers).
+///
+/// It deliberately keeps the default [`Signer::send_timestamp_request`], which
+/// reads [`Signer::timestamp_request_headers`] from this wrapper; delegating it
+/// would send the inner signer's headers only.
+pub(crate) struct TsaHeadersSigner {
+    pub(crate) signer: BoxedSigner,
+    pub(crate) headers: Vec<(String, String)>,
+}
+
+impl Signer for TsaHeadersSigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.signer.sign(data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.signer.alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        self.signer.certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.signer.reserve_size()
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.signer.ocsp_val()
+    }
+
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        self.signer.ocsp_vals()
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.signer.direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        self.signer.dynamic_assertions()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.signer.time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        let mut headers = self.signer.timestamp_request_headers().unwrap_or_default();
+        headers.extend(self.headers.iter().cloned());
+        Some(headers)
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        self.signer.timestamp_request_body(message)
+    }
+}
+
 /// Wraps a [`RawSigner`] (raw signature only) into a full [`Signer`], layering
 /// on the optional time stamp service URL and the overall COSE reserve-size
 /// calculation that the raw signer does not know about.

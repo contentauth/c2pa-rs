@@ -2770,6 +2770,63 @@ pub unsafe extern "C" fn c2pa_signer_with_ocsp_response(
     })
 }
 
+/// Adds a header to every time stamp request the signer sends, for time stamp
+/// authorities that authenticate clients (usually an API key header).
+///
+/// Call once per header. The header is sent with the request to the signer's TSA URL
+/// (the `tsa_url` given when the signer was created). Keep secrets out of logs: the
+/// value is not printed or stored anywhere else.
+///
+/// This consumes the original signer and returns a new signer.
+///
+/// # Errors
+/// Returns NULL if the signer pointer is NULL, or `name` or `value` is NULL, or
+/// `name` is empty; call `c2pa_error` to retrieve the error string. On failure the
+/// input signer is NOT consumed.
+///
+/// # Safety
+/// `signer_ptr` must have been created by a `c2pa_signer_*` function and not yet freed.
+/// After a successful call it is invalid — do NOT pass it to `c2pa_free`.
+/// `name` and `value` must be valid NUL-terminated UTF-8 strings, read during this
+/// call only.
+/// The returned value MUST be released by calling `c2pa_free`.
+///
+/// # Example
+/// ```c
+/// C2paSigner* signer = c2pa_signer_create(ctx, sign_cb, C2PA_SIGNING_ALG_ES256, certs, tsa_url);
+/// C2paSigner* with_key = c2pa_signer_with_tsa_header(signer, "X-API-Key", api_key);
+/// if (with_key == NULL) {
+///     // signer is still owned and usable
+///     auto error = c2pa_error();
+///     printf("Error: %s\n", error);
+///     c2pa_free(error);
+/// } else {
+///     signer = with_key;
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_signer_with_tsa_header(
+    signer_ptr: *mut C2paSigner,
+    name: *const c_char,
+    value: *const c_char,
+) -> *mut C2paSigner {
+    let name = cstr_or_return_null!(name);
+    let value = cstr_or_return_null!(value);
+    if name.is_empty() {
+        ok_or_return_null!(Err::<(), _>(c2pa::Error::BadParam(
+            "TSA header name must not be empty".to_string()
+        )));
+    }
+    let c2pa_signer = untrack_or_return_null!(signer_ptr, C2paSigner);
+    let signer = create_signer::with_tsa_headers(
+        Box::new(c2pa_signer.signer),
+        vec![(name.to_string(), value.to_string())],
+    );
+    box_tracked!(C2paSigner {
+        signer: Box::new(signer),
+    })
+}
+
 #[no_mangle]
 /// Signs a byte array using the Ed25519 algorithm.
 /// # Safety
@@ -5512,6 +5569,43 @@ verify_after_sign = true
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
         let ocsp_response: [u8; 0] = [];
         let result = unsafe { c2pa_signer_with_ocsp_response(signer, ocsp_response.as_ptr(), 0) };
+        assert!(result.is_null());
+        assert!(checkout_exclusive::<C2paSigner>(signer).is_ok());
+
+        unsafe {
+            c2pa_free(signer as *const c_void);
+            c2pa_free(builder as *const c_void);
+        }
+    }
+
+    #[test]
+    fn test_signer_with_tsa_header() {
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let name = CString::new("X-API-Key").unwrap();
+        let value = CString::new("secret").unwrap();
+        let signer = unsafe { c2pa_signer_with_tsa_header(signer, name.as_ptr(), value.as_ptr()) };
+        assert!(!signer.is_null());
+        let headers = checkout_exclusive::<C2paSigner>(signer)
+            .unwrap()
+            .signer
+            .timestamp_request_headers();
+        assert_eq!(
+            headers,
+            Some(vec![("X-API-Key".to_string(), "secret".to_string())])
+        );
+
+        unsafe {
+            c2pa_free(signer as *const c_void);
+            c2pa_free(builder as *const c_void);
+        }
+    }
+
+    #[test]
+    fn test_signer_with_tsa_header_empty_name_leaves_signer_alone() {
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let name = CString::new("").unwrap();
+        let value = CString::new("secret").unwrap();
+        let result = unsafe { c2pa_signer_with_tsa_header(signer, name.as_ptr(), value.as_ptr()) };
         assert!(result.is_null());
         assert!(checkout_exclusive::<C2paSigner>(signer).is_ok());
 

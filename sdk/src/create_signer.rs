@@ -153,6 +153,27 @@ pub fn with_ocsp_responses(signer: BoxedSigner, ocsp_responses: Vec<Vec<u8>>) ->
     })
 }
 
+/// Creates a [`Signer`] that sends `headers` with every time stamp request, on top of
+/// any headers `signer` sends itself.
+///
+/// Time stamp authorities on the C2PA trust list usually authenticate clients with
+/// an API key header. Signers built from a callback or the C API have no other way
+/// to set one. The headers apply to the default time stamp request (the one sent to
+/// [`time_authority_url`](crate::Signer::time_authority_url)); a signer that sends
+/// its own requests ([`send_timestamp_request`](crate::Signer::send_timestamp_request))
+/// is responsible for its headers.
+///
+/// # Arguments
+///
+/// * `signer` - Signs the C2PA claim
+/// * `headers` - Header names and values, e.g. `("X-API-Key", key)`
+pub fn with_tsa_headers(signer: BoxedSigner, headers: Vec<(String, String)>) -> BoxedSigner {
+    if headers.is_empty() {
+        return signer;
+    }
+    Box::new(crate::signer::TsaHeadersSigner { signer, headers })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -456,5 +477,73 @@ mod tests {
             2,
             "expected the X.509 and the credential-holder identity assertions, got {identity_labels:?}"
         );
+    }
+
+    #[test]
+    fn with_tsa_headers_adds_headers_to_the_time_stamp_request() {
+        use std::{
+            io::Read,
+            sync::{Arc, Mutex},
+        };
+
+        use http::{Request, Response};
+
+        use crate::{
+            http::{HttpResolverError, SyncHttpResolver},
+            Context,
+        };
+
+        #[derive(Clone, Default)]
+        struct Capture(Arc<Mutex<Vec<(String, String)>>>);
+
+        impl SyncHttpResolver for Capture {
+            fn http_resolve(
+                &self,
+                request: Request<Vec<u8>>,
+            ) -> std::result::Result<Response<Box<dyn Read>>, HttpResolverError> {
+                let mut seen = self.0.lock().unwrap();
+                for (name, value) in request.headers() {
+                    seen.push((name.to_string(), value.to_str().unwrap().to_string()));
+                }
+                Ok(Response::builder()
+                    .status(503)
+                    .body(Box::new(Cursor::new(Vec::<u8>::new())) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(SigningAlg::Ps256);
+        let inner = super::from_keys(
+            cert_chain,
+            private_key,
+            SigningAlg::Ps256,
+            Some("https://tsa.example/".to_string()),
+        )
+        .unwrap();
+        let signer =
+            super::with_tsa_headers(inner, vec![("X-API-Key".to_string(), "secret".to_string())]);
+        assert_eq!(
+            signer.timestamp_request_headers(),
+            Some(vec![("X-API-Key".to_string(), "secret".to_string())])
+        );
+
+        let capture = Capture::default();
+        let context = Context::new()
+            .with_settings_value("core.time_stamp_request_attempts", 1)
+            .unwrap()
+            .with_resolver(capture.clone());
+        // The fake TSA answers 503: only the request matters here.
+        let _ = signer.send_timestamp_request(b"claim hash", &context);
+
+        let seen = capture.0.lock().unwrap();
+        assert!(seen
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("x-api-key") && value == "secret"));
+    }
+
+    #[test]
+    fn with_tsa_headers_without_headers_returns_the_signer_unchanged() {
+        let signer = super::with_tsa_headers(test_signer(SigningAlg::Ps256), Vec::new());
+        assert_eq!(signer.timestamp_request_headers(), None);
     }
 }
