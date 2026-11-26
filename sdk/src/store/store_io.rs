@@ -1065,7 +1065,9 @@ impl Store {
         let max_response_size = context.settings().verify.max_manifest_response_size;
         context.check_progress(ProgressPhase::FetchingRemoteManifest, 1, 1)?;
 
-        let request = http::Request::get(url).body(Vec::new())?;
+        let request = http::Request::get(url)
+            .extension(crate::http::MaxResponseBodySize(max_response_size))
+            .body(Vec::new())?;
         let response = if _sync {
             context.resolver().http_resolve(request)
         } else {
@@ -1126,6 +1128,12 @@ impl Store {
                         response.status().as_str()
                     )))
                 }
+            }
+            Err(crate::http::HttpResolverError::Cancelled) => Err(Error::OperationCancelled),
+            Err(crate::http::HttpResolverError::ResponseTooLarge) => {
+                Err(Error::RemoteManifestFetch(format!(
+                    "remote manifest exceeds the {max_response_size} byte response size limit"
+                )))
             }
             Err(err) => Err(Error::RemoteManifestFetch(err.to_string())),
         }

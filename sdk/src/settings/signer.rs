@@ -736,7 +736,10 @@ pub mod tests {
         assert_eq!(combined.dynamic_assertions().len(), 1);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(feature = "http_ureq", feature = "http_reqwest_blocking")
+    ))]
     #[test]
     fn test_remote_signers_apply_request_timeout() {
         use std::time::{Duration, Instant};

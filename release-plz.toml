@@ -63,6 +63,10 @@ version_group = "c2pa-rs"
 publish_features = ["rust_native_crypto"]
 
 [[package]]
+name = "c2pa_http"
+version_group = "c2pa-rs"
+
+[[package]]
 name = "c2pa_macros"
 publish = false
 release = false

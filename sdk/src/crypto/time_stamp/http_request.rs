@@ -28,9 +28,11 @@ use crate::{
             TimeStampError,
         },
     },
-    http::{HttpResolverError, RequestTimeout},
+    http::{HttpResolverError, MaxResponseBodySize, RequestTimeout},
     status_tracker::StatusTracker,
 };
+
+const MAX_TIME_STAMP_RESPONSE_SIZE: u64 = 1_000_000;
 
 /// Request an [RFC 3161] time stamp for a given piece of data from a timestamp
 /// provider.
@@ -159,6 +161,7 @@ fn time_stamp_request_http(
 
     let request = request
         .header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST)
+        .extension(MaxResponseBodySize(MAX_TIME_STAMP_RESPONSE_SIZE))
         .extension(RequestTimeout(Duration::from_millis(
             context.settings().core.time_stamp_request_timeout_in_ms,
         )));
@@ -185,11 +188,12 @@ fn time_stamp_request_http(
             .and_then(|content_length| content_length.to_str().ok())
             .and_then(|content_length| content_length.parse().ok())
             .unwrap_or(20000);
-        let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
+        let mut response_bytes: Vec<u8> =
+            Vec::with_capacity(len.min(MAX_TIME_STAMP_RESPONSE_SIZE as usize));
 
         response
             .into_body()
-            .take(1000000)
+            .take(MAX_TIME_STAMP_RESPONSE_SIZE)
             .read_to_end(&mut response_bytes)?;
 
         let res = TimeStampResponse(
@@ -336,6 +340,37 @@ mod tests {
 
     fn headers() -> Option<Vec<(String, String)>> {
         Some(vec![("x-test".into(), "characterization".into())])
+    }
+
+    #[test]
+    fn hostile_content_length_does_not_drive_the_allocation() {
+        let mut resolver = FixtureResolver::new(vec![0]);
+        resolver.content_length = Some("18446744073709551615");
+        let result = time_stamp_request_http(
+            "https://tsa.example/",
+            headers(),
+            &request(),
+            &resolver.context(),
+        );
+        assert!(matches!(result, Err(TimeStampError::DecodeError(_))));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn oversized_response_is_bounded_on_the_request_scheduler() {
+        let resolver = FixtureResolver::new(vec![0; MAX_TIME_STAMP_RESPONSE_SIZE as usize + 1]);
+        let scheduler = crate::http::RequestScheduler::new(std::num::NonZeroUsize::MIN).unwrap();
+        let context = Context::new()
+            .with_resolver(resolver)
+            .with_request_scheduler(scheduler);
+        let result =
+            time_stamp_request_http("https://tsa.example/", headers(), &request(), &context);
+        assert!(matches!(
+            result,
+            Err(TimeStampError::HttpResolverError(
+                HttpResolverError::ResponseTooLarge
+            ))
+        ));
     }
 
     #[c2pa_macros::c2pa_test_async]

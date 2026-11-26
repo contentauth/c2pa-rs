@@ -1,0 +1,77 @@
+[package]
+name = "c2pa_http"
+
+version.workspace = true
+
+description = "HTTP resolver traits, default clients, and SSRF hardening for the C2PA Rust SDK"
+authors = [
+    "Maurice Fisher <mfisher@adobe.com>",
+    "Gavin Peacock <gpeacock@adobe.com>",
+    "Eric Scouten <scouten@adobe.com>",
+    "Leonard Rosenthol <lrosenth@adobe.com>",
+    "Dave Kozma <dkozma@adobe.com>",
+    "Dylan Ross <dyross@adobe.com>",
+    "Santhosh Sriram <sants@adobe.com>",
+]
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/c2pa_http"
+homepage = "https://contentauthenticity.org"
+repository = "https://github.com/contentauth/c2pa-rs"
+readme = "../README.md"
+keywords = ["c2pa", "http"]
+categories = ["api-bindings"]
+edition = "2021"
+rust-version = "1.96.0"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking", "dep:rustls", "dep:webpki", "dep:webpki-roots"]
+http_ureq = ["dep:ureq", "dep:rustls", "dep:webpki", "dep:webpki-roots"]
+http_wasi = ["dep:wasi"]
+http_wstd = ["dep:wstd"]
+http_reqwest = ["dep:reqwest", "dep:rustls", "dep:webpki", "dep:webpki-roots"]
+json_schema = ["dep:schemars"]
+
+[dependencies]
+async-trait = "0.1.89"
+http = "1.4.1"
+schemars = { version = "1.2.1", optional = true }
+serde = "1.0.228"
+thiserror = "2.0.18"
+url = "2.5.8"
+web-time = "1.1"
+
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+reqwest = { version = "0.12.28", default-features = false, features = [
+    # These are some of the defaults in `reqwest`.
+    "http2",
+    "system-proxy",
+    "rustls-tls"
+], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Security floors for both HTTP clients: remove eMudhra roots and reject the
+# compromised intermediate keys, including their Sectigo cross-signs.
+# Rustls 0.23.24 is the first release using WebPKI 0.103 rather than 0.102.
+rustls = { version = "0.23.24", default-features = false, optional = true }
+webpki = { package = "rustls-webpki", version = "0.103.16", default-features = false, features = ["std"], optional = true }
+webpki-roots = { version = "1.0.11", default-features = false, optional = true }
+ureq = { version = "3.3.0", default-features = false, features = [
+    "rustls"
+], optional = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wasi = { version = "0.14.7", optional = true }
+wstd = { version = "0.5.6", optional = true }
+
+[dev-dependencies]
+async-generic = "1.1"
+pem = "4.0.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+httpmock = "0.8.3"
+rustls-pki-types = "1.12"
+tokio = { version = "1.52.3", features = ["full"] }

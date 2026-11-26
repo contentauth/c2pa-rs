@@ -6150,6 +6150,29 @@ mod remote_manifest_response_tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_remote_manifest_size_limit_holds_on_the_request_scheduler() {
+        let scheduler = crate::http::RequestScheduler::new(std::num::NonZeroUsize::MIN).unwrap();
+        for (header, expected_read) in [
+            (None, TEST_RESPONSE_SIZE + 1),
+            (Some("1"), TEST_RESPONSE_SIZE + 1),
+            (Some("1000"), 0),
+        ] {
+            let context = Context::new()
+                .with_settings_value("verify.max_manifest_response_size", TEST_RESPONSE_SIZE)
+                .unwrap()
+                .with_request_scheduler(scheduler.clone());
+            let (result, bytes_read) =
+                fetch_with_context(context, header, 64 * 1024 * 1024, None, false).await;
+            assert_size_error(result);
+            assert_eq!(
+                bytes_read as u64, expected_read,
+                "Content-Length {header:?}"
+            );
+        }
+    }
+
     #[c2pa_test_async]
     async fn test_remote_manifest_body_limit_ignores_untrusted_header() {
         for use_async in [false, true] {
@@ -6294,6 +6317,47 @@ mod remote_manifest_response_tests {
                 );
                 assert_eq!(bytes_read, 0);
             }
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_cancelled_request_reports_cancellation() {
+        struct Cancelled;
+
+        impl SyncHttpResolver for Cancelled {
+            fn http_resolve(
+                &self,
+                _request: http::Request<Vec<u8>>,
+            ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+                Err(HttpResolverError::Cancelled)
+            }
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncHttpResolver for Cancelled {
+            async fn http_resolve_async(
+                &self,
+                request: http::Request<Vec<u8>>,
+            ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+                self.http_resolve(request)
+            }
+        }
+
+        let context = Context::new()
+            .with_resolver(Cancelled)
+            .with_resolver_async(Cancelled);
+        for use_async in [false, true] {
+            let result = if use_async {
+                Store::fetch_remote_manifest_async("https://example.com/manifest.c2pa", &context)
+                    .await
+            } else {
+                Store::fetch_remote_manifest("https://example.com/manifest.c2pa", &context)
+            };
+            assert!(
+                matches!(result, Err(Error::OperationCancelled)),
+                "expected cancellation, got {result:?}"
+            );
         }
     }
 }

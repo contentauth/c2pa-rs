@@ -25,7 +25,7 @@ pub mod sync_impl {
         io::streams,
     };
 
-    use crate::http::{HttpResolverError, SyncHttpResolver};
+    use crate::{HttpResolverError, SyncHttpResolver};
 
     pub type Impl = SyncWasiResolver;
 
@@ -196,7 +196,7 @@ pub mod async_impl {
     use http::{Request, Response};
     use wstd::http::body::StreamedBody;
 
-    use crate::http::{AsyncHttpResolver, HttpResolverError};
+    use crate::{AsyncHttpResolver, HttpResolverError};
 
     pub type Impl = wstd::http::Client;
 
