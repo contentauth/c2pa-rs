@@ -35,6 +35,7 @@ use serde::Serialize;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 use x509_parser::extensions::ExtendedKeyUsage;
+use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 use super::store_core::MAX_INGREDIENT_DEPTH;
 #[cfg(feature = "file_io")]
@@ -5866,6 +5867,84 @@ fn test_sign_zip_generates_valid_collection_hash() {
         report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH),
         "the generated collection hash should verify against the signed ZIP"
     );
+}
+
+#[test]
+fn test_sign_zip_twice_generates_valid_collection_hash() {
+    let mut context = Context::new();
+    context.settings_mut().verify.verify_after_sign = false;
+    let signer = test_signer(SigningAlg::Ps256);
+
+    // the first sign appends the manifest, the second replaces it
+    let mut input = Cursor::new(COLLECTION_ZIP.to_vec());
+    for _ in 0..2 {
+        let mut store = Store::from_context(&context);
+        store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        input.rewind().unwrap();
+        store
+            .save_to_stream("zip", &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+
+        let mut report = StatusTracker::default();
+        output.rewind().unwrap();
+        Store::from_stream("zip", &mut output, &mut report, &context).unwrap();
+
+        assert!(
+            report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH),
+            "the generated collection hash should verify against the signed ZIP"
+        );
+        assert!(!report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MISMATCH));
+
+        input = output;
+    }
+}
+
+// ensures that even if the original zip has headers in some of the files that aren't
+// preserved, the hashes are still matched
+// see https://github.com/zip-rs/zip2/issues/1346
+#[test]
+fn test_sign_zip_with_existing_manifest_and_nonstandard_headers() {
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let stored = SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored);
+    writer.start_file("first.txt", stored).unwrap();
+    writer.write_all(b"first").unwrap();
+    writer
+        .start_file("META-INF/content_credential.c2pa", stored)
+        .unwrap();
+    writer.write_all(&[9, 9, 9]).unwrap();
+    writer.start_file("last.txt", stored).unwrap();
+    writer.write_all(b"last").unwrap();
+    let mut zip = writer.finish().unwrap().into_inner();
+    zip[4..6].copy_from_slice(&0x030a_u16.to_le_bytes());
+
+    let mut context = Context::new();
+    context.settings_mut().verify.verify_after_sign = false;
+    let signer = test_signer(SigningAlg::Ps256);
+
+    let mut input = Cursor::new(zip);
+    for _ in 0..2 {
+        let mut store = Store::from_context(&context);
+        store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        input.rewind().unwrap();
+        store
+            .save_to_stream("zip", &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+
+        let mut report = StatusTracker::default();
+        output.rewind().unwrap();
+        Store::from_stream("zip", &mut output, &mut report, &context).unwrap();
+        assert!(
+            report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH),
+            "the collection hash should verify against the signed ZIP"
+        );
+        assert!(!report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MISMATCH));
+
+        input = output;
+    }
 }
 
 #[test]

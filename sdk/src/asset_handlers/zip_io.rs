@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -32,43 +32,17 @@ impl C2paWriter for ZipIO {
         &self,
         input_stream: &mut dyn ReadSeek,
         output_stream: &mut dyn ReadWriteSeek,
-        mut store_bytes: &[u8],
+        store_bytes: &[u8],
     ) -> Result<()> {
-        let mut archive = self
-            .reader(input_stream)
-            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-        if archive.index_for_name(MANIFEST_PATH).is_some() {
-            return zip_replace_entries(
-                &mut archive,
-                output_stream,
-                &[(MANIFEST_PATH, store_bytes)],
-            )
-            .map_err(|err| Error::InvalidAsset(err.to_string()));
+        let mut archive =
+            ZipArchive::new(input_stream).map_err(|err| Error::InvalidAsset(err.to_string()))?;
+        match archive.index_for_name(MANIFEST_PATH) {
+            Some(_) => {
+                zip_replace_entries(&mut archive, output_stream, &[(MANIFEST_PATH, store_bytes)])
+            }
+            None => zip_append_c2pa(&mut archive, output_stream, store_bytes),
         }
-
-        let mut writer = self
-            .writer(archive.into_inner(), output_stream)
-            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-
-        match writer.add_directory("META-INF", SimpleFileOptions::DEFAULT) {
-            Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
-            Err(err) => return Err(Error::InvalidAsset(err.to_string())),
-            _ => {}
-        }
-
-        writer
-            .start_file_from_path(
-                Path::new(MANIFEST_PATH),
-                SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
-            )
-            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-
-        io::copy(&mut store_bytes, &mut writer)?;
-        writer
-            .finish()
-            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-
-        Ok(())
+        .map_err(|err| Error::InvalidAsset(err.to_string()))
     }
 
     fn get_object_locations(
@@ -85,26 +59,16 @@ impl C2paWriter for ZipIO {
         input_stream: &mut dyn ReadSeek,
         output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
-        let mut archive = self
-            .reader(input_stream)
-            .map_err(|err| Error::InvalidAsset(err.to_string()))?;
-        if archive.index_for_name(MANIFEST_PATH).is_some() {
-            return zip_remove_entries(&mut archive, output_stream, &[MANIFEST_PATH])
-                .map_err(|err| Error::InvalidAsset(err.to_string()));
-        }
-
-        let input_stream = archive.into_inner();
-        input_stream.rewind()?;
-        io::copy(input_stream, output_stream)?;
-
-        Ok(())
+        let mut archive =
+            ZipArchive::new(input_stream).map_err(|err| Error::InvalidAsset(err.to_string()))?;
+        zip_remove_entries(&mut archive, output_stream, &[MANIFEST_PATH])
+            .map_err(|err| Error::InvalidAsset(err.to_string()))
     }
 }
 
 impl C2paReader for ZipIO {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
-        let mut reader = self
-            .reader(input_stream)
+        let mut reader = ZipArchive::new(input_stream)
             .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
 
         let index = reader
@@ -149,6 +113,7 @@ impl AssetIO for ZipIO {
         &[
             // Zip
             "zip",
+            "application/zip",
             "application/x-zip",
             // EPUB
             "epub",
@@ -190,24 +155,40 @@ impl AssetIO for ZipIO {
     }
 }
 
-impl ZipIO {
-    fn reader<'a>(
-        &self,
-        input_stream: &'a mut dyn ReadSeek,
-    ) -> ZipResult<ZipArchive<&'a mut dyn ReadSeek>> {
-        ZipArchive::new(input_stream)
+/// Writes a copy of `archive` to `output_stream` with the manifest appended as the last entry.
+fn zip_append_c2pa<R, W>(
+    archive: &mut ZipArchive<R>,
+    output_stream: &mut W,
+    store_bytes: &[u8],
+) -> ZipResult<()>
+where
+    R: Read + Seek,
+    W: Write + Seek + ?Sized,
+{
+    output_stream.rewind()?;
+
+    let comment = archive.comment().to_vec();
+    let mut writer = ZipWriter::new(output_stream);
+
+    for index in 0..archive.len() {
+        writer.raw_copy_file(archive.by_index_raw(index)?)?;
     }
 
-    fn writer<'a>(
-        &self,
-        input_stream: &'a mut dyn ReadSeek,
-        output_stream: &'a mut dyn ReadWriteSeek,
-    ) -> ZipResult<ZipWriter<&'a mut dyn ReadWriteSeek>> {
-        input_stream.rewind()?;
-        io::copy(input_stream, output_stream)?;
-
-        ZipWriter::new_append(output_stream)
+    match writer.add_directory("META-INF", SimpleFileOptions::DEFAULT) {
+        Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
+        Err(err) => return Err(err),
+        _ => {}
     }
+    writer.start_file_from_path(
+        Path::new(MANIFEST_PATH),
+        SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
+    )?;
+    writer.write_all(store_bytes)?;
+
+    writer.set_raw_comment(comment.into_boxed_slice())?;
+    writer.finish()?;
+
+    Ok(())
 }
 
 /// Writes a copy of `archive` to `output_stream` with the contents of the entries named in
@@ -415,9 +396,7 @@ where
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use std::io::Write;
-
-    use io::{Cursor, Seek};
+    use std::io::{Cursor, Seek, Write};
 
     use super::*;
 
@@ -629,42 +608,6 @@ mod tests {
         assert!(!uri_ranges.contains_key(Path::new(MANIFEST_PATH)));
     }
 
-    #[test]
-    fn test_write_preserves_existing_entry_bytes() {
-        fn read_range<R: Read + Seek>(stream: &mut R, range: &HashRange) -> Vec<u8> {
-            stream.seek(SeekFrom::Start(range.start())).unwrap();
-
-            let mut bytes = vec![0; range.length() as usize];
-            stream.read_exact(&mut bytes).unwrap();
-
-            bytes
-        }
-
-        let zip_io = ZipIO {};
-
-        let mut src = Cursor::new(SAMPLES[0].to_vec());
-        let input_ranges = zip_uri_ranges(&mut src).unwrap();
-
-        let mut src_with_manifest = Cursor::new(Vec::new());
-        zip_io
-            .write_c2pa(&mut src, &mut src_with_manifest, &[1, 2, 3])
-            .unwrap();
-        let output_ranges = zip_uri_ranges(&mut src_with_manifest).unwrap();
-
-        assert_eq!(output_ranges.len(), input_ranges.len() + 1);
-
-        for (path, input_range) in input_ranges {
-            let output_range = output_ranges.get(&path).unwrap();
-
-            assert_eq!(
-                read_range(&mut src, &input_range),
-                read_range(&mut src_with_manifest, output_range),
-                "entry `{}` bytes changed after embedding the manifest",
-                path.display()
-            );
-        }
-    }
-
     /// A ZIP whose manifest isn't the last entry.
     fn zip_with_manifest_in_middle() -> Vec<u8> {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -747,13 +690,31 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_without_manifest_copies_input() {
+    fn test_remove_without_manifest_keeps_entries() {
         let zip_io = ZipIO {};
         let mut src = Cursor::new(SAMPLES[0].to_vec());
 
         let mut output = Cursor::new(Vec::new());
         zip_io.remove_c2pa(&mut src, &mut output).unwrap();
 
-        assert_eq!(output.into_inner(), SAMPLES[0]);
+        assert_eq!(entry_names(&mut output), entry_names(&mut src));
+
+        let mut src_archive = ZipArchive::new(&mut src).unwrap();
+        let mut output_archive = ZipArchive::new(&mut output).unwrap();
+        for index in 0..src_archive.len() {
+            let mut expected = Vec::new();
+            src_archive
+                .by_index(index)
+                .unwrap()
+                .read_to_end(&mut expected)
+                .unwrap();
+            let mut actual = Vec::new();
+            output_archive
+                .by_index(index)
+                .unwrap()
+                .read_to_end(&mut actual)
+                .unwrap();
+            assert_eq!(expected, actual);
+        }
     }
 }

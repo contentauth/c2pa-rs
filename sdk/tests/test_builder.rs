@@ -1134,5 +1134,36 @@ fn test_bmff_free_and_skip_exclusions_are_not_additional() -> Result<()> {
         "free/skip padding must not be reported as additional exclusions: {:?}",
         results.informational()
     );
+
+    Ok(())
+}
+
+#[test]
+fn test_sign_zip_twice_with_parent() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/sample1.zip").to_vec());
+    for _ in 0..2 {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+
+        let mut dest = Cursor::new(Vec::new());
+        source.rewind()?;
+        builder.sign(context.signer()?, "zip", &mut source, &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream("zip", &mut dest)?;
+        assert_ne!(reader.validation_state(), ValidationState::Invalid);
+        assert!(reader.validation_status().is_none_or(|s| s.is_empty()));
+        assert_eq!(reader.active_manifest().unwrap().ingredients().len(), 1);
+
+        source = dest;
+    }
+
+    // the second manifest's parent is the first signed ZIP
+    source.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_stream("zip", &mut source)?;
+    assert_eq!(reader.manifests().len(), 2);
+
     Ok(())
 }

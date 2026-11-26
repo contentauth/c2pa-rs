@@ -263,13 +263,11 @@ impl CollectionHash {
         for (path, hash_range) in zip_uri_ranges(stream)? {
             let hash =
                 hash_stream_by_alg(&self.alg, stream, Some(vec![hash_range.clone()]), false)?;
-
-            let format = mime::mime_from_path(&path);
             self.uris.push(UriHashedDataMap {
                 uri: Self::path_to_uri(&path)?,
                 hash: Some(hash),
                 size: Some(hash_range.length()),
-                dc_format: format,
+                dc_format: mime::mime_from_path(&path),
                 data_types: None,
             });
         }
