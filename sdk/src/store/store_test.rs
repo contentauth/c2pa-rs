@@ -2498,9 +2498,12 @@ fn add_ingredient_assertion_to_claim(
     claim: &mut Claim,
     action: &str,
     relationship: Relationship,
-    instance: Option<usize>,
 ) -> Result<()> {
-    use crate::{hashed_uri::HashedUri, jumbf::labels::to_signature_uri, ValidationResults};
+    use crate::{
+        hashed_uri::HashedUri,
+        jumbf::labels::{to_absolute_uri, to_signature_uri},
+        ValidationResults,
+    };
 
     let report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
@@ -2527,18 +2530,14 @@ fn add_ingredient_assertion_to_claim(
         ) // mandatory for v3
         .set_validation_results(Some(validation_results)); // mandatory for v3
 
-    claim.add_assertion(&ingredient).unwrap();
+    let added = claim.add_assertion(&ingredient).unwrap();
 
-    // create mandatory opened action (optional for update manifest)
-    let ingredient = claim.ingredient_assertions()[0];
-    let mut ingredient_uri = to_assertion_uri(claim.label(), &ingredient.label());
-    if let Some(instance) = instance {
-        ingredient_uri.push_str(&format!("__{instance}"));
-    }
+    // create mandatory opened action (optional for update manifest), referencing the ingredient
+    // assertion just added
     let ingredient_hashed_uri = HashedUri::new(
-        ingredient_uri,
+        to_absolute_uri(claim.label(), &added.url()),
         Some(claim.alg().to_owned()),
-        ingredient.hash(),
+        &added.hash(),
     );
 
     let a = Action::new(action)
@@ -2885,7 +2884,6 @@ fn test_ingredient_conflict_with_current_manifest() {
         &mut new_claim,
         "c2pa.opened",
         Relationship::ParentOf,
-        None,
     )
     .unwrap();
 
@@ -2911,7 +2909,6 @@ fn test_ingredient_conflict_with_current_manifest() {
         &mut new_claim,
         "c2pa.placed",
         Relationship::ComponentOf,
-        Some(1),
     )
     .unwrap();
 
