@@ -267,19 +267,19 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
     let Ok((_i, (ha_alg, mgf_ai))) = seq.parse(|i| {
         let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
         if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
-            return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
+            return Err(asn1_rs::Err::Error(asn1_rs::Error::BerValueError));
         }
 
         let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
-            .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
+            .map_err(|_| asn1_rs::Err::Error(asn1_rs::Error::BerValueError))?;
 
         let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
         if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
-            return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
+            return Err(asn1_rs::Err::Error(asn1_rs::Error::BerValueError));
         }
 
         let (i, mgf_ai) = AlgorithmIdentifier::from_der(i)
-            .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
+            .map_err(|_| asn1_rs::Err::Error(asn1_rs::Error::BerValueError))?;
 
         // Ignore anything that follows these two parameters.
 
