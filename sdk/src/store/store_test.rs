@@ -4143,9 +4143,10 @@ fn external_manifest_test(file_name: &str) {
 
         // load the jumbf back into a store
         let mut asset_reader = std::fs::File::open(&setup.output_path).unwrap();
-        let ext_ref = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
+        let ext_ref = crate::utils::xmp_inmemory_utils::XmpInfo::from_source_with_context(
             &mut asset_reader,
             setup.extension(),
+            &context,
         )
         .provenance
         .unwrap();
@@ -4225,10 +4226,13 @@ fn test_user_guid_external_manifest_embedded() {
     let output_data = output_stream.get_ref().clone();
     let mut output_reader = Cursor::new(output_data);
 
-    let ext_ref =
-        crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut output_reader, format)
-            .provenance
-            .unwrap();
+    let ext_ref = crate::utils::xmp_inmemory_utils::XmpInfo::from_source_with_context(
+        &mut output_reader,
+        format,
+        &context,
+    )
+    .provenance
+    .unwrap();
 
     assert_eq!(ext_ref, url_string);
 
@@ -4517,6 +4521,61 @@ fn test_boxhash_embeddable_manifest() {
         Store::from_stream("image/jpeg", &mut out_stream, &mut report, &context).unwrap();
 
     assert!(!report.has_any_error());
+}
+
+#[test]
+fn test_dynamic_assertion_placeholder_reserves_exact_size() {
+    #[derive(Debug)]
+    struct ReservedAssertion(usize);
+
+    impl DynamicAssertion for ReservedAssertion {
+        fn label(&self) -> String {
+            "com.example.reserved".to_string()
+        }
+
+        fn reserve_size(&self) -> Result<usize> {
+            Ok(self.0)
+        }
+
+        fn content(
+            &self,
+            _label: &str,
+            _size: Option<usize>,
+            _claim: &PartialClaim,
+        ) -> Result<DynamicAssertionContent> {
+            Err(Error::NotImplemented("placeholder-only test".into()))
+        }
+    }
+
+    for size in [
+        0, 1, 2, 23, 24, 25, 26, 255, 256, 257, 258, 259, 65_535, 65_536, 65_537, 65_538, 65_539,
+        65_540,
+    ] {
+        let mut store = Store::from_context(&Context::new());
+        store.commit_claim(Claim::new("test", None, 1)).unwrap();
+        let assertions: Vec<Box<dyn DynamicAssertion>> = vec![Box::new(ReservedAssertion(size))];
+        let result = store.add_dynamic_assertion_placeholders(&assertions);
+        if size == 0 {
+            assert!(matches!(result, Err(Error::BadParam(_))));
+            continue;
+        }
+        result.expect("reserve dynamic assertion placeholder");
+        let claim = store.provenance_claim().unwrap();
+        let placeholder = claim
+            .claim_assertion_store()
+            .last()
+            .unwrap()
+            .assertion()
+            .data();
+        assert_eq!(placeholder.len(), size, "reserve size {size}");
+    }
+    let mut store = Store::from_context(&Context::new());
+    store.commit_claim(Claim::new("test", None, 1)).unwrap();
+    let assertions: Vec<Box<dyn DynamicAssertion>> = vec![Box::new(ReservedAssertion(usize::MAX))];
+    assert!(matches!(
+        store.add_dynamic_assertion_placeholders(&assertions),
+        Err(Error::BadParam(_))
+    ));
 }
 
 #[test]

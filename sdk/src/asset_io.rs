@@ -266,6 +266,18 @@ pub trait AssetIO: Sync + Send {
             .get_object_locations(input)
     }
 
+    /// Returns the asset-io container handler behind this handler, if it is one,
+    /// for a direct (single-pass) save of `asset_type`.
+    ///
+    /// Defaults to `None`: a legacy handler, saved through its [`C2paWriter`].
+    #[cfg(feature = "unstable_asset_io")]
+    fn container_handler(
+        &self,
+        _asset_type: &str,
+    ) -> Option<Arc<dyn ::asset_io::container_api::ContainerHandler>> {
+        None
+    }
+
     // -- File-based operations --
 
     /// Reads the C2PA manifest store from the file at `asset_path`.
@@ -871,6 +883,17 @@ impl HandlerRegistry {
         self.handler(format).and_then(|h| h.get_writer(format))
     }
 
+    /// Looks up the asset-io container handler that writes `format` in a direct save,
+    /// checking `fallback` if this registry has no match. `None` when the format's
+    /// handler does not write through asset-io.
+    #[cfg(feature = "unstable_asset_io")]
+    pub(crate) fn container_handler(
+        &self,
+        format: &str,
+    ) -> Option<Arc<dyn ::asset_io::container_api::ContainerHandler>> {
+        self.handler(format)?.container_handler(format)
+    }
+
     /// Looks up the full [`AssetIO`] handler for the file extension of `asset_path`, if any.
     #[cfg(feature = "file_io")]
     pub(crate) fn handler_from_path(&self, asset_path: &Path) -> Option<&dyn AssetIO> {
@@ -1010,6 +1033,12 @@ impl HandlerRegistry {
             return Err(Error::JumbfNotFound);
         }
         Ok(c2pa_block)
+    }
+
+    /// Reads the XMP packet from `stream` via the registered reader for `asset_type`,
+    /// checking `fallback` if this registry has no match.
+    pub(crate) fn read_xmp(&self, asset_type: &str, stream: &mut dyn ReadSeek) -> Option<String> {
+        self.reader(asset_type)?.read_xmp(stream)
     }
 
     /// Writes `store_bytes` as the C2PA manifest store, reading an asset of `asset_type`
@@ -1333,7 +1362,7 @@ mod tests {
         }
 
         fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
-            None
+            Some(String::from_utf8_lossy(self.tag).into_owned())
         }
     }
 
@@ -1369,6 +1398,47 @@ mod tests {
         let mut stream = Cursor::new(vec![]);
         let reader = reg.reader("x-custom/test").unwrap();
         assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
+    }
+
+    #[test]
+    fn test_read_xmp_uses_own_handler_before_fallback() {
+        let base = Arc::new(
+            HandlerRegistry::new().with_legacy_handler(handler(&["image/jpeg"], b"builtin")),
+        );
+        let overlay = HandlerRegistry::with_fallback(base)
+            .with_legacy_handler(handler(&["image/jpeg"], b"custom"));
+
+        let mut stream = Cursor::new(vec![]);
+        assert_eq!(
+            overlay.read_xmp("image/jpeg", &mut stream).as_deref(),
+            Some("custom")
+        );
+        assert_eq!(overlay.read_xmp("x-none/test", &mut stream), None);
+    }
+
+    #[cfg(feature = "unstable_asset_io")]
+    #[test]
+    fn test_xmp_info_reads_through_context_handlers() {
+        use crate::{
+            utils::xmp_inmemory_utils::{XmpInfo, MIN_XMP},
+            Context,
+        };
+
+        let mut context = Context::new();
+        context
+            .io_mut()
+            .add_boxed_handler(Box::new(handler(&["x-custom/test"], MIN_XMP.as_bytes())));
+
+        let mut stream = Cursor::new(vec![]);
+        let info = XmpInfo::from_source_with_context(&mut stream, "x-custom/test", &context);
+        assert_eq!(
+            info.instance_id.as_deref(),
+            Some("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
+        );
+        // The built-in handlers do not know the format.
+        assert!(XmpInfo::from_source(&mut stream, "x-custom/test")
+            .instance_id
+            .is_none());
     }
 
     #[test]

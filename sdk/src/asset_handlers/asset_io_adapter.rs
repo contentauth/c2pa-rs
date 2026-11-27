@@ -354,7 +354,17 @@ impl C2paWriter for AssetIoAdapter {
             let x = if self.excludes_payload_only() {
                 part.range()
             } else {
-                layout.segment(part.segment()).map_err(err)?.range()
+                let segment = layout.segment(part.segment()).map_err(err)?;
+                if self.container() == Some(aio::containers::riff::ID) {
+                    // A RIFF chunk's alignment pad byte lies outside its declared
+                    // length and stays hashed, as asset-io and legacy RIFF exclude it.
+                    segment
+                        .range()
+                        .sub(0, segment.range().len() - segment.trailer().len())
+                        .map_err(err)?
+                } else {
+                    segment.range()
+                }
             };
             start = start.min(x.offset());
             end = end.max(x.end());
@@ -692,6 +702,12 @@ impl AssetIO for AssetIoAdapter {
         C2paWriter::get_object_locations(self, input)
     }
 
+    fn container_handler(&self, asset_type: &str) -> Option<Arc<dyn ContainerHandler>> {
+        self.handler
+            .clone()
+            .filter(|_| !self.is_read_only(asset_type))
+    }
+
     fn supported_types(&self) -> &[&str] {
         &self.types
     }
@@ -904,12 +920,13 @@ mod tests {
             "mov", "heic", "avif", "m4a", "c2pa",
         ] {
             assert!(
-                context.io().handler(format).is_some(),
+                context.io().container_handler(format).is_some(),
                 "{format} is served by asset-io"
             );
         }
         for format in ["jxl", "zip", "docx"] {
             assert!(context.io().handler(format).is_some(), "{format} is served");
+            assert!(context.io().container_handler(format).is_none(), "{format}");
         }
         // Read-only camera raw formats are read through the TIFF container.
         assert!(context.io().handler("arw").is_some());

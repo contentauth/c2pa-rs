@@ -184,6 +184,7 @@ impl Store {
     }
 
     #[cfg(feature = "file_io")]
+    #[cfg_attr(feature = "unstable_asset_io", allow(dead_code))]
     fn add_merkmap_for_rendition(
         &mut self,
         fragments: &[std::path::PathBuf],
@@ -266,6 +267,7 @@ impl Store {
 
     /// Embed the claims store as jumbf into fragmented assets.
     #[cfg(feature = "file_io")]
+    #[cfg_attr(feature = "unstable_asset_io", allow(dead_code))]
     pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         init_paths: &[PathBuf],
@@ -1189,8 +1191,10 @@ impl Store {
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
                 if let Some(ext_ref) =
-                    crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
-                        .provenance
+                    crate::utils::xmp_inmemory_utils::XmpInfo::from_source_with_context(
+                        stream, asset_type, context,
+                    )
+                    .provenance
                 {
                     let jumbf = if _sync {
                         Store::handle_remote_manifest(&ext_ref, context)?

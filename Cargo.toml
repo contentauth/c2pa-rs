@@ -27,3 +27,6 @@ strip = true  # Automatically strip symbols from the binary.
 opt-level = 3
 lto = "thin"  # Link time optimization.
 
+
+# [patch.crates-io]
+# asset-io = { path = "../asset-io" }
